@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { formatCurrency } from "@/lib/utils"
 import { ProjectTabs } from "./project-tabs"
 import { MembersButton } from "@/components/projects/members-dialog"
+import { DuplicateProjectButton } from "@/components/projects/duplicate-button"
 import type { Enums } from "@/lib/db/types"
 
 const STATUS_LABEL: Record<Enums<"project_status">, string> = {
@@ -98,6 +99,13 @@ export default async function ProjectDetailLayout({
                   projectId={project.id}
                   members={members}
                   profiles={memberProfiles}
+                />
+              )}
+              {isStaff && (
+                <DuplicateProjectButton
+                  sourceProjectId={project.id}
+                  sourceName={project.name}
+                  sourceProjectNumber={project.project_number}
                 />
               )}
               {project.dashboard_url && (
