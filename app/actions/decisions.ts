@@ -38,6 +38,15 @@ const Attachment = z.object({
   caption: optStr,
 })
 
+const CostItem = z.object({
+  id: optStr,
+  cost_code_id: optStr,
+  description: optStr,
+  quantity: z.coerce.number().default(1),
+  unit: optStr,
+  unit_cost: z.coerce.number().default(0),
+})
+
 const DecisionInput = z
   .object({
     id: optStr,
@@ -45,7 +54,12 @@ const DecisionInput = z
     kind: z.enum(["change_order", "selection"]),
     title: z.string().min(1).max(300),
     description: optStr,
+    // Manual cost (used when no line items exist). When line items exist,
+    // cost_delta is recomputed server-side from line_total × markup and the
+    // value the client sent is ignored.
     cost_delta: z.coerce.number().nullish(),
+    markup_percent: z.coerce.number().default(0),
+    cost_items: z.array(CostItem).default([]),
     status: z.enum(["draft", "pending_client", "approved", "rejected"]).default("draft"),
     followups: z.array(Followup).default([]),
     attachments: z.array(Attachment).default([]),
@@ -56,6 +70,10 @@ export type DecisionInputT = z.infer<typeof DecisionInput>
 
 function nz(v: string | null | undefined) {
   return v && v !== "" ? v : null
+}
+
+function round2(n: number) {
+  return Math.round(n * 100) / 100
 }
 
 export async function saveDecision(input: DecisionInputT) {
@@ -89,13 +107,30 @@ export async function saveDecision(input: DecisionInputT) {
   const newlyPendingClient =
     parsed.status === "pending_client" && prevStatus !== "pending_client"
 
+  // Derive the client-facing cost_delta. If the staff entered a cost
+  // breakdown (any line item), the marked-up total takes precedence and the
+  // manual `cost_delta` field they may also have typed is ignored. If they
+  // entered no line items, fall back to the manual value as before.
+  //
+  // `markup_percent` is stored on the decision so re-opening the drawer
+  // shows the same number — but the client never reads it.
+  const subtotal = parsed.cost_items.reduce(
+    (sum, ci) => sum + ci.quantity * ci.unit_cost,
+    0
+  )
+  const finalCostDelta =
+    parsed.cost_items.length > 0
+      ? round2(subtotal * (1 + parsed.markup_percent / 100))
+      : (parsed.cost_delta ?? null)
+
   if (id) {
     const updateRow: TablesUpdate<"decisions"> = {
       project_id: parsed.project_id,
       kind: parsed.kind,
       title: parsed.title,
       description: parsed.description ?? null,
-      cost_delta: parsed.cost_delta ?? null,
+      cost_delta: finalCostDelta,
+      markup_percent: parsed.markup_percent,
       status: parsed.status,
     }
     if (newlyApproved) updateRow.approved_at = new Date().toISOString()
@@ -124,7 +159,8 @@ export async function saveDecision(input: DecisionInputT) {
           kind: parsed.kind,
           title: parsed.title,
           description: parsed.description ?? null,
-          cost_delta: parsed.cost_delta ?? null,
+          cost_delta: finalCostDelta,
+          markup_percent: parsed.markup_percent,
           status: parsed.status,
           number,
           created_by: profile.id,
@@ -145,6 +181,30 @@ export async function saveDecision(input: DecisionInputT) {
       throw new Error("Could not allocate a decision number after 5 attempts.")
     }
     id = inserted.id
+  }
+
+  // Replace cost-item breakdown. Same delete-then-insert pattern as
+  // follow-ups — line items are append-only from the staff's perspective and
+  // rarely re-ordered, so a wipe-and-reinsert is the simplest correct sync.
+  // Capture the delete error: if it fails and we then insert, the decision
+  // would end up with stale + new rows for the same line numbers.
+  const { error: dciDelErr } = await supabase
+    .from("decision_cost_items")
+    .delete()
+    .eq("decision_id", id)
+  if (dciDelErr) throw new Error(dciDelErr.message)
+  if (parsed.cost_items.length) {
+    const rows = parsed.cost_items.map((ci, i) => ({
+      decision_id: id!,
+      cost_code_id: nz(ci.cost_code_id),
+      description: ci.description ?? null,
+      quantity: ci.quantity,
+      unit: ci.unit ?? null,
+      unit_cost: ci.unit_cost,
+      position: i,
+    }))
+    const { error } = await supabase.from("decision_cost_items").insert(rows)
+    if (error) throw new Error(error.message)
   }
 
   // Replace follow-up templates

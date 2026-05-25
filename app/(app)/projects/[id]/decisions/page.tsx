@@ -30,6 +30,8 @@ export default async function DecisionsPage({
     { data: comments },
     { data: profiles },
     { data: companies },
+    { data: costItems },
+    { data: costCodes },
   ] = await Promise.all([
     supabase
       .from("decisions")
@@ -53,6 +55,18 @@ export default async function DecisionsPage({
       .order("created_at", { ascending: true }),
     supabase.from("profiles").select("id, full_name, email, role"),
     supabase.from("companies").select("id, name, type, trade_category"),
+    // Cost line items are RLS-restricted to staff. Clients get an empty
+    // array here, which matches what the drawer should show them anyway.
+    supabase
+      .from("decision_cost_items")
+      .select("*, decisions!inner(project_id)")
+      .eq("decisions.project_id", projectId)
+      .order("position", { ascending: true }),
+    supabase
+      .from("cost_codes")
+      .select("id, code, name, position, is_active")
+      .eq("is_active", true)
+      .order("position", { ascending: true }),
   ])
 
   const strip = <T extends { decisions?: unknown }>(rows: T[] | null) =>
@@ -78,6 +92,8 @@ export default async function DecisionsPage({
     comments: strip(comments) as DecisionsData["comments"],
     profiles: profiles ?? [],
     companies: companies ?? [],
+    cost_items: strip(costItems) as DecisionsData["cost_items"],
+    cost_codes: costCodes ?? [],
     signed_urls: signedUrls,
   }
 
