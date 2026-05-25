@@ -196,7 +196,7 @@ async function applyCascade(projectId: string, movedId: string) {
   const supabase = await createSupabaseServerClient()
   const { data: items } = await supabase
     .from("schedule_items")
-    .select("id, start_date, end_date, kind, parent_id, project_id, due_date, duration_days, status, title, description, position, created_at, updated_at, baseline_start_date, baseline_end_date, recurrence_rule, recurrence_parent_id, created_by")
+    .select("*")
     .eq("project_id", projectId)
   const { data: preds } = await supabase
     .from("schedule_predecessors")

@@ -20,6 +20,14 @@
 - Regenerate types: `supabase gen types typescript --project-id <ref> > lib/db/types.ts`.
 - After any DDL, run `get_advisors` (security + performance) and fix WARNs.
 
+## Decisions module — model
+
+- One page for both `change_order` and `selection` kinds — they share table `decisions` with a `kind` enum and a per-project sequential `number`.
+- Workflow: `draft` → `pending_client` → `approved` | `rejected`. Clients can only see decisions once they leave `draft`.
+- `decision_followup_templates` are per-decision to-do templates the user defines while drafting. On the `approved` transition, `materializeFollowups` in `app/actions/decisions.ts` creates real `schedule_items (kind='todo')` with `source_decision_id` set, plus assignments and in-app notifications for staff assignees. Re-approval is idempotent (it skips templates whose titles already exist as schedule items on this decision).
+- `decision_comments`: staff full access; clients in `project_members` for the project can both READ and INSERT (RLS enforces `author_id = auth.uid()`). Trades have no access.
+- Decision attachments share the `project-files` Storage bucket with daily logs. The storage RLS policy was extended in 0004 to allow client read for both daily-log AND decision attachments via signed URLs.
+
 ## Daily Logs module — model
 
 - `daily_logs(visibility = 'internal'|'client')` — visibility is rendered prominently in the UI (left border + badge). `internal` is hidden from the future client portal; `client` is shown.
