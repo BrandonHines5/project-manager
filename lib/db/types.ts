@@ -99,6 +99,42 @@ export type Database = {
         }
         Relationships: []
       }
+      project_payments: {
+        Row: {
+          amount: number
+          created_at: string
+          id: string
+          method: Database["public"]["Enums"]["payment_method"]
+          notes: string | null
+          paid_on: string
+          project_id: string
+          recorded_by: string | null
+          reference: string | null
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          id?: string
+          method?: Database["public"]["Enums"]["payment_method"]
+          notes?: string | null
+          paid_on?: string
+          project_id: string
+          recorded_by?: string | null
+          reference?: string | null
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          id?: string
+          method?: Database["public"]["Enums"]["payment_method"]
+          notes?: string | null
+          paid_on?: string
+          project_id?: string
+          recorded_by?: string | null
+          reference?: string | null
+        }
+        Relationships: []
+      }
       project_files: {
         Row: {
           category: Database["public"]["Enums"]["file_category"]
@@ -654,6 +690,7 @@ export type Database = {
         | "pending_client"
         | "approved"
         | "rejected"
+      payment_method: "check" | "wire" | "card" | "cash" | "other"
       file_category:
         | "house_plans"
         | "plot_plan"
