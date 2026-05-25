@@ -27,6 +27,7 @@ Variables):
 | `DASHBOARD_WEBHOOK_URL` | `https://hines-homes-dashboard.vercel.app/api/sync` | Endpoint that receives outbound event POSTs. |
 | `DASHBOARD_WEBHOOK_SECRET` | random 32+ char string | Shared secret for HMAC-SHA256 signing of outbound webhooks. |
 | `DASHBOARD_API_SECRET` | random 32+ char string | Bearer token PM sends on inbound GETs. Independent of the webhook secret so each can be rotated separately. |
+| `DASHBOARD_PROTECTION_BYPASS` (optional) | string from Vercel | Set only if the dashboard's Vercel deploy has **Deployment Protection** turned on. Without it, every outbound call from PM hits Vercel's 403 wall before reaching the function. With it set, PM adds `x-vercel-protection-bypass: <token>` to every webhook + API call. Get this value from Vercel → dashboard project → Settings → Deployment Protection → Protection Bypass for Automation. |
 
 If `DASHBOARD_BASE_URL` / `DASHBOARD_WEBHOOK_URL` / `DASHBOARD_WEBHOOK_SECRET`
 are unset, **outbound webhooks** are a no-op. If `DASHBOARD_API_SECRET` is
