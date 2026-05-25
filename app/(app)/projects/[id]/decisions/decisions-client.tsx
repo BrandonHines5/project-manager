@@ -87,6 +87,14 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
     }
   }, [data.decisions])
 
+  const commentCounts = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const c of data.comments) {
+      m.set(c.decision_id, (m.get(c.decision_id) ?? 0) + 1)
+    }
+    return m
+  }, [data.comments])
+
   const filtersActive =
     kindFilter !== "all" || statusFilter !== "all" || query.trim() !== ""
 
@@ -221,9 +229,7 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
             </thead>
             <tbody className="divide-y divide-border">
               {filtered.map((d) => {
-                const commentCount = data.comments.filter(
-                  (c) => c.decision_id === d.id
-                ).length
+                const commentCount = commentCounts.get(d.id) ?? 0
                 return (
                   <tr
                     key={d.id}

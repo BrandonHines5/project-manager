@@ -236,10 +236,11 @@ export async function saveDecision(input: DecisionInputT) {
   // choice_id values from temporary "new:0" / "new:1" keys to real IDs.
   const choiceIdByClientKey = new Map<string, string>()
   if (parsed.kind === "selection") {
-    const { data: existingChoices } = await supabase
+    const { data: existingChoices, error: existingChoicesErr } = await supabase
       .from("decision_choices")
       .select("id")
       .eq("decision_id", id)
+    if (existingChoicesErr) throw new Error(existingChoicesErr.message)
     const keepChoiceIds = new Set(
       parsed.choices.map((c) => nz(c.id)).filter((x): x is string => !!x)
     )
@@ -290,7 +291,11 @@ export async function saveDecision(input: DecisionInputT) {
     }
   } else {
     // Non-selection: clear any stale choices from a kind change.
-    await supabase.from("decision_choices").delete().eq("decision_id", id)
+    const { error: clearChoicesErr } = await supabase
+      .from("decision_choices")
+      .delete()
+      .eq("decision_id", id)
+    if (clearChoicesErr) throw new Error(clearChoicesErr.message)
   }
 
   // Replace follow-up templates

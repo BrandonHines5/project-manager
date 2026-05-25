@@ -564,6 +564,15 @@ export function DecisionDrawer({
                     )
                   )
                 }
+                onRemoveChoice={(key) => {
+                  // Prune the choice AND any photos that were attached to it
+                  // so we don't ship dangling attachments to the server (which
+                  // would have to demote them to decision-level on save).
+                  setChoices(choices.filter((c) => c.client_key !== key))
+                  setAttachments(
+                    attachments.filter((a) => a.choice_id !== key)
+                  )
+                }}
                 uploading={uploading}
                 selectedChoiceId={decision?.selected_choice_id ?? null}
               />
@@ -759,6 +768,7 @@ function ChoicesEditor({
   attachmentsForChoice,
   onAddPhotos,
   onRemoveAttachment,
+  onRemoveChoice,
   uploading,
   selectedChoiceId,
 }: {
@@ -767,6 +777,10 @@ function ChoicesEditor({
   attachmentsForChoice: (key: string) => Attachment[]
   onAddPhotos: (files: FileList | null, choiceKey: string) => void
   onRemoveAttachment: (att: Attachment) => void
+  // Removing a choice has to also drop its per-choice photos from
+  // `attachments` state, otherwise we'd ship orphaned attachment rows
+  // referencing a key the server can't resolve. Lifted into the parent.
+  onRemoveChoice: (key: string) => void
   uploading: boolean
   selectedChoiceId: string | null
 }) {
@@ -783,9 +797,6 @@ function ChoicesEditor({
   }
   function update(key: string, patch: Partial<Choice>) {
     onChange(value.map((c) => (c.client_key === key ? { ...c, ...patch } : c)))
-  }
-  function remove(key: string) {
-    onChange(value.filter((c) => c.client_key !== key))
   }
 
   return (
@@ -850,7 +861,7 @@ function ChoicesEditor({
                 )}
                 <button
                   type="button"
-                  onClick={() => remove(c.client_key)}
+                  onClick={() => onRemoveChoice(c.client_key)}
                   className="text-muted hover:text-danger p-1 mt-1.5 cursor-pointer"
                   aria-label="Remove choice"
                 >
