@@ -5,6 +5,10 @@ import { redirect } from "next/navigation"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
+import {
+  dashboardProjectUrl,
+  sendDashboardWebhook,
+} from "@/lib/dashboard"
 
 const ProjectInput = z.object({
   project_number: z.string().min(1, "Required").max(64),
@@ -16,6 +20,8 @@ const ProjectInput = z.object({
   contract_price: z.coerce.number().nonnegative().nullable().optional(),
   start_date: z.string().optional().or(z.literal("")),
   target_completion_date: z.string().optional().or(z.literal("")),
+  // Staff CAN paste a custom URL but the default is auto-derived from
+  // project_number — see dashboardProjectUrl().
   dashboard_url: z
     .string()
     .trim()
@@ -49,6 +55,11 @@ export async function createProject(
   }
   const input = parsed.data
 
+  // If staff didn't paste a URL, auto-derive from the project number so the
+  // dashboard link is canonical and immediately shareable with the client.
+  const finalDashboardUrl =
+    emptyToNull(input.dashboard_url) ?? dashboardProjectUrl(input.project_number)
+
   const supabase = await createSupabaseServerClient()
   const { data, error } = await supabase
     .from("projects")
@@ -60,11 +71,11 @@ export async function createProject(
       contract_price: input.contract_price ?? null,
       start_date: emptyToNull(input.start_date) ?? null,
       target_completion_date: emptyToNull(input.target_completion_date) ?? null,
-      dashboard_url: emptyToNull(input.dashboard_url),
+      dashboard_url: finalDashboardUrl,
       notes: emptyToNull(input.notes),
       created_by: profile.id,
     })
-    .select("id")
+    .select("*")
     .single()
 
   if (error) {
@@ -75,6 +86,10 @@ export async function createProject(
           : error.message,
     }
   }
+
+  // Best-effort: tell the dashboard a new project exists. Webhook failures
+  // never block the redirect — the dashboard can backfill from /projects/[id].
+  await sendDashboardWebhook("project.created", data)
 
   revalidatePath("/projects")
   redirect(`/projects/${data.id}/schedule`)
