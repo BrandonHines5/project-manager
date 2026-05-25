@@ -48,6 +48,96 @@ export type Database = {
         }
         Relationships: []
       }
+      daily_logs: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          log_date: string
+          notes: string | null
+          project_id: string
+          updated_at: string
+          visibility: Database["public"]["Enums"]["daily_log_visibility"]
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          log_date?: string
+          notes?: string | null
+          project_id: string
+          updated_at?: string
+          visibility?: Database["public"]["Enums"]["daily_log_visibility"]
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          log_date?: string
+          notes?: string | null
+          project_id?: string
+          updated_at?: string
+          visibility?: Database["public"]["Enums"]["daily_log_visibility"]
+        }
+        Relationships: []
+      }
+      daily_log_subs_on_site: {
+        Row: {
+          company_id: string
+          daily_log_id: string
+          notes: string | null
+        }
+        Insert: {
+          company_id: string
+          daily_log_id: string
+          notes?: string | null
+        }
+        Update: {
+          company_id?: string
+          daily_log_id?: string
+          notes?: string | null
+        }
+        Relationships: []
+      }
+      daily_log_attachments: {
+        Row: {
+          caption: string | null
+          created_at: string
+          daily_log_id: string
+          file_name: string
+          file_size: number | null
+          file_type: string | null
+          id: string
+          position: number
+          storage_bucket: string
+          storage_path: string
+        }
+        Insert: {
+          caption?: string | null
+          created_at?: string
+          daily_log_id: string
+          file_name: string
+          file_size?: number | null
+          file_type?: string | null
+          id?: string
+          position?: number
+          storage_bucket?: string
+          storage_path: string
+        }
+        Update: {
+          caption?: string | null
+          created_at?: string
+          daily_log_id?: string
+          file_name?: string
+          file_size?: number | null
+          file_type?: string | null
+          id?: string
+          position?: number
+          storage_bucket?: string
+          storage_path?: string
+        }
+        Relationships: []
+      }
       notifications: {
         Row: {
           body: string | null
@@ -362,6 +452,7 @@ export type Database = {
     Functions: { [_ in never]: never }
     Enums: {
       company_type: "sub" | "vendor" | "client"
+      daily_log_visibility: "internal" | "client"
       delay_reason:
         | "weather"
         | "sub"

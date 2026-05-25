@@ -20,6 +20,14 @@
 - Regenerate types: `supabase gen types typescript --project-id <ref> > lib/db/types.ts`.
 - After any DDL, run `get_advisors` (security + performance) and fix WARNs.
 
+## Daily Logs module — model
+
+- `daily_logs(visibility = 'internal'|'client')` — visibility is rendered prominently in the UI (left border + badge). `internal` is hidden from the future client portal; `client` is shown.
+- Subs/vendors that were on site live in `daily_log_subs_on_site (daily_log_id, company_id, notes)`.
+- Files in `daily_log_attachments` reference Supabase Storage objects in bucket `project-files`, with key `projects/{project_id}/daily-logs/{random}.{ext}`. Bucket is private. Server-side actions issue 1-hour signed URLs via `getSignedUrls` in `app/actions/daily-logs.ts`.
+- Browser uploads go directly to Storage with the user's JWT (RLS policy `project_files_staff_all`). The action `saveDailyLog` then records the path in `daily_log_attachments`.
+- Clients can `select` from `daily_logs` only when `visibility = 'client'` AND they're in `project_members` for that project — enforced by RLS. Trades have no access to daily logs.
+
 ## Schedule/To-Dos module — model
 
 - `schedule_items` is a single table; `kind` is `'work'` or `'todo'`. A to-do nests under a work item via `parent_id`. Standalone to-dos have `parent_id = null`.

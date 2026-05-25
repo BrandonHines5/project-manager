@@ -18,6 +18,7 @@ const TABS: Tab[] = [
   { label: "Files", slug: "files" },
   { label: "Pricing", slug: "pricing" },
 ]
+// Trades only see Schedule (RLS handles row-level filtering); clients only see Daily Logs / Files / Pricing.
 
 export function ProjectTabs({
   projectId,
