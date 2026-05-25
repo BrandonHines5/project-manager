@@ -69,9 +69,15 @@ function daysBetween(a: string, b: string) {
 }
 
 export async function saveScheduleItem(input: ScheduleItemInputT) {
-  await requireStaff()
-  const parsed = ScheduleItemInput.parse(input)
-  const supabase = await createSupabaseServerClient()
+  const dbg = (step: string, extra?: unknown) =>
+    console.log(`[saveScheduleItem] ${step}`, extra ?? "")
+  try {
+    dbg("0:enter", { hasId: !!input.id, kind: input.kind })
+    await requireStaff()
+    dbg("1:requireStaff_ok")
+    const parsed = ScheduleItemInput.parse(input)
+    dbg("2:zod_ok", { title: parsed.title, status: parsed.status })
+    const supabase = await createSupabaseServerClient()
 
   const duration =
     parsed.start_date && parsed.end_date
@@ -98,23 +104,40 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
       .from("schedule_items")
       .update(baseRow)
       .eq("id", id)
-    if (error) throw new Error(error.message)
+    if (error) {
+      dbg("3:update_fail", error)
+      throw new Error(error.message)
+    }
+    dbg("3:update_ok")
   } else {
     const { data, error } = await supabase
       .from("schedule_items")
       .insert(baseRow)
       .select("id")
       .single()
-    if (error) throw new Error(error.message)
+    if (error) {
+      dbg("3:insert_fail", { code: error.code, msg: error.message, details: error.details, hint: error.hint })
+      throw new Error(error.message)
+    }
     id = data.id
+    dbg("3:insert_ok", { id })
   }
 
   // Replace assignments. Track who is newly assigned so we can notify.
-  const { data: oldAssignments } = await supabase
+  const { data: oldAssignments, error: aSelErr } = await supabase
     .from("schedule_assignments")
     .select("profile_id, company_id")
     .eq("schedule_item_id", id)
-  await supabase.from("schedule_assignments").delete().eq("schedule_item_id", id)
+  if (aSelErr) dbg("4:assignSelect_fail", aSelErr)
+  const { error: aDelErr } = await supabase
+    .from("schedule_assignments")
+    .delete()
+    .eq("schedule_item_id", id)
+  if (aDelErr) {
+    dbg("4:assignDelete_fail", aDelErr)
+    throw new Error(aDelErr.message)
+  }
+  dbg("4:assignReset_ok")
   if (parsed.assignments.length) {
     const rows = parsed.assignments
       .filter((a) => a.profile_id || a.company_id)
@@ -148,7 +171,15 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
   }
 
   // Replace checklist (for todos only)
-  await supabase.from("todo_checklist_items").delete().eq("schedule_item_id", id)
+  const { error: clDelErr } = await supabase
+    .from("todo_checklist_items")
+    .delete()
+    .eq("schedule_item_id", id)
+  if (clDelErr) {
+    dbg("5:checklistDelete_fail", clDelErr)
+    throw new Error(clDelErr.message)
+  }
+  dbg("5:checklistDelete_ok")
   if (parsed.kind === "todo" && parsed.checklist.length) {
     const rows = parsed.checklist
       .filter((c) => c.label.trim() !== "")
@@ -170,10 +201,15 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
   // We always reconcile (parsed.predecessors may legitimately be empty,
   // meaning "clear all predecessors").
   {
-    const { data: existing } = await supabase
+    const { data: existing, error: pSelErr } = await supabase
       .from("schedule_predecessors")
       .select("item_id, predecessor_id, dep_type, lag_days, id, created_at")
       .or(`item_id.eq.${id},predecessor_id.eq.${id}`)
+    if (pSelErr) {
+      dbg("6:predSelect_fail", pSelErr)
+      throw new Error(pSelErr.message)
+    }
+    dbg("6:predSelect_ok", { count: (existing ?? []).length })
     const allPreds = existing ?? []
     const others = allPreds.filter((p) => p.item_id !== id)
     const proposed = [
@@ -212,10 +248,19 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
   }
 
   // Cascade to successors
+  dbg("7:cascade_start")
   await applyCascade(parsed.project_id, id!)
+  dbg("7:cascade_ok")
 
   revalidatePath(`/projects/${parsed.project_id}/schedule`)
+  dbg("8:done")
   return { id }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    const stack = e instanceof Error ? e.stack ?? "" : ""
+    console.error("[saveScheduleItem] CAUGHT:", msg, "\n", stack)
+    throw e
+  }
 }
 
 async function notifyScheduleAssignees(
