@@ -30,6 +30,14 @@ const ProjectInput = z.object({
     .optional()
     .or(z.literal("")),
   notes: z.string().optional().or(z.literal("")),
+  // Client identity. Source of truth is the dashboard when this project was
+  // pulled from there; for blank-created projects staff can still type them.
+  client_name: z.string().max(200).optional().or(z.literal("")),
+  client_email: z.string().max(200).optional().or(z.literal("")),
+  client_phone: z.string().max(50).optional().or(z.literal("")),
+  // "1" if this came from the dashboard picker. Used to set dashboard_pulled_at
+  // server-side so we don't trust a client-supplied timestamp.
+  dashboard_pulled: z.string().optional().or(z.literal("")),
 })
 
 export type ProjectFormState = {
@@ -75,6 +83,13 @@ export async function createProject(
       target_completion_date: emptyToNull(input.target_completion_date) ?? null,
       dashboard_url: finalDashboardUrl,
       notes: emptyToNull(input.notes),
+      client_name: emptyToNull(input.client_name),
+      client_email: emptyToNull(input.client_email),
+      client_phone: emptyToNull(input.client_phone),
+      // Only stamp pulled_at when the form actually came from the dashboard
+      // picker. Manual entry of client fields shouldn't claim a pull.
+      dashboard_pulled_at:
+        input.dashboard_pulled === "1" ? new Date().toISOString() : null,
       created_by: profile.id,
     })
     .select("*")

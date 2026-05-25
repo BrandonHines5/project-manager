@@ -706,9 +706,13 @@ export type Database = {
         Row: {
           address: string | null
           client_company_id: string | null
+          client_email: string | null
+          client_name: string | null
+          client_phone: string | null
           contract_price: number | null
           created_at: string
           created_by: string | null
+          dashboard_pulled_at: string | null
           dashboard_url: string | null
           id: string
           name: string
@@ -721,9 +725,13 @@ export type Database = {
         Insert: {
           address?: string | null
           client_company_id?: string | null
+          client_email?: string | null
+          client_name?: string | null
+          client_phone?: string | null
           contract_price?: number | null
           created_at?: string
           created_by?: string | null
+          dashboard_pulled_at?: string | null
           dashboard_url?: string | null
           id?: string
           name: string
@@ -736,9 +744,13 @@ export type Database = {
         Update: {
           address?: string | null
           client_company_id?: string | null
+          client_email?: string | null
+          client_name?: string | null
+          client_phone?: string | null
           contract_price?: number | null
           created_at?: string
           created_by?: string | null
+          dashboard_pulled_at?: string | null
           dashboard_url?: string | null
           id?: string
           name?: string
