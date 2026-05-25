@@ -186,10 +186,13 @@ export async function saveDecision(input: DecisionInputT) {
   // Replace cost-item breakdown. Same delete-then-insert pattern as
   // follow-ups — line items are append-only from the staff's perspective and
   // rarely re-ordered, so a wipe-and-reinsert is the simplest correct sync.
-  await supabase
+  // Capture the delete error: if it fails and we then insert, the decision
+  // would end up with stale + new rows for the same line numbers.
+  const { error: dciDelErr } = await supabase
     .from("decision_cost_items")
     .delete()
     .eq("decision_id", id)
+  if (dciDelErr) throw new Error(dciDelErr.message)
   if (parsed.cost_items.length) {
     const rows = parsed.cost_items.map((ci, i) => ({
       decision_id: id!,

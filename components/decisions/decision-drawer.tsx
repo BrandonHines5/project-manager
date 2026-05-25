@@ -123,13 +123,21 @@ export function DecisionDrawer({
   // Derived totals from the breakdown. When items exist, this is the source
   // of truth for cost_delta on save — the manual `costDelta` input is
   // ignored. When no items exist, the manual value is used.
-  const breakdownSubtotal = costItems.reduce(
+  //
+  // Use the SAME filter the submission uses for hasBreakdown so a row that's
+  // completely blank doesn't flip the UI into "breakdown mode" while still
+  // being dropped from the payload — that would force cost_delta to null and
+  // silently lose the staff's manual entry.
+  const effectiveCostItems = costItems.filter(
+    (ci) => ci.cost_code_id || ci.description || ci.unit_cost > 0
+  )
+  const breakdownSubtotal = effectiveCostItems.reduce(
     (sum, ci) => sum + (Number(ci.quantity) || 0) * (Number(ci.unit_cost) || 0),
     0
   )
   const markupNum = markupPercent === "" ? 0 : Number(markupPercent) || 0
   const breakdownTotal = breakdownSubtotal * (1 + markupNum / 100)
-  const hasBreakdown = costItems.length > 0
+  const hasBreakdown = effectiveCostItems.length > 0
   const [status, setStatus] = useState<Enums<"decision_status">>(
     decision?.status ?? "draft"
   )
@@ -236,16 +244,14 @@ export function DecisionDrawer({
         ? null
         : Number(costDelta),
       markup_percent: markupNum,
-      cost_items: costItems
-        .filter((ci) => ci.cost_code_id || ci.description || ci.unit_cost > 0)
-        .map((ci) => ({
-          id: ci.id,
-          cost_code_id: ci.cost_code_id || null,
-          description: ci.description || null,
-          quantity: ci.quantity,
-          unit: ci.unit || null,
-          unit_cost: ci.unit_cost,
-        })),
+      cost_items: effectiveCostItems.map((ci) => ({
+        id: ci.id,
+        cost_code_id: ci.cost_code_id || null,
+        description: ci.description || null,
+        quantity: ci.quantity,
+        unit: ci.unit || null,
+        unit_cost: ci.unit_cost,
+      })),
       status: overrideStatus ?? status,
       followups: followups
         .filter((f) => f.title.trim() !== "")
