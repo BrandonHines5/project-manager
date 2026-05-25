@@ -72,10 +72,18 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
   const dbg = (step: string, extra?: unknown) =>
     console.log(`[saveScheduleItem] ${step}`, extra ?? "")
   try {
-    dbg("0:enter", { hasId: !!input.id, kind: input.kind })
+    dbg("0:enter", { hasId: !!input.id, kind: input.kind, raw: JSON.stringify(input) })
     await requireStaff()
     dbg("1:requireStaff_ok")
-    const parsed = ScheduleItemInput.parse(input)
+    let parsed: ScheduleItemInputT
+    try {
+      parsed = ScheduleItemInput.parse(input)
+    } catch (zerr) {
+      if (zerr instanceof z.ZodError) {
+        console.error("[saveScheduleItem] ZOD_ISSUES:", JSON.stringify(zerr.issues))
+      }
+      throw zerr
+    }
     dbg("2:zod_ok", { title: parsed.title, status: parsed.status })
     const supabase = await createSupabaseServerClient()
 
