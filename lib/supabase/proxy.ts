@@ -42,15 +42,23 @@ export async function updateSession(request: NextRequest) {
     const url = request.nextUrl.clone()
     url.pathname = "/login"
     url.searchParams.set("redirect", path)
-    return NextResponse.redirect(url)
+    const r = NextResponse.redirect(url)
+    r.headers.set("cache-control", "no-store")
+    return r
   }
 
   if (user && (path === "/login" || path === "/")) {
     const url = request.nextUrl.clone()
     url.pathname = "/projects"
     url.search = ""
-    return NextResponse.redirect(url)
+    const r = NextResponse.redirect(url)
+    r.headers.set("cache-control", "no-store")
+    return r
   }
 
+  // Never let the CDN cache an auth-affected response on protected paths.
+  if (!isPublic) {
+    response.headers.set("cache-control", "no-store")
+  }
   return response
 }
