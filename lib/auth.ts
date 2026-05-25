@@ -11,14 +11,9 @@ export async function getSessionProfile(): Promise<SessionProfile | null> {
     data: { user },
     error: userErr,
   } = await supabase.auth.getUser()
-  if (process.env.NODE_ENV === "production") {
-    // Temporary debug — remove once auth is verified working
-    console.log("[auth] getSessionProfile:", {
-      hasUser: !!user,
-      userId: user?.id,
-      userErr: userErr?.message,
-    })
-  }
+  console.log(
+    `[auth] user=${user?.id?.slice(0, 8) ?? "NULL"} err=${userErr?.message ?? "ok"}`
+  )
   if (!user) return null
 
   const { data: profile, error: profileErr } = await supabase
@@ -26,12 +21,9 @@ export async function getSessionProfile(): Promise<SessionProfile | null> {
     .select("*")
     .eq("id", user.id)
     .maybeSingle()
-  if (process.env.NODE_ENV === "production") {
-    console.log("[auth] profile lookup:", {
-      hasProfile: !!profile,
-      profileErr: profileErr?.message,
-    })
-  }
+  console.log(
+    `[auth] profile=${profile?.id?.slice(0, 8) ?? "NULL"} err=${profileErr?.message ?? "ok"}`
+  )
 
   return profile ?? null
 }

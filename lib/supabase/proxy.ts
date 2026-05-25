@@ -31,12 +31,15 @@ export async function updateSession(request: NextRequest) {
   )
 
   const { data: { user }, error } = await supabase.auth.getUser()
-  console.log("[proxy]", request.nextUrl.pathname, {
-    hasUser: !!user,
-    userId: user?.id,
-    error: error?.message,
-    cookieNames: request.cookies.getAll().map((c) => c.name),
-  })
+  const cookieNames = request.cookies.getAll().map((c) => c.name).join(",")
+  console.log(
+    `[proxy] path=${request.nextUrl.pathname} user=${user?.id?.slice(0, 8) ?? "NULL"} err=${error?.message ?? "ok"} cookies=[${cookieNames}]`
+  )
+  // Surface the same diagnostic on the response so we can read it via curl.
+  response.headers.set("x-debug-path", request.nextUrl.pathname)
+  response.headers.set("x-debug-user", user?.id?.slice(0, 8) ?? "NULL")
+  response.headers.set("x-debug-err", error?.message ?? "ok")
+  response.headers.set("x-debug-cookies", cookieNames || "none")
 
   return response
 }
