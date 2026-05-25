@@ -6,6 +6,7 @@ import { requireSession } from "@/lib/auth"
 import { Badge } from "@/components/ui/badge"
 import { formatCurrency } from "@/lib/utils"
 import { ProjectTabs } from "./project-tabs"
+import { MembersButton } from "@/components/projects/members-dialog"
 import type { Enums } from "@/lib/db/types"
 
 const STATUS_LABEL: Record<Enums<"project_status">, string> = {
@@ -36,6 +37,27 @@ export default async function ProjectDetailLayout({
     .maybeSingle()
 
   if (!project) notFound()
+
+  const isStaff = profile.role === "staff"
+  let members: { profile_id: string; role_on_project: string | null }[] = []
+  let memberProfiles: {
+    id: string
+    full_name: string
+    email: string
+    role: "staff" | "trade" | "client"
+  }[] = []
+  if (isStaff) {
+    const { data: m } = await supabase
+      .from("project_members")
+      .select("profile_id, role_on_project")
+      .eq("project_id", project.id)
+    members = m ?? []
+    const { data: ps } = await supabase
+      .from("profiles")
+      .select("id, full_name, email, role")
+      .order("full_name")
+    memberProfiles = (ps ?? []) as typeof memberProfiles
+  }
 
   return (
     <div className="flex flex-col">
@@ -70,6 +92,13 @@ export default async function ProjectDetailLayout({
                     {formatCurrency(project.contract_price)}
                   </div>
                 </div>
+              )}
+              {isStaff && (
+                <MembersButton
+                  projectId={project.id}
+                  members={members}
+                  profiles={memberProfiles}
+                />
               )}
               {project.dashboard_url && (
                 <a
