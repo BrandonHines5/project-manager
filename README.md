@@ -2,6 +2,24 @@
 
 In-house construction project management app, intentionally narrower than Buildertrend.
 
+## Deploy
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fbrandonhines5%2Fproject-manager&project-name=hh-project-manager&repository-name=hh-project-manager&env=NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY&envDescription=Both%20values%20live%20in%20your%20Supabase%20project%20settings%20%E2%86%92%20API)
+
+Or import the existing repo at https://vercel.com/new and pick `brandonhines5/project-manager`.
+
+**Env vars to paste during import** (Supabase URL + publishable key for `HH-ProjectManager`):
+
+```
+NEXT_PUBLIC_SUPABASE_URL=https://ckvycpfyydmphtizsppn.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_IM95PLI5D3gf8XKdQcN3Tw_Qapif4L3
+```
+
+After the first deploy: in Supabase Dashboard → Authentication → URL Configuration, add the Vercel URL to **Site URL** + **Redirect URLs** so signup confirmation links work.
+
+Optional later: `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `NEXT_PUBLIC_APP_URL`.
+
+
 **Modules:**
 
 - **Projects** — linked to dashboard site by project number; status, contract price, target completion, dashboard URL.
