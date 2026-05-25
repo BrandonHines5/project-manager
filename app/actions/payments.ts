@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
+import { sendDashboardWebhook } from "@/lib/dashboard"
 
 const optStr = z.string().nullish()
 
@@ -46,16 +47,25 @@ export async function savePayment(input: PaymentInputT) {
       .eq("id", parsed.id)
     if (error) throw new Error(error.message)
   } else {
-    const { error } = await supabase.from("project_payments").insert({
-      project_id: parsed.project_id,
-      amount: parsed.amount,
-      paid_on: parsed.paid_on,
-      method: parsed.method,
-      reference: parsed.reference ?? null,
-      notes: parsed.notes ?? null,
-      recorded_by: profile.id,
-    })
+    const { data: row, error } = await supabase
+      .from("project_payments")
+      .insert({
+        project_id: parsed.project_id,
+        amount: parsed.amount,
+        paid_on: parsed.paid_on,
+        method: parsed.method,
+        reference: parsed.reference ?? null,
+        notes: parsed.notes ?? null,
+        recorded_by: profile.id,
+      })
+      .select("*")
+      .single()
     if (error) throw new Error(error.message)
+    // Only NEW payments get pushed — edits to existing rows don't fire a
+    // second event (the dashboard treats payments as append-only). If the
+    // staff truly need to correct a payment, deleting + re-adding is the
+    // right path and will refire correctly.
+    if (row) await sendDashboardWebhook("payment.recorded", row)
   }
   revalidatePath(`/projects/${parsed.project_id}/pricing`)
 }

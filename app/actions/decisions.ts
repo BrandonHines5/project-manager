@@ -6,6 +6,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireSession, requireStaff } from "@/lib/auth"
 import { addDays, todayISO } from "@/lib/utils"
 import { sendEmail, appUrl } from "@/lib/email"
+import { sendDashboardWebhook } from "@/lib/dashboard"
 import type { TablesUpdate } from "@/lib/db/types"
 
 const optStr = z.string().nullish()
@@ -235,6 +236,20 @@ export async function saveDecision(input: DecisionInputT) {
       parsed.project_id,
       profile.id
     )
+  }
+
+  // Notify the dashboard ONCE per approval (not on every re-save of an
+  // already-approved decision). The dashboard mirrors approved decisions
+  // into the client's progress view.
+  if (newlyApproved) {
+    const { data: decisionRow } = await supabase
+      .from("decisions")
+      .select("*")
+      .eq("id", id!)
+      .maybeSingle()
+    if (decisionRow) {
+      await sendDashboardWebhook("decision.approved", decisionRow)
+    }
   }
 
   if (newlyPendingClient) {

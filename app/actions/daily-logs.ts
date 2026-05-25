@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
+import { sendDashboardWebhook } from "@/lib/dashboard"
 
 const optStr = z.string().nullish()
 
@@ -160,6 +161,19 @@ export async function saveDailyLog(input: DailyLogInputT) {
   }
 
   revalidatePath(`/projects/${parsed.project_id}/daily-logs`)
+
+  // Push to the dashboard only when the log is client-visible. Internal
+  // logs stay on this side.
+  if (parsed.visibility === "client") {
+    const { data: row } = await supabase
+      .from("daily_logs")
+      .select("*")
+      .eq("id", id!)
+      .maybeSingle()
+    if (row) {
+      await sendDashboardWebhook("daily_log.published", row)
+    }
+  }
   return { id }
 }
 
