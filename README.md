@@ -10,7 +10,7 @@ Or import the existing repo at https://vercel.com/new and pick `brandonhines5/pr
 
 **Env vars to paste during import:**
 
-```
+```env
 NEXT_PUBLIC_SUPABASE_URL=https://<your-project-ref>.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<your-anon-key>
 ```

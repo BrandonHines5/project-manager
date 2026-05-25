@@ -20,10 +20,11 @@ const Followup = z
     notes: optStr,
   })
   .refine(
-    (f) => !(f.assignee_profile_id && f.assignee_company_id),
+    (f) => Boolean(f.assignee_profile_id) !== Boolean(f.assignee_company_id),
     {
-      message: "A follow-up cannot target both a profile and a company.",
-      path: ["assignee_company_id"],
+      message:
+        "A follow-up must target exactly one: a profile (staff) OR a company (sub/vendor).",
+      path: ["assignee_profile_id"],
     }
   )
 
@@ -218,6 +219,8 @@ export async function saveDecision(input: DecisionInputT) {
       .from("decision_attachments")
       .update({ caption: a.caption ?? null })
       .eq("id", a.id!)
+      // Defense in depth: only touch attachments owned by this decision.
+      .eq("decision_id", id)
     if (capErr) throw new Error(capErr.message)
   }
 

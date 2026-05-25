@@ -152,6 +152,10 @@ export async function saveDailyLog(input: DailyLogInputT) {
       .from("daily_log_attachments")
       .update({ caption: nz(a.caption) })
       .eq("id", a.id!)
+      // Defense in depth: only touch attachments that belong to THIS log.
+      // RLS would already prevent cross-tenant writes, but this also stops
+      // a same-staff cross-log accident.
+      .eq("daily_log_id", id)
     if (capErr) throw new Error(capErr.message)
   }
 
