@@ -159,12 +159,21 @@ const DuplicateProjectInput = z
 export type DuplicateProjectInputT = z.infer<typeof DuplicateProjectInput>
 
 /**
- * Clone a project's structure (schedule items + checklists + predecessors)
- * into a brand-new project. Skips project-specific data: assignments,
- * decisions, daily logs, files, payments, project_members.
+ * Clone a project's structure (schedule items + checklists + predecessors,
+ * plus decisions/selections with their cost breakdowns, follow-up templates,
+ * and attachments) into a brand-new project. Skips project-specific data:
+ * assignments, daily logs, files, payments, project_members, comments.
  *
  * Intended primary use: a "template" project staff maintain as the standard
- * Hines Homes build schedule, duplicated for each new build.
+ * Hines Homes build schedule + selections, duplicated for each new build.
+ *
+ * Resets on copy:
+ * - schedule_items.status        → 'not_started'
+ * - todo_checklist_items.is_done → false
+ * - decisions.status             → 'draft'
+ * - decisions.approved_at        → null
+ * - decisions.approved_by_client_id → null
+ * - decisions.number             → re-allocated 1..N in source order
  */
 export async function duplicateProject(input: DuplicateProjectInputT) {
   const profile = await requireStaff()
@@ -187,6 +196,10 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     { data: srcItems, error: itemsErr },
     { data: srcChecklist, error: checklistErr },
     { data: srcPreds, error: predsErr },
+    { data: srcDecisions, error: decisionsErr },
+    { data: srcCostItems, error: costItemsErr },
+    { data: srcFollowups, error: followupsErr },
+    { data: srcAttachments, error: attachmentsErr },
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -210,8 +223,39 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
         "*, schedule_items!schedule_predecessors_item_id_fkey!inner(project_id)"
       )
       .eq("schedule_items.project_id", parsed.source_project_id),
+    supabase
+      .from("decisions")
+      .select("*")
+      .eq("project_id", parsed.source_project_id)
+      .order("created_at", { ascending: true }),
+    // Cost items + followup templates + attachments are joined through
+    // decisions so we only get rows that belong to the source project,
+    // regardless of which decisions actually have any.
+    supabase
+      .from("decision_cost_items")
+      .select("*, decisions!inner(project_id)")
+      .eq("decisions.project_id", parsed.source_project_id)
+      .order("position", { ascending: true }),
+    supabase
+      .from("decision_followup_templates")
+      .select("*, decisions!inner(project_id)")
+      .eq("decisions.project_id", parsed.source_project_id)
+      .order("position", { ascending: true }),
+    supabase
+      .from("decision_attachments")
+      .select("*, decisions!inner(project_id)")
+      .eq("decisions.project_id", parsed.source_project_id)
+      .order("position", { ascending: true }),
   ])
-  const readErr = sourceErr ?? itemsErr ?? checklistErr ?? predsErr
+  const readErr =
+    sourceErr ??
+    itemsErr ??
+    checklistErr ??
+    predsErr ??
+    decisionsErr ??
+    costItemsErr ??
+    followupsErr ??
+    attachmentsErr
   if (readErr) throw new Error(`Source read failed: ${readErr.message}`)
   if (!source) throw new Error("Source project not found")
 
@@ -367,7 +411,153 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     if (ePerr) throw new Error(ePerr.message)
   }
 
-  // 5. Fire the dashboard webhook for the new project (mirrors createProject).
+  // 5. Copy decisions (change orders + selections) with their child rows.
+  //    Templates are most useful when they carry their standard
+  //    selection set: paint, fixtures, finishes, etc. Same pattern as
+  //    schedule_items — pre-assign IDs so we can map child rows back
+  //    without a RETURNING-order assumption.
+  //    Reset on copy: status → 'draft', approved_at → null,
+  //                   approved_by_client_id → null,
+  //                   number → re-allocated 1..N in source order.
+  type DecisionRow = Tables<"decisions">
+  type CostItemRow = Tables<"decision_cost_items"> & { decisions?: unknown }
+  type FollowupRow = Tables<"decision_followup_templates"> & {
+    decisions?: unknown
+  }
+  type AttachmentRow = Tables<"decision_attachments"> & { decisions?: unknown }
+
+  const decisionRows = (srcDecisions ?? []) as DecisionRow[]
+  const decisionIdMap = new Map<string, string>()
+  let decisionsCopied = 0
+  let costItemsCopied = 0
+  let followupsCopied = 0
+  let attachmentsCopied = 0
+
+  if (decisionRows.length > 0) {
+    const newDecisions = decisionRows.map((d, i) => {
+      const newId = crypto.randomUUID()
+      decisionIdMap.set(d.id, newId)
+      return {
+        id: newId,
+        project_id: newProject.id,
+        // Per-project sequential numbers re-allocated 1..N. Safe here
+        // because the destination project is brand new — no other staff
+        // can be racing to insert decisions yet.
+        number: i + 1,
+        kind: d.kind,
+        title: d.title,
+        description: d.description,
+        cost_delta: d.cost_delta,
+        markup_percent: d.markup_percent,
+        status: "draft" as const,
+        approved_at: null,
+        approved_by_client_id: null,
+        created_by: profile.id,
+      }
+    })
+    const { error: dErr } = await supabase.from("decisions").insert(newDecisions)
+    if (dErr) throw new Error(dErr.message)
+    decisionsCopied = newDecisions.length
+
+    // Cost items — map decision_id through decisionIdMap. Skip rows
+    // whose decision didn't get copied (defensive — shouldn't happen
+    // since both come from the same project).
+    const costItemRows = (srcCostItems ?? []) as CostItemRow[]
+    const newCostItems = costItemRows
+      .map((ci) => {
+        const newDecisionId = decisionIdMap.get(ci.decision_id)
+        if (!newDecisionId) return null
+        return {
+          decision_id: newDecisionId,
+          cost_code_id: ci.cost_code_id,
+          description: ci.description,
+          quantity: ci.quantity,
+          unit: ci.unit,
+          unit_cost: ci.unit_cost,
+          position: ci.position,
+        }
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+    if (newCostItems.length > 0) {
+      const { error: ciErr } = await supabase
+        .from("decision_cost_items")
+        .insert(newCostItems)
+      if (ciErr) throw new Error(ciErr.message)
+      costItemsCopied = newCostItems.length
+    }
+
+    // Follow-up templates — assignee_profile_id and assignee_company_id
+    // pass through unchanged. Same staff / subs work across projects.
+    const followupRows = (srcFollowups ?? []) as FollowupRow[]
+    const newFollowups = followupRows
+      .map((f) => {
+        const newDecisionId = decisionIdMap.get(f.decision_id)
+        if (!newDecisionId) return null
+        return {
+          decision_id: newDecisionId,
+          title: f.title,
+          assignee_profile_id: f.assignee_profile_id,
+          assignee_company_id: f.assignee_company_id,
+          due_offset_days: f.due_offset_days,
+          notes: f.notes,
+          position: f.position,
+        }
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+    if (newFollowups.length > 0) {
+      const { error: fErr } = await supabase
+        .from("decision_followup_templates")
+        .insert(newFollowups)
+      if (fErr) throw new Error(fErr.message)
+      followupsCopied = newFollowups.length
+    }
+
+    // Attachments — copy each storage object to a fresh path under the
+    // new project, then insert the attachment row pointing at the new
+    // path. We don't reuse the source path: deleting either decision
+    // later would otherwise remove a blob the other one still references.
+    // Storage failures are logged but don't abort the clone — staff can
+    // re-upload the missing files.
+    const attachmentRows = (srcAttachments ?? []) as AttachmentRow[]
+    for (const a of attachmentRows) {
+      const newDecisionId = decisionIdMap.get(a.decision_id)
+      if (!newDecisionId) continue
+      const ext = a.storage_path.split(".").pop() ?? "bin"
+      const newPath = `projects/${newProject.id}/decisions/${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}.${ext}`
+      const { error: copyErr } = await supabase.storage
+        .from(a.storage_bucket)
+        .copy(a.storage_path, newPath)
+      if (copyErr) {
+        console.warn(
+          `[duplicateProject] storage copy failed for ${a.storage_path}: ${copyErr.message} (skipping)`
+        )
+        continue
+      }
+      const { error: aErr } = await supabase
+        .from("decision_attachments")
+        .insert({
+          decision_id: newDecisionId,
+          storage_bucket: a.storage_bucket,
+          storage_path: newPath,
+          file_name: a.file_name,
+          file_type: a.file_type,
+          file_size: a.file_size,
+          caption: a.caption,
+          position: a.position,
+        })
+      if (aErr) {
+        console.warn(
+          `[duplicateProject] attachment row insert failed: ${aErr.message} (orphaned ${newPath})`
+        )
+        continue
+      }
+      attachmentsCopied++
+    }
+  }
+
+  // 6. Fire the dashboard webhook for the new project (mirrors createProject).
   await sendDashboardWebhook("project.created", newProject)
 
   revalidatePath("/projects")
@@ -376,5 +566,9 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     itemsCopied: idMap.size,
     checklistsCopied: newChecklists.length,
     predecessorsCopied: newPreds.length,
+    decisionsCopied,
+    costItemsCopied,
+    followupsCopied,
+    attachmentsCopied,
   }
 }
