@@ -22,7 +22,14 @@ import {
 import { Field, Input, Textarea, Select, Label } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { cn, formatDate } from "@/lib/utils"
+import {
+  cn,
+  formatDate,
+  addBusinessDays,
+  nextBusinessDay,
+  businessDaysBetween,
+  endDateFromDuration,
+} from "@/lib/utils"
 import {
   saveScheduleItem,
   deleteScheduleItem,
@@ -72,7 +79,61 @@ export function ScheduleItemDialog({
   const [description, setDescription] = useState(item?.description ?? "")
   const [startDate, setStartDate] = useState(item?.start_date ?? "")
   const [endDate, setEndDate] = useState(item?.end_date ?? "")
+  // Duration is in business days (M–F). Derived from start+end on existing
+  // items; otherwise blank.
+  const [duration, setDuration] = useState<string>(() => {
+    if (item?.start_date && item?.end_date) {
+      return String(businessDaysBetween(item.start_date, item.end_date))
+    }
+    return ""
+  })
   const [dueDate, setDueDate] = useState(item?.due_date ?? "")
+
+  // Recompute end from start + duration. Called when either changes.
+  function applyDuration(nextStart: string, nextDuration: string) {
+    const n = Number(nextDuration)
+    if (nextStart && Number.isFinite(n) && n > 0) {
+      setEndDate(endDateFromDuration(nextStart, n))
+    }
+  }
+  function onChangeStartDate(v: string) {
+    setStartDate(v)
+    if (duration) applyDuration(v, duration)
+  }
+  function onChangeDuration(v: string) {
+    setDuration(v)
+    if (startDate) applyDuration(startDate, v)
+  }
+  function onChangeEndDate(v: string) {
+    setEndDate(v)
+    if (startDate && v) {
+      setDuration(String(businessDaysBetween(startDate, v)))
+    }
+  }
+  // Called by PredecessorsEditor when a new predecessor is added — auto-fills
+  // the start date to the next business day after the predecessor's end
+  // (plus lag, for FS dependencies). Only fires if start date is currently
+  // unset, so manual edits aren't clobbered.
+  function onPredecessorAdded(p: { predecessor_id: string; dep_type: string; lag_days: number }) {
+    if (startDate) return
+    const pred = data.items.find((it) => it.id === p.predecessor_id)
+    if (!pred) return
+    let basis = ""
+    if (p.dep_type === "FS" && pred.end_date) basis = pred.end_date
+    else if (p.dep_type === "SS" && pred.start_date) basis = pred.start_date
+    else if (p.dep_type === "FF" && pred.end_date) basis = pred.end_date
+    else if (p.dep_type === "SF" && pred.start_date) basis = pred.start_date
+    if (!basis) return
+    // FS / SS: start AT (or after) the basis + lag + 1 business day (FS only).
+    // FF / SF: align end first; we approximate by starting at basis + lag.
+    const lagApplied = addBusinessDays(basis, Math.max(p.lag_days, 0))
+    const newStart =
+      p.dep_type === "FS"
+        ? addBusinessDays(lagApplied, 1)
+        : nextBusinessDay(lagApplied)
+    setStartDate(newStart)
+    if (duration) applyDuration(newStart, duration)
+  }
   const [status, setStatus] = useState<Enums<"schedule_item_status">>(
     item?.status ?? "not_started"
   )
@@ -255,14 +316,26 @@ export function ScheduleItemDialog({
                   <Input
                     type="date"
                     value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
+                    onChange={(e) => onChangeStartDate(e.target.value)}
+                  />
+                </Field>
+                <Field
+                  label="Duration (business days)"
+                  hint="M–F only. Sets end date automatically."
+                >
+                  <Input
+                    type="number"
+                    min={0}
+                    value={duration}
+                    onChange={(e) => onChangeDuration(e.target.value)}
+                    placeholder="e.g. 5"
                   />
                 </Field>
                 <Field label="End date">
                   <Input
                     type="date"
                     value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
+                    onChange={(e) => onChangeEndDate(e.target.value)}
                   />
                 </Field>
               </>
@@ -313,6 +386,7 @@ export function ScheduleItemDialog({
               value={predecessors}
               onChange={setPredecessors}
               items={itemsForPredecessors}
+              onAdd={onPredecessorAdded}
             />
           )}
 
@@ -515,10 +589,12 @@ function PredecessorsEditor({
   value,
   onChange,
   items,
+  onAdd,
 }: {
   value: PredEdit[]
   onChange: (v: PredEdit[]) => void
   items: Tables<"schedule_items">[]
+  onAdd?: (p: PredEdit) => void
 }) {
   const [sel, setSel] = useState("")
   const [dep, setDep] = useState<Enums<"dependency_type">>("FS")
@@ -526,7 +602,9 @@ function PredecessorsEditor({
   function add() {
     if (!sel) return
     if (value.some((p) => p.predecessor_id === sel)) return
-    onChange([...value, { predecessor_id: sel, dep_type: dep, lag_days: lag }])
+    const newPred: PredEdit = { predecessor_id: sel, dep_type: dep, lag_days: lag }
+    onChange([...value, newPred])
+    onAdd?.(newPred)
     setSel("")
     setDep("FS")
     setLag(0)

@@ -2,8 +2,10 @@ import { NextResponse, type NextRequest } from "next/server"
 import { createServerClient } from "@supabase/ssr"
 import type { Database } from "@/lib/db/types"
 
-const PUBLIC_PATHS = ["/login", "/auth"]
-
+// Middleware here ONLY refreshes the Supabase auth tokens. It never redirects.
+// Redirecting from middleware is what causes the classic "browser ↔ server
+// out of sync, infinite /login ↔ /projects loop" — see the Supabase SSR docs
+// warning. Page-level `requireSession()` / login client logic handle redirects.
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request })
 
@@ -28,29 +30,7 @@ export async function updateSession(request: NextRequest) {
     }
   )
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  const path = request.nextUrl.pathname
-  const isPublic =
-    PUBLIC_PATHS.some((p) => path === p || path.startsWith(`${p}/`)) ||
-    path.startsWith("/_next") ||
-    path === "/favicon.ico"
-
-  if (!user && !isPublic) {
-    const url = request.nextUrl.clone()
-    url.pathname = "/login"
-    url.searchParams.set("redirect", path)
-    return NextResponse.redirect(url)
-  }
-
-  if (user && (path === "/login" || path === "/")) {
-    const url = request.nextUrl.clone()
-    url.pathname = "/projects"
-    url.search = ""
-    return NextResponse.redirect(url)
-  }
+  await supabase.auth.getUser()
 
   return response
 }

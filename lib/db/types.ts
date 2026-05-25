@@ -48,6 +48,324 @@ export type Database = {
         }
         Relationships: []
       }
+      daily_logs: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          log_date: string
+          notes: string | null
+          project_id: string
+          updated_at: string
+          visibility: Database["public"]["Enums"]["daily_log_visibility"]
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          log_date?: string
+          notes?: string | null
+          project_id: string
+          updated_at?: string
+          visibility?: Database["public"]["Enums"]["daily_log_visibility"]
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          log_date?: string
+          notes?: string | null
+          project_id?: string
+          updated_at?: string
+          visibility?: Database["public"]["Enums"]["daily_log_visibility"]
+        }
+        Relationships: []
+      }
+      daily_log_subs_on_site: {
+        Row: {
+          company_id: string
+          daily_log_id: string
+          notes: string | null
+        }
+        Insert: {
+          company_id: string
+          daily_log_id: string
+          notes?: string | null
+        }
+        Update: {
+          company_id?: string
+          daily_log_id?: string
+          notes?: string | null
+        }
+        Relationships: []
+      }
+      project_payments: {
+        Row: {
+          amount: number
+          created_at: string
+          id: string
+          method: Database["public"]["Enums"]["payment_method"]
+          notes: string | null
+          paid_on: string
+          project_id: string
+          recorded_by: string | null
+          reference: string | null
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          id?: string
+          method?: Database["public"]["Enums"]["payment_method"]
+          notes?: string | null
+          paid_on?: string
+          project_id: string
+          recorded_by?: string | null
+          reference?: string | null
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          id?: string
+          method?: Database["public"]["Enums"]["payment_method"]
+          notes?: string | null
+          paid_on?: string
+          project_id?: string
+          recorded_by?: string | null
+          reference?: string | null
+        }
+        Relationships: []
+      }
+      project_files: {
+        Row: {
+          category: Database["public"]["Enums"]["file_category"]
+          created_at: string
+          description: string | null
+          file_name: string
+          file_size: number | null
+          file_type: string | null
+          id: string
+          project_id: string
+          storage_bucket: string
+          storage_path: string
+          title: string
+          uploaded_by: string | null
+        }
+        Insert: {
+          category?: Database["public"]["Enums"]["file_category"]
+          created_at?: string
+          description?: string | null
+          file_name: string
+          file_size?: number | null
+          file_type?: string | null
+          id?: string
+          project_id: string
+          storage_bucket?: string
+          storage_path: string
+          title: string
+          uploaded_by?: string | null
+        }
+        Update: {
+          category?: Database["public"]["Enums"]["file_category"]
+          created_at?: string
+          description?: string | null
+          file_name?: string
+          file_size?: number | null
+          file_type?: string | null
+          id?: string
+          project_id?: string
+          storage_bucket?: string
+          storage_path?: string
+          title?: string
+          uploaded_by?: string | null
+        }
+        Relationships: []
+      }
+      decisions: {
+        Row: {
+          approved_at: string | null
+          approved_by_client_id: string | null
+          cost_delta: number | null
+          created_at: string
+          created_by: string | null
+          description: string | null
+          id: string
+          kind: Database["public"]["Enums"]["decision_kind"]
+          number: number
+          project_id: string
+          status: Database["public"]["Enums"]["decision_status"]
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by_client_id?: string | null
+          cost_delta?: number | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          kind: Database["public"]["Enums"]["decision_kind"]
+          number: number
+          project_id: string
+          status?: Database["public"]["Enums"]["decision_status"]
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by_client_id?: string | null
+          cost_delta?: number | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          kind?: Database["public"]["Enums"]["decision_kind"]
+          number?: number
+          project_id?: string
+          status?: Database["public"]["Enums"]["decision_status"]
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      decision_comments: {
+        Row: {
+          author_id: string | null
+          body: string
+          created_at: string
+          decision_id: string
+          id: string
+        }
+        Insert: {
+          author_id?: string | null
+          body: string
+          created_at?: string
+          decision_id: string
+          id?: string
+        }
+        Update: {
+          author_id?: string | null
+          body?: string
+          created_at?: string
+          decision_id?: string
+          id?: string
+        }
+        Relationships: []
+      }
+      decision_attachments: {
+        Row: {
+          caption: string | null
+          created_at: string
+          decision_id: string
+          file_name: string
+          file_size: number | null
+          file_type: string | null
+          id: string
+          position: number
+          storage_bucket: string
+          storage_path: string
+        }
+        Insert: {
+          caption?: string | null
+          created_at?: string
+          decision_id: string
+          file_name: string
+          file_size?: number | null
+          file_type?: string | null
+          id?: string
+          position?: number
+          storage_bucket?: string
+          storage_path: string
+        }
+        Update: {
+          caption?: string | null
+          created_at?: string
+          decision_id?: string
+          file_name?: string
+          file_size?: number | null
+          file_type?: string | null
+          id?: string
+          position?: number
+          storage_bucket?: string
+          storage_path?: string
+        }
+        Relationships: []
+      }
+      decision_followup_templates: {
+        Row: {
+          assignee_company_id: string | null
+          assignee_profile_id: string | null
+          created_at: string
+          decision_id: string
+          due_offset_days: number
+          id: string
+          notes: string | null
+          position: number
+          title: string
+        }
+        Insert: {
+          assignee_company_id?: string | null
+          assignee_profile_id?: string | null
+          created_at?: string
+          decision_id: string
+          due_offset_days?: number
+          id?: string
+          notes?: string | null
+          position?: number
+          title: string
+        }
+        Update: {
+          assignee_company_id?: string | null
+          assignee_profile_id?: string | null
+          created_at?: string
+          decision_id?: string
+          due_offset_days?: number
+          id?: string
+          notes?: string | null
+          position?: number
+          title?: string
+        }
+        Relationships: []
+      }
+      daily_log_attachments: {
+        Row: {
+          caption: string | null
+          created_at: string
+          daily_log_id: string
+          file_name: string
+          file_size: number | null
+          file_type: string | null
+          id: string
+          position: number
+          storage_bucket: string
+          storage_path: string
+        }
+        Insert: {
+          caption?: string | null
+          created_at?: string
+          daily_log_id: string
+          file_name: string
+          file_size?: number | null
+          file_type?: string | null
+          id?: string
+          position?: number
+          storage_bucket?: string
+          storage_path: string
+        }
+        Update: {
+          caption?: string | null
+          created_at?: string
+          daily_log_id?: string
+          file_name?: string
+          file_size?: number | null
+          file_type?: string | null
+          id?: string
+          position?: number
+          storage_bucket?: string
+          storage_path?: string
+        }
+        Relationships: []
+      }
       notifications: {
         Row: {
           body: string | null
@@ -85,7 +403,7 @@ export type Database = {
         Row: {
           company_id: string | null
           created_at: string
-          email: string
+          email: string | null
           full_name: string
           id: string
           phone: string | null
@@ -94,7 +412,7 @@ export type Database = {
         Insert: {
           company_id?: string | null
           created_at?: string
-          email: string
+          email?: string | null
           full_name?: string
           id: string
           phone?: string | null
@@ -103,7 +421,7 @@ export type Database = {
         Update: {
           company_id?: string | null
           created_at?: string
-          email?: string
+          email?: string | null
           full_name?: string
           id?: string
           phone?: string | null
@@ -254,6 +572,7 @@ export type Database = {
           project_id: string
           recurrence_parent_id: string | null
           recurrence_rule: Json | null
+          source_decision_id: string | null
           start_date: string | null
           status: Database["public"]["Enums"]["schedule_item_status"]
           title: string
@@ -275,6 +594,7 @@ export type Database = {
           project_id: string
           recurrence_parent_id?: string | null
           recurrence_rule?: Json | null
+          source_decision_id?: string | null
           start_date?: string | null
           status?: Database["public"]["Enums"]["schedule_item_status"]
           title: string
@@ -296,6 +616,7 @@ export type Database = {
           project_id?: string
           recurrence_parent_id?: string | null
           recurrence_rule?: Json | null
+          source_decision_id?: string | null
           start_date?: string | null
           status?: Database["public"]["Enums"]["schedule_item_status"]
           title?: string
@@ -359,9 +680,28 @@ export type Database = {
       }
     }
     Views: { [_ in never]: never }
-    Functions: { [_ in never]: never }
+    Functions: {
+      next_decision_number: {
+        Args: { p_project: string }
+        Returns: number
+      }
+    }
     Enums: {
       company_type: "sub" | "vendor" | "client"
+      daily_log_visibility: "internal" | "client"
+      decision_kind: "change_order" | "selection"
+      decision_status:
+        | "draft"
+        | "pending_client"
+        | "approved"
+        | "rejected"
+      payment_method: "check" | "wire" | "card" | "cash" | "other"
+      file_category:
+        | "house_plans"
+        | "plot_plan"
+        | "permit"
+        | "contract"
+        | "other"
       delay_reason:
         | "weather"
         | "sub"

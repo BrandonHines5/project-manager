@@ -6,8 +6,12 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
 import { wouldCreateCycle, cascadeFromPredecessors } from "@/lib/schedule/scheduling"
 import type { RecurrenceRule } from "@/lib/schedule/recurrence"
+import { sendEmail, appUrl } from "@/lib/email"
 
-const NULLABLE_DATE = z.string().optional().or(z.literal(""))
+// Permissive schema: accept anything reasonable and normalize inside the
+// action. Never let a benign client quirk (null vs "", missing key, extra
+// field, etc.) block a save.
+const optStr = z.string().nullish() // string | null | undefined
 
 const Recurrence = z
   .object({
@@ -19,41 +23,44 @@ const Recurrence = z
   .nullable()
   .optional()
 
-const ScheduleItemInput = z.object({
-  id: z.string().uuid().optional(),
-  project_id: z.string().uuid(),
-  parent_id: z.string().uuid().nullable().optional(),
-  kind: z.enum(["work", "todo"]),
-  title: z.string().min(1, "Required").max(300),
-  description: z.string().optional().nullable(),
-  start_date: NULLABLE_DATE,
-  end_date: NULLABLE_DATE,
-  due_date: NULLABLE_DATE,
-  status: z
-    .enum(["not_started", "in_progress", "complete", "delayed"])
-    .default("not_started"),
-  recurrence_rule: Recurrence,
-  assignments: z
-    .array(
-      z.object({
-        profile_id: z.string().uuid().nullable().optional(),
-        company_id: z.string().uuid().nullable().optional(),
-      })
-    )
-    .default([]),
-  checklist: z
-    .array(z.object({ id: z.string().optional(), label: z.string(), is_done: z.boolean() }))
-    .default([]),
-  predecessors: z
-    .array(
-      z.object({
-        predecessor_id: z.string().uuid(),
-        dep_type: z.enum(["FS", "SS", "FF", "SF"]).default("FS"),
-        lag_days: z.number().int().default(0),
-      })
-    )
-    .default([]),
+const Assignment = z.object({
+  profile_id: optStr,
+  company_id: optStr,
 })
+
+const ChecklistItem = z.object({
+  id: optStr,
+  label: z.string().default(""),
+  is_done: z.boolean().default(false),
+})
+
+const Predecessor = z.object({
+  predecessor_id: z.string(),
+  dep_type: z.enum(["FS", "SS", "FF", "SF"]).default("FS"),
+  lag_days: z.coerce.number().int().default(0),
+})
+
+const ScheduleItemInput = z
+  .object({
+    id: optStr,
+    project_id: z.string(),
+    parent_id: optStr,
+    kind: z.enum(["work", "todo"]),
+    title: z.string().min(1, "Required").max(300),
+    description: optStr,
+    start_date: optStr,
+    end_date: optStr,
+    due_date: optStr,
+    status: z
+      .enum(["not_started", "in_progress", "complete", "delayed"])
+      .default("not_started"),
+    recurrence_rule: Recurrence,
+    assignments: z.array(Assignment).default([]),
+    checklist: z.array(ChecklistItem).default([]),
+    predecessors: z.array(Predecessor).default([]),
+  })
+  // Don't fail on unknown extra fields.
+  .passthrough()
 
 export type ScheduleItemInputT = z.infer<typeof ScheduleItemInput>
 
@@ -69,29 +76,52 @@ function daysBetween(a: string, b: string) {
 
 export async function saveScheduleItem(input: ScheduleItemInputT) {
   await requireStaff()
-  const parsed = ScheduleItemInput.parse(input)
+  const result = ScheduleItemInput.safeParse(input)
+  if (!result.success) {
+    const first = result.error.issues[0]
+    throw new Error(
+      `Invalid form data at ${first.path.join(".") || "(root)"}: ${first.message}`
+    )
+  }
+  const parsed = result.data
   const supabase = await createSupabaseServerClient()
 
-  const duration =
-    parsed.start_date && parsed.end_date
-      ? daysBetween(parsed.start_date, parsed.end_date)
-      : null
+  // Enforce assignment XOR: exactly one of profile_id / company_id per row.
+  // Rows where neither is set are dropped silently (user added a row then
+  // didn't pick a value). Rows where both are set are a programming error.
+  const cleanedAssignments = parsed.assignments
+    .map((a) => ({
+      profile_id: nz(a.profile_id),
+      company_id: nz(a.company_id),
+    }))
+    .filter((a) => a.profile_id || a.company_id)
+  for (const a of cleanedAssignments) {
+    if (a.profile_id && a.company_id) {
+      throw new Error(
+        "An assignment must reference exactly one of profile or company, not both."
+      )
+    }
+  }
+
+  const startD = nz(parsed.start_date)
+  const endD = nz(parsed.end_date)
+  const duration = startD && endD ? daysBetween(startD, endD) : null
 
   const baseRow = {
     project_id: parsed.project_id,
-    parent_id: parsed.parent_id ?? null,
+    parent_id: nz(parsed.parent_id),
     kind: parsed.kind,
     title: parsed.title,
-    description: parsed.description ?? null,
-    start_date: nz(parsed.start_date),
-    end_date: nz(parsed.end_date),
+    description: nz(parsed.description),
+    start_date: startD,
+    end_date: endD,
     due_date: nz(parsed.due_date),
     duration_days: duration,
     status: parsed.status,
     recurrence_rule: (parsed.recurrence_rule ?? null) as RecurrenceRule | null,
   }
 
-  let id = parsed.id
+  let id: string | null = nz(parsed.id)
   if (id) {
     const { error } = await supabase
       .from("schedule_items")
@@ -108,26 +138,62 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     id = data.id
   }
 
-  // Replace assignments
-  await supabase.from("schedule_assignments").delete().eq("schedule_item_id", id)
-  if (parsed.assignments.length) {
-    const rows = parsed.assignments
-      .filter((a) => a.profile_id || a.company_id)
-      .map((a) => ({
-        schedule_item_id: id!,
-        profile_id: a.profile_id ?? null,
-        company_id: a.company_id ?? null,
-      }))
-    if (rows.length) {
-      const { error: assignErr } = await supabase
-        .from("schedule_assignments")
-        .insert(rows)
-      if (assignErr) throw new Error(assignErr.message)
+  // Replace assignments. Track who is newly assigned so we can notify.
+  const { data: oldAssignments } = await supabase
+    .from("schedule_assignments")
+    .select("profile_id, company_id")
+    .eq("schedule_item_id", id)
+  const { error: aDelErr } = await supabase
+    .from("schedule_assignments")
+    .delete()
+    .eq("schedule_item_id", id)
+  if (aDelErr) throw new Error(aDelErr.message)
+
+  if (cleanedAssignments.length) {
+    const rows = cleanedAssignments.map((a) => ({
+      schedule_item_id: id!,
+      profile_id: a.profile_id,
+      company_id: a.company_id,
+    }))
+    const { error: assignErr } = await supabase
+      .from("schedule_assignments")
+      .insert(rows)
+    if (assignErr) throw new Error(assignErr.message)
+
+    // Notify newly-assigned profiles + companies (idempotent against re-saves).
+    // Email + notification failures must NOT fail the primary save — wrap in
+    // try/catch and log instead.
+    const oldKeys = new Set(
+      (oldAssignments ?? []).map(
+        (a) => `${a.profile_id ?? ""}|${a.company_id ?? ""}`
+      )
+    )
+    const newOnes = rows.filter(
+      (r) => !oldKeys.has(`${r.profile_id ?? ""}|${r.company_id ?? ""}`)
+    )
+    if (newOnes.length) {
+      try {
+        await notifyScheduleAssignees(
+          newOnes,
+          parsed.project_id,
+          id!,
+          parsed.title
+        )
+      } catch (e) {
+        console.warn(
+          "[saveScheduleItem] notifyScheduleAssignees failed (non-fatal):",
+          e instanceof Error ? e.message : e
+        )
+      }
     }
   }
 
-  // Replace checklist (for todos only)
-  await supabase.from("todo_checklist_items").delete().eq("schedule_item_id", id)
+  // Replace checklist (for todos only).
+  const { error: clDelErr } = await supabase
+    .from("todo_checklist_items")
+    .delete()
+    .eq("schedule_item_id", id)
+  if (clDelErr) throw new Error(clDelErr.message)
   if (parsed.kind === "todo" && parsed.checklist.length) {
     const rows = parsed.checklist
       .filter((c) => c.label.trim() !== "")
@@ -145,14 +211,14 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     }
   }
 
-  // Replace predecessors with cycle check
-  if (parsed.predecessors.length || true) {
-    const { data: existing } = await supabase
+  // Replace predecessors with cycle check.
+  {
+    const { data: existing, error: pSelErr } = await supabase
       .from("schedule_predecessors")
       .select("item_id, predecessor_id, dep_type, lag_days, id, created_at")
       .or(`item_id.eq.${id},predecessor_id.eq.${id}`)
+    if (pSelErr) throw new Error(pSelErr.message)
     const allPreds = existing ?? []
-    // Detect cycle using the proposed final state of predecessors-of-this-item
     const others = allPreds.filter((p) => p.item_id !== id)
     const proposed = [
       ...others,
@@ -170,7 +236,11 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
         throw new Error("Predecessor would create a cycle")
       }
     }
-    await supabase.from("schedule_predecessors").delete().eq("item_id", id)
+    const { error: delPredErr } = await supabase
+      .from("schedule_predecessors")
+      .delete()
+      .eq("item_id", id)
+    if (delPredErr) throw new Error(delPredErr.message)
     if (parsed.predecessors.length) {
       const rows = parsed.predecessors.map((p) => ({
         item_id: id!,
@@ -185,18 +255,71 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     }
   }
 
-  // Cascade to successors
   await applyCascade(parsed.project_id, id!)
 
   revalidatePath(`/projects/${parsed.project_id}/schedule`)
   return { id }
 }
 
+async function notifyScheduleAssignees(
+  rows: { profile_id: string | null; company_id: string | null }[],
+  projectId: string,
+  scheduleItemId: string,
+  title: string
+) {
+  const supabase = await createSupabaseServerClient()
+  const profileIds = rows.map((r) => r.profile_id).filter(Boolean) as string[]
+  const companyIds = rows.map((r) => r.company_id).filter(Boolean) as string[]
+
+  // In-app notifications for profile assignees
+  if (profileIds.length) {
+    await supabase.from("notifications").insert(
+      profileIds.map((id) => ({
+        recipient_id: id,
+        type: "schedule_assignment",
+        title: `Assigned: ${title}`,
+        body: "You were assigned to a schedule item",
+        link_url: `/projects/${projectId}/schedule`,
+      }))
+    )
+  }
+
+  // Email — best-effort, never blocks save
+  try {
+    const link = appUrl(`/projects/${projectId}/schedule`)
+    const emails: string[] = []
+    if (profileIds.length) {
+      const { data: profs } = await supabase
+        .from("profiles")
+        .select("email")
+        .in("id", profileIds)
+      for (const p of profs ?? []) if (p.email) emails.push(p.email)
+    }
+    if (companyIds.length) {
+      const { data: cos } = await supabase
+        .from("companies")
+        .select("email")
+        .in("id", companyIds)
+      for (const c of cos ?? []) if (c.email) emails.push(c.email)
+    }
+    if (emails.length) {
+      await sendEmail({
+        to: emails,
+        subject: `New assignment: ${title}`,
+        text: `You were assigned to "${title}" on the project. Open: ${link}`,
+      })
+    }
+  } catch (e) {
+    console.warn("schedule assignment email failed:", e)
+  }
+  void scheduleItemId
+}
+
 async function applyCascade(projectId: string, movedId: string) {
   const supabase = await createSupabaseServerClient()
   const { data: items } = await supabase
     .from("schedule_items")
-    .select("id, start_date, end_date, kind, parent_id, project_id, due_date, duration_days, status, title, description, position, created_at, updated_at, baseline_start_date, baseline_end_date, recurrence_rule, recurrence_parent_id, created_by")
+    .select("*")
     .eq("project_id", projectId)
   const { data: preds } = await supabase
     .from("schedule_predecessors")
@@ -204,25 +327,33 @@ async function applyCascade(projectId: string, movedId: string) {
   if (!items || !preds) return
   const updates = cascadeFromPredecessors(items, preds, movedId)
   for (const u of updates) {
-    await supabase
+    const { error } = await supabase
       .from("schedule_items")
       .update({ start_date: u.start_date, end_date: u.end_date })
       .eq("id", u.id)
+    if (error) {
+      // Cascade failed partway. Surface so the caller can investigate; the
+      // earlier updates have already persisted (no transaction is available
+      // via the JS client).
+      throw new Error(
+        `Cascade failed at ${u.id}: ${error.message}. Some successor dates may be partially updated.`
+      )
+    }
   }
 }
 
-export async function deleteScheduleItem({
-  id,
-  project_id,
-}: {
-  id: string
-  project_id: string
-}) {
+const IdProjectInput = z.object({ id: z.string(), project_id: z.string() })
+
+export async function deleteScheduleItem(input: { id: string; project_id: string }) {
   await requireStaff()
+  const parsed = IdProjectInput.parse(input)
   const supabase = await createSupabaseServerClient()
-  const { error } = await supabase.from("schedule_items").delete().eq("id", id)
+  const { error } = await supabase
+    .from("schedule_items")
+    .delete()
+    .eq("id", parsed.id)
   if (error) throw new Error(error.message)
-  revalidatePath(`/projects/${project_id}/schedule`)
+  revalidatePath(`/projects/${parsed.project_id}/schedule`)
 }
 
 export async function logDelay({
@@ -272,6 +403,31 @@ export async function logDelay({
     }
   }
   revalidatePath(`/projects/${project_id}/schedule`)
+}
+
+const MoveInput = z.object({
+  id: z.string(),
+  project_id: z.string(),
+  start_date: z.string().min(1),
+  end_date: z.string().min(1),
+})
+
+export async function moveScheduleItem(input: {
+  id: string
+  project_id: string
+  start_date: string
+  end_date: string
+}) {
+  await requireStaff()
+  const parsed = MoveInput.parse(input)
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase
+    .from("schedule_items")
+    .update({ start_date: parsed.start_date, end_date: parsed.end_date })
+    .eq("id", parsed.id)
+  if (error) throw new Error(error.message)
+  await applyCascade(parsed.project_id, parsed.id)
+  revalidatePath(`/projects/${parsed.project_id}/schedule`)
 }
 
 export async function setItemStatus({

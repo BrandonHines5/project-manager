@@ -6,7 +6,8 @@ import {
   LayoutGrid,
   Bell,
   Building2,
-  Settings,
+  BarChart3,
+  Users,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { UserRole } from "@/lib/auth"
@@ -22,7 +23,8 @@ const ITEMS: Item[] = [
   { href: "/projects", label: "Projects", icon: LayoutGrid },
   { href: "/notifications", label: "Notifications", icon: Bell },
   { href: "/companies", label: "Companies", icon: Building2, roles: ["staff"] },
-  { href: "/settings", label: "Settings", icon: Settings, roles: ["staff"] },
+  { href: "/team", label: "Team", icon: Users, roles: ["staff"] },
+  { href: "/reports", label: "Reports", icon: BarChart3, roles: ["staff"] },
 ]
 
 export function Sidebar({ role }: { role: UserRole }) {

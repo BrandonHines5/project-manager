@@ -3,6 +3,12 @@ import { Sidebar } from "@/components/layout/sidebar"
 import { Topbar } from "@/components/layout/topbar"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 
+// Every authenticated page depends on cookies and per-user data, so we opt out
+// of any caching here — otherwise Vercel's edge can serve one user's response
+// (or the unauthenticated redirect HTML) to another visitor.
+export const dynamic = "force-dynamic"
+export const revalidate = 0
+
 export default async function AppLayout({
   children,
 }: {
@@ -22,7 +28,7 @@ export default async function AppLayout({
       <div className="flex flex-1 flex-col min-w-0">
         <Topbar
           fullName={profile.full_name}
-          email={profile.email}
+          email={profile.email ?? ""}
           role={profile.role}
           unreadCount={unreadCount ?? 0}
         />
