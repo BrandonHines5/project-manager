@@ -136,16 +136,29 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
 
   let computedDueDate: string | null = nz(parsed.due_date)
   if (parsed.kind === "todo" && anchorFinal && parentIdResolved) {
-    const { data: parentRow } = await supabase
+    // Scope by project + require the parent to be a work item. Two reasons:
+    // (a) defense in depth against a forged parent_id from another project,
+    // (b) RLS already restricts cross-project reads, but the kind filter
+    // catches an accidental to-do→to-do anchor that the DB check constraint
+    // doesn't (parent_id FK doesn't restrict kind).
+    const { data: parentRow, error: parentErr } = await supabase
       .from("schedule_items")
       .select("start_date, end_date")
       .eq("id", parentIdResolved)
+      .eq("project_id", parsed.project_id)
+      .eq("kind", "work")
       .maybeSingle()
-    if (parentRow) {
-      computedDueDate = recomputeAnchoredDueDate(parentRow, anchorFinal, offsetFinal ?? 0)
-    } else {
-      computedDueDate = null
+    if (parentErr) throw new Error(parentErr.message)
+    if (!parentRow) {
+      throw new Error(
+        "Selected parent work item was not found in this project."
+      )
     }
+    computedDueDate = recomputeAnchoredDueDate(
+      parentRow,
+      anchorFinal,
+      offsetFinal ?? 0
+    )
   }
 
   const baseRow = {

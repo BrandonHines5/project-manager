@@ -212,7 +212,11 @@ export function ScheduleItemDialog({
       // value here is ignored. Send "" so we don't mislead.
       due_date: kind === "todo" && !anchored ? dueDate || "" : "",
       parent_anchor: anchored ? anchor : null,
-      parent_offset_days: anchored ? Number(anchorOffset) || 0 : null,
+      // Server enforces .int(); truncate decimals here so a "1.5" entry
+      // doesn't get rejected at the schema layer with a confusing error.
+      parent_offset_days: anchored
+        ? Math.trunc(Number(anchorOffset) || 0)
+        : null,
       status,
       recurrence_rule: kind === "todo" ? recurrence : null,
       assignments,
@@ -425,6 +429,7 @@ export function ScheduleItemDialog({
                         >
                           <Input
                             type="number"
+                            step={1}
                             value={anchorOffset}
                             onChange={(e) => setAnchorOffset(e.target.value)}
                           />
