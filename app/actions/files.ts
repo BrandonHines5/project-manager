@@ -5,24 +5,39 @@ import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
 
-const FileInput = z.object({
-  id: z.string().uuid().optional(),
-  project_id: z.string().uuid(),
-  category: z.enum(["house_plans", "plot_plan", "permit", "contract", "other"]),
-  title: z.string().min(1).max(300),
-  description: z.string().nullable().optional(),
-  storage_path: z.string(),
-  file_name: z.string(),
-  file_type: z.string().nullable().optional(),
-  file_size: z.number().nullable().optional(),
-})
+const optStr = z.string().nullish()
+
+const FileInput = z
+  .object({
+    id: optStr,
+    project_id: z.string(),
+    category: z.enum(["house_plans", "plot_plan", "permit", "contract", "other"]),
+    title: z.string().min(1).max(300),
+    description: optStr,
+    storage_path: z.string(),
+    file_name: z.string(),
+    file_type: optStr,
+    file_size: z.number().nullish(),
+  })
+  .passthrough()
 
 export type FileInputT = z.infer<typeof FileInput>
 
 export async function saveProjectFile(input: FileInputT) {
   const profile = await requireStaff()
-  const parsed = FileInput.parse(input)
   const supabase = await createSupabaseServerClient()
+  const result = FileInput.safeParse(input)
+  if (!result.success) {
+    await supabase.from("debug_log").insert({
+      tag: "saveProjectFile:zod_error",
+      payload: JSON.parse(JSON.stringify({ issues: result.error.issues, input })),
+    })
+    const first = result.error.issues[0]
+    throw new Error(
+      `Invalid form data at ${first.path.join(".") || "(root)"}: ${first.message}`
+    )
+  }
+  const parsed = result.data
 
   if (parsed.id) {
     const { error } = await supabase

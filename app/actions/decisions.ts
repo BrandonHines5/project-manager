@@ -8,44 +8,64 @@ import { addDays, todayISO } from "@/lib/utils"
 import { sendEmail, appUrl } from "@/lib/email"
 import type { TablesUpdate } from "@/lib/db/types"
 
+const optStr = z.string().nullish()
+
 const Followup = z.object({
-  id: z.string().uuid().optional(),
+  id: optStr,
   title: z.string().min(1),
-  assignee_profile_id: z.string().uuid().nullable().optional(),
-  assignee_company_id: z.string().uuid().nullable().optional(),
-  due_offset_days: z.number().int().min(0).default(7),
-  notes: z.string().nullable().optional(),
+  assignee_profile_id: optStr,
+  assignee_company_id: optStr,
+  due_offset_days: z.coerce.number().int().min(0).default(7),
+  notes: optStr,
 })
 
 const Attachment = z.object({
-  id: z.string().uuid().optional(),
+  id: optStr,
   storage_path: z.string(),
   file_name: z.string(),
-  file_type: z.string().nullable().optional(),
-  file_size: z.number().nullable().optional(),
-  caption: z.string().nullable().optional(),
+  file_type: optStr,
+  file_size: z.number().nullish(),
+  caption: optStr,
 })
 
-const DecisionInput = z.object({
-  id: z.string().uuid().optional(),
-  project_id: z.string().uuid(),
-  kind: z.enum(["change_order", "selection"]),
-  title: z.string().min(1).max(300),
-  description: z.string().nullable().optional(),
-  cost_delta: z.coerce.number().nullable().optional(),
-  status: z.enum(["draft", "pending_client", "approved", "rejected"]).default("draft"),
-  followups: z.array(Followup).default([]),
-  attachments: z.array(Attachment).default([]),
-})
+const DecisionInput = z
+  .object({
+    id: optStr,
+    project_id: z.string(),
+    kind: z.enum(["change_order", "selection"]),
+    title: z.string().min(1).max(300),
+    description: optStr,
+    cost_delta: z.coerce.number().nullish(),
+    status: z.enum(["draft", "pending_client", "approved", "rejected"]).default("draft"),
+    followups: z.array(Followup).default([]),
+    attachments: z.array(Attachment).default([]),
+  })
+  .passthrough()
 
 export type DecisionInputT = z.infer<typeof DecisionInput>
 
+function nz(v: string | null | undefined) {
+  return v && v !== "" ? v : null
+}
+
 export async function saveDecision(input: DecisionInputT) {
   const profile = await requireStaff()
-  const parsed = DecisionInput.parse(input)
+  const result = DecisionInput.safeParse(input)
+  if (!result.success) {
+    const supabase = await createSupabaseServerClient()
+    await supabase.from("debug_log").insert({
+      tag: "saveDecision:zod_error",
+      payload: JSON.parse(JSON.stringify({ issues: result.error.issues, input })),
+    })
+    const first = result.error.issues[0]
+    throw new Error(
+      `Invalid form data at ${first.path.join(".") || "(root)"}: ${first.message}`
+    )
+  }
+  const parsed = result.data
   const supabase = await createSupabaseServerClient()
 
-  let id = parsed.id
+  let id: string | null = nz(parsed.id)
 
   // Fetch current status + approved state ONCE (the duplicated query was the
   // earlier code path). Used to decide whether this save crosses an
@@ -148,7 +168,9 @@ export async function saveDecision(input: DecisionInputT) {
     .from("decision_attachments")
     .select("id, storage_path")
     .eq("decision_id", id)
-  const keepIds = new Set(parsed.attachments.map((a) => a.id).filter(Boolean))
+  const keepIds = new Set(
+    parsed.attachments.map((a) => nz(a.id)).filter((x): x is string => !!x)
+  )
   const toDelete = (existingAtts ?? []).filter((e) => !keepIds.has(e.id))
   if (toDelete.length) {
     await supabase
@@ -162,7 +184,7 @@ export async function saveDecision(input: DecisionInputT) {
       .from("project-files")
       .remove(toDelete.map((d) => d.storage_path))
   }
-  const newOnes = parsed.attachments.filter((a) => !a.id)
+  const newOnes = parsed.attachments.filter((a) => !nz(a.id))
   if (newOnes.length) {
     const startPos = existingAtts?.length ?? 0
     const rows = newOnes.map((a, i) => ({
@@ -179,7 +201,7 @@ export async function saveDecision(input: DecisionInputT) {
       .insert(rows)
     if (error) throw new Error(error.message)
   }
-  for (const a of parsed.attachments.filter((a) => a.id)) {
+  for (const a of parsed.attachments.filter((a) => nz(a.id))) {
     await supabase
       .from("decision_attachments")
       .update({ caption: a.caption ?? null })

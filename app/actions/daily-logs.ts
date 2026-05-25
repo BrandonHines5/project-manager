@@ -5,47 +5,67 @@ import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
 
-const DailyLogInput = z.object({
-  id: z.string().uuid().optional(),
-  project_id: z.string().uuid(),
-  log_date: z.string().min(1, "Required"),
-  visibility: z.enum(["internal", "client"]).default("internal"),
-  notes: z.string().optional().nullable(),
-  subs_on_site: z
-    .array(
-      z.object({
-        company_id: z.string().uuid(),
-        notes: z.string().optional().nullable(),
-      })
-    )
-    .default([]),
-  attachments: z
-    .array(
-      z.object({
-        id: z.string().uuid().optional(),
-        storage_path: z.string(),
-        file_name: z.string(),
-        file_type: z.string().optional().nullable(),
-        file_size: z.number().optional().nullable(),
-        caption: z.string().optional().nullable(),
-      })
-    )
-    .default([]),
-})
+const optStr = z.string().nullish()
+
+const DailyLogInput = z
+  .object({
+    id: optStr,
+    project_id: z.string(),
+    log_date: z.string().min(1, "Required"),
+    visibility: z.enum(["internal", "client"]).default("internal"),
+    notes: optStr,
+    subs_on_site: z
+      .array(
+        z.object({
+          company_id: z.string(),
+          notes: optStr,
+        })
+      )
+      .default([]),
+    attachments: z
+      .array(
+        z.object({
+          id: optStr,
+          storage_path: z.string(),
+          file_name: z.string(),
+          file_type: optStr,
+          file_size: z.number().nullish(),
+          caption: optStr,
+        })
+      )
+      .default([]),
+  })
+  .passthrough()
 
 export type DailyLogInputT = z.infer<typeof DailyLogInput>
 
+function nz(v: string | null | undefined) {
+  return v && v !== "" ? v : null
+}
+
 export async function saveDailyLog(input: DailyLogInputT) {
   const profile = await requireStaff()
-  const parsed = DailyLogInput.parse(input)
+  const result = DailyLogInput.safeParse(input)
+  if (!result.success) {
+    const supabase = await createSupabaseServerClient()
+    await supabase.from("debug_log").insert({
+      tag: "saveDailyLog:zod_error",
+      payload: JSON.parse(JSON.stringify({ issues: result.error.issues, input })),
+    })
+    const first = result.error.issues[0]
+    throw new Error(
+      `Invalid form data at ${first.path.join(".") || "(root)"}: ${first.message}`
+    )
+  }
+  const parsed = result.data
   const supabase = await createSupabaseServerClient()
 
-  let id = parsed.id
+  let id = nz(parsed.id)
   const baseRow = {
     project_id: parsed.project_id,
     log_date: parsed.log_date,
     visibility: parsed.visibility,
-    notes: parsed.notes ?? null,
+    notes: nz(parsed.notes),
   }
 
   if (id) {
@@ -67,24 +87,31 @@ export async function saveDailyLog(input: DailyLogInputT) {
   // Replace subs_on_site
   await supabase.from("daily_log_subs_on_site").delete().eq("daily_log_id", id)
   if (parsed.subs_on_site.length) {
-    const rows = parsed.subs_on_site.map((s) => ({
-      daily_log_id: id!,
-      company_id: s.company_id,
-      notes: s.notes ?? null,
-    }))
-    const { error } = await supabase
-      .from("daily_log_subs_on_site")
-      .insert(rows)
-    if (error) throw new Error(error.message)
+    const rows = parsed.subs_on_site
+      .filter((s) => !!s.company_id)
+      .map((s) => ({
+        daily_log_id: id!,
+        company_id: s.company_id,
+        notes: nz(s.notes),
+      }))
+    if (rows.length) {
+      const { error } = await supabase
+        .from("daily_log_subs_on_site")
+        .insert(rows)
+      if (error) throw new Error(error.message)
+    }
   }
 
-  // Reconcile attachments: keep existing IDs that were retained; insert new;
-  // delete missing.
+  // Reconcile attachments
   const { data: existing } = await supabase
     .from("daily_log_attachments")
     .select("id, storage_path")
     .eq("daily_log_id", id)
-  const keepIds = new Set(parsed.attachments.map((a) => a.id).filter(Boolean))
+  const keepIds = new Set(
+    parsed.attachments
+      .map((a) => nz(a.id))
+      .filter((x): x is string => !!x)
+  )
   const toDelete = (existing ?? []).filter((e) => !keepIds.has(e.id))
   if (toDelete.length) {
     await supabase
@@ -99,16 +126,16 @@ export async function saveDailyLog(input: DailyLogInputT) {
       .remove(toDelete.map((d) => d.storage_path))
   }
 
-  const newOnes = parsed.attachments.filter((a) => !a.id)
+  const newOnes = parsed.attachments.filter((a) => !nz(a.id))
   if (newOnes.length) {
     const startPos = existing?.length ?? 0
     const rows = newOnes.map((a, i) => ({
       daily_log_id: id!,
       storage_path: a.storage_path,
       file_name: a.file_name,
-      file_type: a.file_type ?? null,
+      file_type: nz(a.file_type),
       file_size: a.file_size ?? null,
-      caption: a.caption ?? null,
+      caption: nz(a.caption),
       position: startPos + i,
     }))
     const { error } = await supabase
@@ -117,12 +144,11 @@ export async function saveDailyLog(input: DailyLogInputT) {
     if (error) throw new Error(error.message)
   }
 
-  // Update captions on retained attachments
-  const retained = parsed.attachments.filter((a) => a.id)
+  const retained = parsed.attachments.filter((a) => nz(a.id))
   for (const a of retained) {
     await supabase
       .from("daily_log_attachments")
-      .update({ caption: a.caption ?? null })
+      .update({ caption: nz(a.caption) })
       .eq("id", a.id!)
   }
 
@@ -140,7 +166,6 @@ export async function deleteDailyLog({
   await requireStaff()
   const supabase = await createSupabaseServerClient()
 
-  // Collect file paths first so we can also remove from storage.
   const { data: atts } = await supabase
     .from("daily_log_attachments")
     .select("storage_path")
@@ -157,10 +182,6 @@ export async function deleteDailyLog({
   revalidatePath(`/projects/${project_id}/daily-logs`)
 }
 
-/**
- * Returns short-lived signed URLs for the given storage paths so the browser
- * can render images from the private bucket.
- */
 export async function getSignedUrls(paths: string[]) {
   if (paths.length === 0) return {}
   const supabase = await createSupabaseServerClient()

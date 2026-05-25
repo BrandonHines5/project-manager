@@ -5,16 +5,20 @@ import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
 
-const CompanyInput = z.object({
-  id: z.string().uuid().optional(),
-  name: z.string().min(1).max(200),
-  type: z.enum(["sub", "vendor", "client"]),
-  trade_category: z.string().nullable().optional(),
-  address: z.string().nullable().optional(),
-  phone: z.string().nullable().optional(),
-  email: z.string().email().nullable().optional().or(z.literal("")),
-  notes: z.string().nullable().optional(),
-})
+const optStr = z.string().nullish()
+
+const CompanyInput = z
+  .object({
+    id: optStr,
+    name: z.string().min(1).max(200),
+    type: z.enum(["sub", "vendor", "client"]),
+    trade_category: optStr,
+    address: optStr,
+    phone: optStr,
+    email: optStr,
+    notes: optStr,
+  })
+  .passthrough()
 
 export type CompanyInputT = z.infer<typeof CompanyInput>
 
@@ -24,8 +28,19 @@ function emptyToNull(v: string | null | undefined) {
 
 export async function saveCompany(input: CompanyInputT) {
   await requireStaff()
-  const parsed = CompanyInput.parse(input)
   const supabase = await createSupabaseServerClient()
+  const result = CompanyInput.safeParse(input)
+  if (!result.success) {
+    await supabase.from("debug_log").insert({
+      tag: "saveCompany:zod_error",
+      payload: JSON.parse(JSON.stringify({ issues: result.error.issues, input })),
+    })
+    const first = result.error.issues[0]
+    throw new Error(
+      `Invalid form data at ${first.path.join(".") || "(root)"}: ${first.message}`
+    )
+  }
+  const parsed = result.data
 
   const row = {
     name: parsed.name,

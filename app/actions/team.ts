@@ -5,27 +5,46 @@ import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
 
-const UpdateProfileInput = z.object({
-  id: z.string().uuid(),
-  full_name: z.string().min(1).max(200),
-  role: z.enum(["staff", "trade", "client"]),
-  company_id: z.string().uuid().nullable().optional(),
-  phone: z.string().nullable().optional(),
-})
+const optStr = z.string().nullish()
+
+const UpdateProfileInput = z
+  .object({
+    id: z.string(),
+    full_name: z.string().min(1).max(200),
+    role: z.enum(["staff", "trade", "client"]),
+    company_id: optStr,
+    phone: optStr,
+  })
+  .passthrough()
 
 export type UpdateProfileInputT = z.infer<typeof UpdateProfileInput>
 
+function nz(v: string | null | undefined) {
+  return v && v !== "" ? v : null
+}
+
 export async function updateProfile(input: UpdateProfileInputT) {
   await requireStaff()
-  const parsed = UpdateProfileInput.parse(input)
   const supabase = await createSupabaseServerClient()
+  const result = UpdateProfileInput.safeParse(input)
+  if (!result.success) {
+    await supabase.from("debug_log").insert({
+      tag: "updateProfile:zod_error",
+      payload: JSON.parse(JSON.stringify({ issues: result.error.issues, input })),
+    })
+    const first = result.error.issues[0]
+    throw new Error(
+      `Invalid form data at ${first.path.join(".") || "(root)"}: ${first.message}`
+    )
+  }
+  const parsed = result.data
   const { error } = await supabase
     .from("profiles")
     .update({
       full_name: parsed.full_name,
       role: parsed.role,
-      company_id: parsed.company_id ?? null,
-      phone: parsed.phone ?? null,
+      company_id: nz(parsed.company_id),
+      phone: nz(parsed.phone),
     })
     .eq("id", parsed.id)
   if (error) throw new Error(error.message)

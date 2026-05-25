@@ -5,22 +5,37 @@ import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
 
-const PaymentInput = z.object({
-  id: z.string().uuid().optional(),
-  project_id: z.string().uuid(),
-  amount: z.coerce.number(),
-  paid_on: z.string().min(1),
-  method: z.enum(["check", "wire", "card", "cash", "other"]).default("check"),
-  reference: z.string().nullable().optional(),
-  notes: z.string().nullable().optional(),
-})
+const optStr = z.string().nullish()
+
+const PaymentInput = z
+  .object({
+    id: optStr,
+    project_id: z.string(),
+    amount: z.coerce.number(),
+    paid_on: z.string().min(1),
+    method: z.enum(["check", "wire", "card", "cash", "other"]).default("check"),
+    reference: optStr,
+    notes: optStr,
+  })
+  .passthrough()
 
 export type PaymentInputT = z.infer<typeof PaymentInput>
 
 export async function savePayment(input: PaymentInputT) {
   const profile = await requireStaff()
-  const parsed = PaymentInput.parse(input)
   const supabase = await createSupabaseServerClient()
+  const result = PaymentInput.safeParse(input)
+  if (!result.success) {
+    await supabase.from("debug_log").insert({
+      tag: "savePayment:zod_error",
+      payload: JSON.parse(JSON.stringify({ issues: result.error.issues, input })),
+    })
+    const first = result.error.issues[0]
+    throw new Error(
+      `Invalid form data at ${first.path.join(".") || "(root)"}: ${first.message}`
+    )
+  }
+  const parsed = result.data
 
   if (parsed.id) {
     const { error } = await supabase
