@@ -403,7 +403,7 @@ export type Database = {
         Row: {
           company_id: string | null
           created_at: string
-          email: string
+          email: string | null
           full_name: string
           id: string
           phone: string | null
@@ -412,7 +412,7 @@ export type Database = {
         Insert: {
           company_id?: string | null
           created_at?: string
-          email: string
+          email?: string | null
           full_name?: string
           id: string
           phone?: string | null
@@ -421,7 +421,7 @@ export type Database = {
         Update: {
           company_id?: string | null
           created_at?: string
-          email?: string
+          email?: string | null
           full_name?: string
           id?: string
           phone?: string | null
@@ -680,7 +680,12 @@ export type Database = {
       }
     }
     Views: { [_ in never]: never }
-    Functions: { [_ in never]: never }
+    Functions: {
+      next_decision_number: {
+        Args: { p_project: string }
+        Returns: number
+      }
+    }
     Enums: {
       company_type: "sub" | "vendor" | "client"
       daily_log_visibility: "internal" | "client"

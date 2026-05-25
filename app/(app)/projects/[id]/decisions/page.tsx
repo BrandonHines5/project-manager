@@ -71,7 +71,7 @@ export default async function DecisionsPage({
     project_id: projectId,
     role: profile.role,
     me_id: profile.id,
-    me_name: profile.full_name || profile.email,
+    me_name: profile.full_name || profile.email || "User",
     decisions: decisions ?? [],
     followups: strip(followups) as DecisionsData["followups"],
     attachments: cleanedAttachments,

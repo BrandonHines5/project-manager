@@ -169,7 +169,9 @@ export function DecisionDrawer({
   }
 
   function saveWithStatus(newStatus: Enums<"decision_status">) {
-    setStatus(newStatus)
+    // Don't optimistically advance the visible status until the save
+    // succeeds — otherwise a failed approval still shows "Approved" in the UI
+    // and confuses the user. handleSave will update local status on success.
     handleSave(newStatus)
   }
 
@@ -208,6 +210,8 @@ export function DecisionDrawer({
     startTransition(async () => {
       try {
         const result = await saveDecision(payload)
+        // Persist worked — *now* it's safe to advance the visible status.
+        setStatus(payload.status)
         if (result.createdFollowups > 0) {
           toast.success(
             `Approved · ${result.createdFollowups} follow-up to-do${

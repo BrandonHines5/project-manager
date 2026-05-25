@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useRef, useState, useTransition } from "react"
+import { useEffect, useMemo, useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { addDays as fnsAddDays, differenceInCalendarDays, parseISO, format, isWeekend, startOfDay } from "date-fns"
@@ -59,6 +59,17 @@ export function GanttView({
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [dragOffsets, setDragOffsets] = useState<Record<string, number>>({})
+  // Track active drag listeners so they can be torn down if the component
+  // unmounts mid-drag (e.g. user clicks the List view toggle while a bar is
+  // being dragged). Without this, listeners leak and mouseup later triggers
+  // moveScheduleItem on an unmounted component.
+  const dragCleanupRef = useRef<(() => void) | null>(null)
+  useEffect(() => {
+    return () => {
+      dragCleanupRef.current?.()
+      dragCleanupRef.current = null
+    }
+  }, [])
 
   function startDrag(
     e: React.MouseEvent,
@@ -69,6 +80,8 @@ export function GanttView({
   ) {
     e.preventDefault()
     e.stopPropagation()
+    // Cancel any prior drag still wired up.
+    dragCleanupRef.current?.()
     const startX = e.clientX
     let liveDays = 0
 
@@ -78,9 +91,14 @@ export function GanttView({
       setDragOffsets((s) => ({ ...s, [itemId]: liveDays }))
     }
 
-    function onUp() {
+    function cleanup() {
       window.removeEventListener("mousemove", onMove)
       window.removeEventListener("mouseup", onUp)
+      dragCleanupRef.current = null
+    }
+
+    function onUp() {
+      cleanup()
       setDragOffsets((s) => {
         const next = { ...s }
         delete next[itemId]
@@ -109,6 +127,7 @@ export function GanttView({
 
     window.addEventListener("mousemove", onMove)
     window.addEventListener("mouseup", onUp)
+    dragCleanupRef.current = cleanup
   }
 
   if (sortedItems.length === 0) {

@@ -222,6 +222,7 @@ export function PricingClient({ data }: { data: PricingData }) {
 
       {editPayment && canEdit && (
         <PaymentDialog
+          key={editPayment === "new" ? "new" : editPayment.id}
           payment={editPayment === "new" ? null : editPayment}
           projectId={data.project_id}
           onClose={() => setEditPayment(null)}

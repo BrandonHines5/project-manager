@@ -9,7 +9,7 @@ export function assigneeNamesFor(
     if (a.schedule_item_id !== itemId) continue
     if (a.profile_id) {
       const p = data.profiles.find((x) => x.id === a.profile_id)
-      if (p) names.push(p.full_name || p.email)
+      if (p) names.push(p.full_name || p.email || "")
     } else if (a.company_id) {
       const c = data.companies.find((x) => x.id === a.company_id)
       if (c) names.push(c.name)

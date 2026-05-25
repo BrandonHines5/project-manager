@@ -40,7 +40,7 @@ export function TeamClient({
         if (!q) return true
         return (
           p.full_name.toLowerCase().includes(q) ||
-          p.email.toLowerCase().includes(q)
+          (p.email ?? "").toLowerCase().includes(q)
         )
       })
   }, [profiles, search, roleFilter])
@@ -116,7 +116,7 @@ export function TeamClient({
                   >
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
-                        <Avatar name={p.full_name || p.email} size="sm" />
+                        <Avatar name={p.full_name || p.email || "?"} size="sm" />
                         <span className="font-medium">
                           {p.full_name || (
                             <span className="text-muted italic">no name</span>
@@ -141,6 +141,7 @@ export function TeamClient({
 
       {editing && (
         <EditDialog
+          key={editing.id}
           profile={editing}
           companies={companies}
           onClose={() => setEditing(null)}

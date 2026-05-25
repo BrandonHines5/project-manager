@@ -144,6 +144,9 @@ export function CompaniesClient({
 
       {editing && (
         <CompanyDialog
+          // Remount the dialog when switching rows so useState reinitialises
+          // from the new prop instead of keeping the previous row's values.
+          key={editing === "new" ? "new" : editing.id}
           company={editing === "new" ? null : editing}
           onClose={() => setEditing(null)}
         />

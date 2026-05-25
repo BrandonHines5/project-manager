@@ -69,20 +69,6 @@ function daysBetween(a: string, b: string) {
 }
 
 export async function saveScheduleItem(input: ScheduleItemInputT) {
-  try {
-    return await _saveScheduleItem(input)
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    const stack = e instanceof Error ? e.stack ?? "" : ""
-    console.error("[saveScheduleItem]", msg, stack)
-    // Re-throw as a plain Error with embedded diag info. Next.js masks the
-    // *message* of unhandled server-action errors in prod, but the wrapping
-    // pushes the diagnostic into a separately-handled path.
-    throw new Error(`SAVE_FAILED: ${msg} | ${stack.split("\n").slice(0, 3).join(" >> ")}`)
-  }
-}
-
-async function _saveScheduleItem(input: ScheduleItemInputT) {
   await requireStaff()
   const parsed = ScheduleItemInput.parse(input)
   const supabase = await createSupabaseServerClient()
@@ -180,14 +166,15 @@ async function _saveScheduleItem(input: ScheduleItemInputT) {
     }
   }
 
-  // Replace predecessors with cycle check
-  if (parsed.predecessors.length || true) {
+  // Replace predecessors with cycle check.
+  // We always reconcile (parsed.predecessors may legitimately be empty,
+  // meaning "clear all predecessors").
+  {
     const { data: existing } = await supabase
       .from("schedule_predecessors")
       .select("item_id, predecessor_id, dep_type, lag_days, id, created_at")
       .or(`item_id.eq.${id},predecessor_id.eq.${id}`)
     const allPreds = existing ?? []
-    // Detect cycle using the proposed final state of predecessors-of-this-item
     const others = allPreds.filter((p) => p.item_id !== id)
     const proposed = [
       ...others,
@@ -205,7 +192,11 @@ async function _saveScheduleItem(input: ScheduleItemInputT) {
         throw new Error("Predecessor would create a cycle")
       }
     }
-    await supabase.from("schedule_predecessors").delete().eq("item_id", id)
+    const { error: delPredErr } = await supabase
+      .from("schedule_predecessors")
+      .delete()
+      .eq("item_id", id)
+    if (delPredErr) throw new Error(delPredErr.message)
     if (parsed.predecessors.length) {
       const rows = parsed.predecessors.map((p) => ({
         item_id: id!,
@@ -293,10 +284,18 @@ async function applyCascade(projectId: string, movedId: string) {
   if (!items || !preds) return
   const updates = cascadeFromPredecessors(items, preds, movedId)
   for (const u of updates) {
-    await supabase
+    const { error } = await supabase
       .from("schedule_items")
       .update({ start_date: u.start_date, end_date: u.end_date })
       .eq("id", u.id)
+    if (error) {
+      // Cascade failed partway. Surface so the caller can investigate; the
+      // earlier updates have already persisted (no transaction is available
+      // via the JS client).
+      throw new Error(
+        `Cascade failed at ${u.id}: ${error.message}. Some successor dates may be partially updated.`
+      )
+    }
   }
 }
 

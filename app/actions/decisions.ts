@@ -46,25 +46,20 @@ export async function saveDecision(input: DecisionInputT) {
   const supabase = await createSupabaseServerClient()
 
   let id = parsed.id
-  const wasApproved = id
-    ? (
-        await supabase
-          .from("decisions")
-          .select("status")
-          .eq("id", id)
-          .maybeSingle()
-      ).data?.status === "approved"
-    : false
 
-  const prevStatus = id
-    ? (
-        await supabase
-          .from("decisions")
-          .select("status")
-          .eq("id", id)
-          .maybeSingle()
-      ).data?.status
-    : null
+  // Fetch current status + approved state ONCE (the duplicated query was the
+  // earlier code path). Used to decide whether this save crosses an
+  // approval / pending_client boundary.
+  let prevStatus: string | null = null
+  if (id) {
+    const { data: cur } = await supabase
+      .from("decisions")
+      .select("status")
+      .eq("id", id)
+      .maybeSingle()
+    prevStatus = cur?.status ?? null
+  }
+  const wasApproved = prevStatus === "approved"
   const newlyApproved = parsed.status === "approved" && !wasApproved
   const newlyPendingClient =
     parsed.status === "pending_client" && prevStatus !== "pending_client"
@@ -85,34 +80,46 @@ export async function saveDecision(input: DecisionInputT) {
       .eq("id", id)
     if (error) throw new Error(error.message)
   } else {
-    // Get next sequential number for this project
-    const { data: maxRow } = await supabase
-      .from("decisions")
-      .select("number")
-      .eq("project_id", parsed.project_id)
-      .order("number", { ascending: false })
-      .limit(1)
-      .maybeSingle()
-    const number = (maxRow?.number ?? 0) + 1
-
-    const { data, error } = await supabase
-      .from("decisions")
-      .insert({
-        project_id: parsed.project_id,
-        kind: parsed.kind,
-        title: parsed.title,
-        description: parsed.description ?? null,
-        cost_delta: parsed.cost_delta ?? null,
-        status: parsed.status,
-        number,
-        created_by: profile.id,
-        approved_at:
-          parsed.status === "approved" ? new Date().toISOString() : null,
-      })
-      .select("id")
-      .single()
-    if (error) throw new Error(error.message)
-    id = data.id
+    // Race-safe per-project number: call the advisory-locked RPC to pick the
+    // next number, then INSERT. Retry on a 23505 unique violation (someone
+    // else won the race in the gap between RPC and INSERT — rare with the
+    // advisory lock, but possible across separate transactions).
+    let inserted: { id: string } | null = null
+    for (let attempt = 0; attempt < 5 && !inserted; attempt++) {
+      const { data: nextNum, error: rpcErr } = await supabase.rpc(
+        "next_decision_number",
+        { p_project: parsed.project_id }
+      )
+      if (rpcErr) throw new Error(rpcErr.message)
+      const number = Number(nextNum)
+      const { data, error } = await supabase
+        .from("decisions")
+        .insert({
+          project_id: parsed.project_id,
+          kind: parsed.kind,
+          title: parsed.title,
+          description: parsed.description ?? null,
+          cost_delta: parsed.cost_delta ?? null,
+          status: parsed.status,
+          number,
+          created_by: profile.id,
+          approved_at:
+            parsed.status === "approved" ? new Date().toISOString() : null,
+        })
+        .select("id")
+        .single()
+      if (!error) {
+        inserted = data
+        break
+      }
+      if (error.code !== "23505") throw new Error(error.message)
+      // brief backoff before retry
+      await new Promise((r) => setTimeout(r, 25 + Math.random() * 50))
+    }
+    if (!inserted) {
+      throw new Error("Could not allocate a decision number after 5 attempts.")
+    }
+    id = inserted.id
   }
 
   // Replace follow-up templates
@@ -179,10 +186,17 @@ export async function saveDecision(input: DecisionInputT) {
       .eq("id", a.id!)
   }
 
-  // If this save transitions to approved, generate follow-up todos (once)
+  // Materialize follow-ups whenever the decision is in 'approved' state.
+  // The function is idempotent — already-materialized templates are skipped
+  // by template-id match. This means staff can add new templates to an
+  // already-approved decision and they'll be created on the next save.
   let createdFollowups = 0
-  if (newlyApproved) {
-    createdFollowups = await materializeFollowups(id!, parsed.project_id)
+  if (parsed.status === "approved") {
+    createdFollowups = await materializeFollowups(
+      id!,
+      parsed.project_id,
+      profile.id
+    )
   }
 
   if (newlyPendingClient) {
@@ -226,7 +240,11 @@ async function notifyClientOfDecision(
   void decisionId
 }
 
-async function materializeFollowups(decisionId: string, projectId: string) {
+async function materializeFollowups(
+  decisionId: string,
+  projectId: string,
+  createdBy: string
+) {
   const supabase = await createSupabaseServerClient()
   const { data: templates } = await supabase
     .from("decision_followup_templates")
@@ -236,60 +254,85 @@ async function materializeFollowups(decisionId: string, projectId: string) {
 
   if (!templates || templates.length === 0) return 0
 
-  // Check what we've already created previously, to avoid duplicates on
-  // re-approval.
+  // Track which TEMPLATE has already been materialized via a sentinel in
+  // schedule_items.description (a JSON tail). Templates are matched by their
+  // own UUID, not by title — so duplicate titles materialize separately and
+  // each assignment lands on the right row.
+  const TEMPLATE_TAG = (templateId: string) => `\n[followup_template:${templateId}]`
+
   const { data: existing } = await supabase
     .from("schedule_items")
-    .select("id, title")
+    .select("id, description")
     .eq("source_decision_id", decisionId)
-  const existingTitles = new Set(existing?.map((e) => e.title) ?? [])
+  const materializedTemplateIds = new Set<string>()
+  for (const row of existing ?? []) {
+    const match = (row.description ?? "").match(/\[followup_template:([^\]]+)\]/)
+    if (match) materializedTemplateIds.add(match[1])
+  }
 
   const approvedDate = todayISO()
-  const newTodos = templates
-    .filter((t) => !existingTitles.has(t.title))
-    .map((t) => ({
-      project_id: projectId,
-      kind: "todo" as const,
-      title: t.title,
-      description: t.notes,
-      due_date: addDays(approvedDate, t.due_offset_days),
-      source_decision_id: decisionId,
-    }))
-  if (newTodos.length === 0) return 0
+  const newTemplates = templates.filter((t) => !materializedTemplateIds.has(t.id))
+  if (newTemplates.length === 0) return 0
+
+  // We insert one schedule_item per template and tag it so we can match
+  // assignments + notifications back deterministically.
+  const newTodos = newTemplates.map((t) => ({
+    project_id: projectId,
+    kind: "todo" as const,
+    title: t.title,
+    description: (t.notes ?? "") + TEMPLATE_TAG(t.id),
+    due_date: addDays(approvedDate, t.due_offset_days),
+    source_decision_id: decisionId,
+    created_by: createdBy,
+  }))
 
   const { data: inserted, error } = await supabase
     .from("schedule_items")
     .insert(newTodos)
-    .select("id, title")
+    .select("id, description")
   if (error) throw new Error(error.message)
 
-  // Assignments
-  const insertedByTitle = new Map((inserted ?? []).map((r) => [r.title, r.id]))
-  const assignmentRows = templates
+  // Map inserted schedule_items back to the original templates by parsing
+  // the tag. This is robust against duplicate titles, identical descriptions,
+  // and inserts whose ordering the DB chose not to preserve.
+  const idByTemplateId = new Map<string, string>()
+  for (const row of inserted ?? []) {
+    const m = (row.description ?? "").match(/\[followup_template:([^\]]+)\]/)
+    if (m) idByTemplateId.set(m[1], row.id)
+  }
+
+  const assignmentRows = newTemplates
     .filter(
-      (t) => insertedByTitle.has(t.title) && (t.assignee_profile_id || t.assignee_company_id)
+      (t) =>
+        idByTemplateId.has(t.id) &&
+        (t.assignee_profile_id || t.assignee_company_id)
     )
     .map((t) => ({
-      schedule_item_id: insertedByTitle.get(t.title)!,
+      schedule_item_id: idByTemplateId.get(t.id)!,
       profile_id: t.assignee_profile_id,
       company_id: t.assignee_company_id,
     }))
   if (assignmentRows.length) {
-    await supabase.from("schedule_assignments").insert(assignmentRows)
+    const { error: aErr } = await supabase
+      .from("schedule_assignments")
+      .insert(assignmentRows)
+    if (aErr) console.warn("[followup assignments insert]", aErr.message)
   }
 
-  // In-app notifications for staff assignees
-  const profileAssignees = templates
-    .filter((t) => t.assignee_profile_id && insertedByTitle.has(t.title))
+  const profileAssignees = newTemplates
+    .filter((t) => t.assignee_profile_id && idByTemplateId.has(t.id))
     .map((t) => ({
       recipient_id: t.assignee_profile_id!,
       type: "decision_followup",
       title: `Follow-up: ${t.title}`,
-      body: `Auto-created from an approved decision`,
+      body: "Auto-created from an approved decision",
       link_url: `/projects/${projectId}/schedule`,
     }))
   if (profileAssignees.length) {
-    await supabase.from("notifications").insert(profileAssignees)
+    const { error: nErr } = await supabase
+      .from("notifications")
+      .insert(profileAssignees)
+    if (nErr) console.warn("[followup notifications insert]", nErr.message)
   }
 
   return inserted?.length ?? 0

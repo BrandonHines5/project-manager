@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo, useRef, useTransition } from "react"
+import { useEffect, useState, useMemo, useRef, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import {
@@ -469,6 +469,13 @@ function Lightbox({
   url: string | undefined
   onClose: () => void
 }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [onClose])
   return (
     <div
       className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4"

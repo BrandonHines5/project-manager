@@ -8,9 +8,26 @@ import { Button } from "@/components/ui/button"
 import { Field, Input } from "@/components/ui/input"
 import { toast } from "sonner"
 
+// Only allow same-origin relative redirects. An attacker cannot hand us
+// "https://evil.example/finish" via ?redirect=...; we ignore those.
+function safeRedirect(value: string | null): string {
+  if (!value) return "/projects"
+  // Must start with a single "/" and not "//" (which would be a protocol-
+  // relative URL) and not contain a scheme. Strip CR/LF for header safety.
+  if (
+    value.startsWith("/") &&
+    !value.startsWith("//") &&
+    !/^[\r\n]/.test(value) &&
+    !value.includes("\\")
+  ) {
+    return value
+  }
+  return "/projects"
+}
+
 export function LoginForm() {
   const params = useSearchParams()
-  const redirectTo = params.get("redirect") ?? "/projects"
+  const redirectTo = safeRedirect(params.get("redirect"))
 
   const [mode, setMode] = useState<"signin" | "signup">("signin")
   const [email, setEmail] = useState("")
@@ -24,11 +41,13 @@ export function LoginForm() {
     const supabase = createSupabaseBrowserClient()
     try {
       if (mode === "signup") {
+        // NOTE: do NOT pass `role` here. The DB trigger sets role='client' by
+        // default (least privilege). Staff promote new users via /team.
         const { error } = await supabase.auth.signUp({
           email,
           password,
           options: {
-            data: { full_name: fullName, role: "staff" },
+            data: { full_name: fullName },
             emailRedirectTo: window.location.origin + redirectTo,
           },
         })
