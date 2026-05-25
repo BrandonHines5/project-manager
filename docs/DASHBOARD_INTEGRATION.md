@@ -89,14 +89,14 @@ export async function POST(req: Request) {
 
 - **Best-effort.** A webhook failure is logged and swallowed; the PM app
   never blocks a user-facing save on dashboard availability.
-- **At-least-once.** If the dashboard is down during a save, the event is
-  lost. Backfill is the dashboard's responsibility (it can poll PM via
-  shared Supabase read RLS, or the PM app can grow a re-fire endpoint
-  later).
+- **At-most-once.** If the dashboard is down during a save, the event is
+  lost — there are no retries in v1. Backfill is the dashboard's
+  responsibility (it can poll PM via shared Supabase read RLS, or the PM
+  app can grow a re-fire endpoint later).
 - **5-second timeout.** The dashboard webhook handler should return
   within 5 seconds; longer responses are aborted on the PM side.
-- **No retries** in v1. Add SQS/Inngest/etc. if reliability becomes
-  important.
+- **No retries** in v1. Add SQS / Inngest / a transactional outbox if
+  at-least-once delivery becomes important.
 
 ## Adding a new event
 

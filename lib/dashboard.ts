@@ -29,7 +29,6 @@ import { createHmac, timingSafeEqual } from "crypto"
 
 export type DashboardEvent =
   | "project.created"
-  | "project.updated"
   | "decision.approved"
   | "daily_log.published"
   | "payment.recorded"
@@ -74,10 +73,18 @@ export async function sendDashboardWebhook<T>(
   event: DashboardEvent,
   data: T
 ): Promise<{ sent: boolean; reason?: string }> {
+  // Docs state the integration is a no-op when ANY of the three vars is
+  // unset. Be strict so a partially-configured preview deploy doesn't fire
+  // surprise webhooks at the production dashboard.
+  const base = process.env.DASHBOARD_BASE_URL
   const url = process.env.DASHBOARD_WEBHOOK_URL
   const secret = process.env.DASHBOARD_WEBHOOK_SECRET
-  if (!url || !secret) {
-    return { sent: false, reason: "DASHBOARD_WEBHOOK_URL or _SECRET not set" }
+  if (!base || !url || !secret) {
+    return {
+      sent: false,
+      reason:
+        "Dashboard env incomplete (DASHBOARD_BASE_URL / DASHBOARD_WEBHOOK_URL / DASHBOARD_WEBHOOK_SECRET)",
+    }
   }
 
   const envelope: DashboardEnvelope<T> = {
