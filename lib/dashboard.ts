@@ -29,6 +29,14 @@
  *                            Distinct from the webhook secret so it can be
  *                            rotated independently. The dashboard validates
  *                            this on GET /api/projects/* endpoints.
+ *   DASHBOARD_PROTECTION_BYPASS (optional) — if the dashboard's Vercel
+ *                            deployment has "Protection Bypass for
+ *                            Automation" enabled, paste the generated
+ *                            secret here. Every outbound request from PM
+ *                            then carries `x-vercel-protection-bypass`
+ *                            so Vercel's edge lets us through to the
+ *                            function. Leave empty if the dashboard isn't
+ *                            behind Deployment Protection.
  */
 
 import { createHmac, timingSafeEqual } from "crypto"
@@ -44,6 +52,23 @@ export interface DashboardEnvelope<T = unknown> {
   occurred_at: string // ISO timestamp
   source: "hh-project-manager"
   data: T
+}
+
+/**
+ * Adds the Vercel Protection Bypass header when DASHBOARD_PROTECTION_BYPASS
+ * is set. Without this header, Vercel's edge returns 403 on a protected
+ * deployment before our endpoint code even runs — so every outbound call
+ * needs to include it. No-op (returns the headers unchanged) when the env
+ * var isn't set, which is the right behavior for dashboards without
+ * Deployment Protection.
+ */
+function withVercelBypass(headers: Record<string, string>): Record<string, string> {
+  // Trim before truthy-check — a whitespace-only value from an env-var paste
+  // would otherwise emit a header that Vercel rejects, producing a confusing
+  // 403 instead of the clean "no bypass configured" fallthrough.
+  const bypass = process.env.DASHBOARD_PROTECTION_BYPASS?.trim()
+  if (!bypass) return headers
+  return { ...headers, "x-vercel-protection-bypass": bypass }
 }
 
 /**
@@ -105,11 +130,11 @@ export async function sendDashboardWebhook<T>(
   try {
     const res = await fetch(url, {
       method: "POST",
-      headers: {
+      headers: withVercelBypass({
         "content-type": "application/json",
         "x-hh-event": event,
         "x-hh-signature": signature,
-      },
+      }),
       body,
       // Keep this short — we never want webhook latency to block a save.
       signal: AbortSignal.timeout(5_000),
@@ -172,10 +197,10 @@ export interface DashboardProject {
 function dashboardApiHeaders(): Record<string, string> | null {
   const secret = process.env.DASHBOARD_API_SECRET
   if (!secret) return null
-  return {
+  return withVercelBypass({
     accept: "application/json",
     authorization: `Bearer ${secret}`,
-  }
+  })
 }
 
 /**
