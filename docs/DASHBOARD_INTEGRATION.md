@@ -18,8 +18,9 @@ the dashboard's project identity locally rather than joining across DBs.
 
 ## Configuration
 
-Four env vars on the PM app's Vercel deployment (Settings → Environment
-Variables):
+Five env vars on the PM app's Vercel deployment (Settings → Environment
+Variables) — the fifth (`DASHBOARD_PROTECTION_BYPASS`) is only needed when the
+dashboard's Vercel deploy has Deployment Protection turned on:
 
 | Var | Example | Purpose |
 |---|---|---|

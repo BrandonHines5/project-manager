@@ -63,7 +63,10 @@ export interface DashboardEnvelope<T = unknown> {
  * Deployment Protection.
  */
 function withVercelBypass(headers: Record<string, string>): Record<string, string> {
-  const bypass = process.env.DASHBOARD_PROTECTION_BYPASS
+  // Trim before truthy-check — a whitespace-only value from an env-var paste
+  // would otherwise emit a header that Vercel rejects, producing a confusing
+  // 403 instead of the clean "no bypass configured" fallthrough.
+  const bypass = process.env.DASHBOARD_PROTECTION_BYPASS?.trim()
   if (!bypass) return headers
   return { ...headers, "x-vercel-protection-bypass": bypass }
 }
