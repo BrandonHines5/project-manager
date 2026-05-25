@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useTransition, useRef } from "react"
+import { useState, useTransition, useRef, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import {
@@ -195,6 +195,14 @@ export function DecisionDrawer({
         price_delta: c.price_delta,
       }))
   })
+  // Mirror `choices` into a ref so the async upload callback can read the
+  // latest list when it resolves — otherwise an upload kicked off before
+  // the staff deletes a choice would re-append attachments referencing
+  // that now-gone client_key.
+  const choicesRef = useRef<Choice[]>(choices)
+  useEffect(() => {
+    choicesRef.current = choices
+  }, [choices])
   // Client-only: which choice they've highlighted before clicking approve.
   // Defaults to whatever was previously selected (if re-opening an approved
   // selection), otherwise null.
@@ -252,8 +260,21 @@ export function DecisionDrawer({
         })
       }
       if (newAtts.length) {
-        setAttachments([...attachments, ...newAtts])
-        toast.success(`${newAtts.length} file${newAtts.length === 1 ? "" : "s"} uploaded`)
+        // If the user deleted the target choice while this upload was in
+        // flight, drop the new attachments rather than re-attaching them
+        // to a dead client_key. Storage blob is left orphaned for now —
+        // same as the existing cascade pattern.
+        const choiceStillExists =
+          !choiceKey || choicesRef.current.some((c) => c.client_key === choiceKey)
+        if (!choiceStillExists) {
+          toast.info("Choice was removed — uploaded files discarded.")
+        } else {
+          // Functional setState so we don't clobber concurrent edits.
+          setAttachments((current) => [...current, ...newAtts])
+          toast.success(
+            `${newAtts.length} file${newAtts.length === 1 ? "" : "s"} uploaded`
+          )
+        }
       }
     } finally {
       setUploading(false)
@@ -558,19 +579,22 @@ export function DecisionDrawer({
                   uploadFiles(files, choiceKey)
                 }
                 onRemoveAttachment={(att) =>
-                  setAttachments(
-                    attachments.filter(
+                  setAttachments((current) =>
+                    current.filter(
                       (x) => x.storage_path !== att.storage_path
                     )
                   )
                 }
                 onRemoveChoice={(key) => {
                   // Prune the choice AND any photos that were attached to it
-                  // so we don't ship dangling attachments to the server (which
-                  // would have to demote them to decision-level on save).
-                  setChoices(choices.filter((c) => c.client_key !== key))
-                  setAttachments(
-                    attachments.filter((a) => a.choice_id !== key)
+                  // so we don't ship dangling attachments to the server.
+                  // Functional updates so a concurrent upload finishing in
+                  // the same tick can't reintroduce them via stale closure.
+                  setChoices((current) =>
+                    current.filter((c) => c.client_key !== key)
+                  )
+                  setAttachments((current) =>
+                    current.filter((a) => a.choice_id !== key)
                   )
                 }}
                 uploading={uploading}
@@ -612,15 +636,15 @@ export function DecisionDrawer({
                   att={a}
                   canEdit={canEdit}
                   onRemove={() =>
-                    setAttachments(
-                      attachments.filter(
+                    setAttachments((current) =>
+                      current.filter(
                         (x) => x.storage_path !== a.storage_path
                       )
                     )
                   }
                   onCaption={(c) =>
-                    setAttachments(
-                      attachments.map((x) =>
+                    setAttachments((current) =>
+                      current.map((x) =>
                         x.storage_path === a.storage_path
                           ? { ...x, caption: c }
                           : x
