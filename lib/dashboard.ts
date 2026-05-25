@@ -261,6 +261,17 @@ function normalizeDashboardProjects(json: unknown): DashboardProject[] {
     .filter((p): p is DashboardProject => p !== null)
 }
 
+// Number coercion that preserves valid zero. The naive `Number(x) || null`
+// pattern silently turns "0"/0 into null — but a $0 contract price is a
+// legitimate value (e.g. spec-build placeholder), so we use Number.isFinite
+// to distinguish "couldn't be parsed" from "parsed as 0".
+function coerceNumberOrNull(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null
+  if (v == null) return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
 function normalizeDashboardProject(json: unknown): DashboardProject | null {
   if (!json || typeof json !== "object") return null
   const r = json as Record<string, unknown>
@@ -274,12 +285,7 @@ function normalizeDashboardProject(json: unknown): DashboardProject | null {
     project_number: projectNumber,
     name,
     address: typeof r.address === "string" ? r.address : null,
-    contract_price:
-      typeof r.contract_price === "number"
-        ? r.contract_price
-        : r.contract_price == null
-        ? null
-        : Number(r.contract_price) || null,
+    contract_price: coerceNumberOrNull(r.contract_price),
     client_name: typeof r.client_name === "string" ? r.client_name : null,
     client_email: typeof r.client_email === "string" ? r.client_email : null,
     client_phone: typeof r.client_phone === "string" ? r.client_phone : null,

@@ -98,10 +98,11 @@ function PickerPanel({
         </CardBody>
       </Card>
       <div className="flex items-center justify-between gap-3">
-        <Link href="/projects">
-          <Button type="button" variant="ghost">
-            Cancel
-          </Button>
+        <Link
+          href="/projects"
+          className="inline-flex items-center text-sm text-muted hover:text-foreground px-3 py-1.5"
+        >
+          Cancel
         </Link>
         <Button type="button" variant="secondary" onClick={onCreateBlank}>
           <Plus className="h-4 w-4" /> Create blank (not on dashboard)
@@ -136,7 +137,7 @@ function ProjectFormFields({
       )}
       <Card>
         {locked && (
-          <div className="px-4 py-2.5 border-b border-border bg-blue-50 text-sm text-blue-900 flex items-center gap-2">
+          <div className="px-4 py-2.5 border-b border-border bg-brand-50 text-sm text-brand-700 flex items-center gap-2">
             <Building2 className="h-4 w-4" />
             <span>
               Pulled from dashboard. Identity fields are read-only here — edit
@@ -267,10 +268,11 @@ function ProjectFormFields({
             </Button>
           )}
           {!onBack && (
-            <Link href="/projects" className="mr-auto">
-              <Button type="button" variant="ghost">
-                Cancel
-              </Button>
+            <Link
+              href="/projects"
+              className="mr-auto inline-flex items-center text-sm text-muted hover:text-foreground px-3 py-1.5"
+            >
+              Cancel
             </Link>
           )}
           <Button type="submit" disabled={pending}>
