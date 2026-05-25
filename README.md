@@ -4,13 +4,15 @@ In-house construction project management app, intentionally narrower than Builde
 
 **Modules:**
 
-- Projects (linked to dashboard site by project number)
-- Schedule / To-Dos — primary work items with nested to-dos, predecessors, optional delay log, recurring to-dos, assignments
-- Daily Logs *(coming soon)*
-- Decisions (Change Orders + Selections) *(coming soon)*
-- Files *(coming soon)*
-- Pricing *(coming soon)*
-- Reports *(coming soon)*
+- **Projects** — linked to dashboard site by project number; status, contract price, target completion, dashboard URL.
+- **Schedule / To-Dos** — single page; hierarchical list (primary work items with nested to-dos) + Gantt with predecessor arrows; predecessors with FS/SS/FF/SF + lag and cascading dates; recurring to-dos; assignments to staff or sub/vendor companies; optional delay log.
+- **Daily Logs** — internal vs client-visible toggle (prominent); notes; multi-photo/file upload to private Supabase Storage with signed-URL thumbnails; subs-on-site multi-select with per-sub notes.
+- **Decisions** (Change Orders + Selections on one page) — per-project sequential number; workflow `draft → pending_client → approved/rejected`; per-decision follow-up to-do templates that auto-create real `schedule_items` on approval (with assignee + due-date offset); comment thread that clients can post to.
+- **Files** — first-class plans/permits/contracts uploads + unified gallery of every photo/video across daily logs, decisions, and plans, with search.
+- **Pricing** — contract + approved decisions = new total; manual payments table (until QuickBooks sync); balance due.
+- **Companies** — subs/vendors/client households with type filter and search; used for schedule assignments and daily-log subs-on-site.
+- **Reports** — Delay Report (by reason + by project + filterable date range); Schedule Variance (baseline vs current).
+- **Notifications** — in-app bell; populated automatically when decision approval generates follow-up to-dos.
 
 Explicitly NOT included: Purchase Orders (use Adaptive.build), client invoicing (QuickBooks), sales, warranty, time clock.
 
@@ -52,11 +54,19 @@ Enforced via Postgres RLS — see `supabase/migrations/0001_init.sql`.
 ## Routes
 
 ```
-/login                                 sign in / sign up
-/projects                              list + create
-/projects/[id]                         redirects to /schedule
-/projects/[id]/schedule                Schedule/To-Dos module
-/projects/[id]/{daily-logs,decisions,files,pricing}   placeholders
-/notifications                         in-app bell view
-/auth/signout                          POST to clear session
+/login                                  sign in / sign up
+/projects                               list + create (staff)
+/projects/new                           create form (staff)
+/projects/[id]                          redirects to /schedule for staff/trade, /daily-logs for clients
+/projects/[id]/schedule                 Schedule/To-Dos (staff + trade)
+/projects/[id]/daily-logs               Daily Logs
+/projects/[id]/decisions                Change Orders + Selections
+/projects/[id]/files                    Plans + project gallery
+/projects/[id]/pricing                  Contract + decisions + payments
+/companies                              Subs / vendors / client households (staff)
+/reports                                Reports landing (staff)
+/reports/delays                         Delay Report
+/reports/variance                       Schedule Variance
+/notifications                          In-app bell
+/auth/signout                           POST to clear session
 ```
