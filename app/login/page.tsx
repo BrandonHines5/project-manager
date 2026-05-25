@@ -1,9 +1,18 @@
-import { LoginForm } from "./login-form"
+import { redirect } from "next/navigation"
 import { Suspense } from "react"
+import { LoginForm } from "./login-form"
+import { getSessionProfile } from "@/lib/auth"
 
 export const metadata = { title: "Sign in — Hines Homes" }
+export const dynamic = "force-dynamic"
 
-export default function LoginPage() {
+export default async function LoginPage() {
+  // If the user is already signed in, send them to the app.
+  // Done server-side here (not in middleware) to avoid the Supabase
+  // middleware-redirect cookie sync bug.
+  const profile = await getSessionProfile()
+  if (profile) redirect("/projects")
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <div className="w-full max-w-md">
