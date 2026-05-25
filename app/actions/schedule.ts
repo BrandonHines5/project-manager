@@ -8,7 +8,10 @@ import { wouldCreateCycle, cascadeFromPredecessors } from "@/lib/schedule/schedu
 import type { RecurrenceRule } from "@/lib/schedule/recurrence"
 import { sendEmail, appUrl } from "@/lib/email"
 
-const NULLABLE_DATE = z.string().optional().or(z.literal(""))
+// Permissive schema: accept anything reasonable and normalize inside the
+// action. Never let a benign client quirk (null vs "", missing key, extra
+// field, etc.) block a save.
+const optStr = z.string().nullish() // string | null | undefined
 
 const Recurrence = z
   .object({
@@ -20,41 +23,44 @@ const Recurrence = z
   .nullable()
   .optional()
 
-const ScheduleItemInput = z.object({
-  id: z.string().uuid().optional(),
-  project_id: z.string().uuid(),
-  parent_id: z.string().uuid().nullable().optional(),
-  kind: z.enum(["work", "todo"]),
-  title: z.string().min(1, "Required").max(300),
-  description: z.string().optional().nullable(),
-  start_date: NULLABLE_DATE,
-  end_date: NULLABLE_DATE,
-  due_date: NULLABLE_DATE,
-  status: z
-    .enum(["not_started", "in_progress", "complete", "delayed"])
-    .default("not_started"),
-  recurrence_rule: Recurrence,
-  assignments: z
-    .array(
-      z.object({
-        profile_id: z.string().uuid().nullable().optional(),
-        company_id: z.string().uuid().nullable().optional(),
-      })
-    )
-    .default([]),
-  checklist: z
-    .array(z.object({ id: z.string().optional(), label: z.string(), is_done: z.boolean() }))
-    .default([]),
-  predecessors: z
-    .array(
-      z.object({
-        predecessor_id: z.string().uuid(),
-        dep_type: z.enum(["FS", "SS", "FF", "SF"]).default("FS"),
-        lag_days: z.number().int().default(0),
-      })
-    )
-    .default([]),
+const Assignment = z.object({
+  profile_id: optStr,
+  company_id: optStr,
 })
+
+const ChecklistItem = z.object({
+  id: optStr,
+  label: z.string().default(""),
+  is_done: z.boolean().default(false),
+})
+
+const Predecessor = z.object({
+  predecessor_id: z.string(),
+  dep_type: z.enum(["FS", "SS", "FF", "SF"]).default("FS"),
+  lag_days: z.coerce.number().int().default(0),
+})
+
+const ScheduleItemInput = z
+  .object({
+    id: optStr,
+    project_id: z.string(),
+    parent_id: optStr,
+    kind: z.enum(["work", "todo"]),
+    title: z.string().min(1, "Required").max(300),
+    description: optStr,
+    start_date: optStr,
+    end_date: optStr,
+    due_date: optStr,
+    status: z
+      .enum(["not_started", "in_progress", "complete", "delayed"])
+      .default("not_started"),
+    recurrence_rule: Recurrence,
+    assignments: z.array(Assignment).default([]),
+    checklist: z.array(ChecklistItem).default([]),
+    predecessors: z.array(Predecessor).default([]),
+  })
+  // Don't fail on unknown extra fields.
+  .passthrough()
 
 export type ScheduleItemInputT = z.infer<typeof ScheduleItemInput>
 
@@ -75,38 +81,34 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     dbg("0:enter", { hasId: !!input.id, kind: input.kind })
     await requireStaff()
     dbg("1:requireStaff_ok")
-    // Write the raw input to debug_log so we can inspect it server-side later.
-    const debugSb = await createSupabaseServerClient()
-    await debugSb.from("debug_log").insert({
-      tag: "saveScheduleItem:input",
-      payload: JSON.parse(JSON.stringify(input)),
-    })
-    let parsed: ScheduleItemInputT
-    try {
-      parsed = ScheduleItemInput.parse(input)
-    } catch (zerr) {
-      if (zerr instanceof z.ZodError) {
-        await debugSb.from("debug_log").insert({
-          tag: "saveScheduleItem:zod_error",
-          payload: JSON.parse(JSON.stringify({ issues: zerr.issues, input })),
-        })
-      }
-      throw zerr
+    // safeParse so a stray validation hiccup never throws an opaque
+    // "Server Components render" error on the client.
+    const result = ScheduleItemInput.safeParse(input)
+    if (!result.success) {
+      const sb = await createSupabaseServerClient()
+      await sb.from("debug_log").insert({
+        tag: "saveScheduleItem:zod_error",
+        payload: JSON.parse(JSON.stringify({ issues: result.error.issues, input })),
+      })
+      const first = result.error.issues[0]
+      throw new Error(
+        `Invalid form data at ${first.path.join(".") || "(root)"}: ${first.message}`
+      )
     }
+    const parsed = result.data
     dbg("2:zod_ok", { title: parsed.title, status: parsed.status })
     const supabase = await createSupabaseServerClient()
 
-  const duration =
-    parsed.start_date && parsed.end_date
-      ? daysBetween(parsed.start_date, parsed.end_date)
-      : null
+  const startD = nz(parsed.start_date)
+  const endD = nz(parsed.end_date)
+  const duration = startD && endD ? daysBetween(startD, endD) : null
 
   const baseRow = {
     project_id: parsed.project_id,
-    parent_id: parsed.parent_id ?? null,
+    parent_id: nz(parsed.parent_id),
     kind: parsed.kind,
     title: parsed.title,
-    description: parsed.description ?? null,
+    description: nz(parsed.description),
     start_date: nz(parsed.start_date),
     end_date: nz(parsed.end_date),
     due_date: nz(parsed.due_date),
