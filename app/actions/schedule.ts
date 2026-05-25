@@ -69,6 +69,17 @@ function daysBetween(a: string, b: string) {
 }
 
 export async function saveScheduleItem(input: ScheduleItemInputT) {
+  try {
+    return await _saveScheduleItem(input)
+  } catch (e) {
+    // Temporary: surface the real cause to the client so we can debug.
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error("[saveScheduleItem]", msg, e instanceof Error ? e.stack : "")
+    throw new Error(`saveScheduleItem failed: ${msg}`)
+  }
+}
+
+async function _saveScheduleItem(input: ScheduleItemInputT) {
   await requireStaff()
   const parsed = ScheduleItemInput.parse(input)
   const supabase = await createSupabaseServerClient()
