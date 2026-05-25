@@ -99,6 +99,27 @@ export type Database = {
         }
         Relationships: []
       }
+      debug_log: {
+        Row: {
+          id: string
+          ts: string
+          tag: string | null
+          payload: Json
+        }
+        Insert: {
+          id?: string
+          ts?: string
+          tag?: string | null
+          payload?: Json
+        }
+        Update: {
+          id?: string
+          ts?: string
+          tag?: string | null
+          payload?: Json
+        }
+        Relationships: []
+      }
       project_payments: {
         Row: {
           amount: number

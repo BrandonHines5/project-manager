@@ -79,7 +79,7 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     const debugSb = await createSupabaseServerClient()
     await debugSb.from("debug_log").insert({
       tag: "saveScheduleItem:input",
-      payload: input as unknown as Record<string, unknown>,
+      payload: JSON.parse(JSON.stringify(input)),
     })
     let parsed: ScheduleItemInputT
     try {
@@ -88,7 +88,7 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
       if (zerr instanceof z.ZodError) {
         await debugSb.from("debug_log").insert({
           tag: "saveScheduleItem:zod_error",
-          payload: { issues: zerr.issues, input: input as unknown as Record<string, unknown> },
+          payload: JSON.parse(JSON.stringify({ issues: zerr.issues, input })),
         })
       }
       throw zerr
