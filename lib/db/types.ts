@@ -211,6 +211,7 @@ export type Database = {
       decision_attachments: {
         Row: {
           caption: string | null
+          choice_id: string | null
           created_at: string
           decision_id: string
           file_name: string
@@ -223,6 +224,7 @@ export type Database = {
         }
         Insert: {
           caption?: string | null
+          choice_id?: string | null
           created_at?: string
           decision_id: string
           file_name: string
@@ -235,6 +237,7 @@ export type Database = {
         }
         Update: {
           caption?: string | null
+          choice_id?: string | null
           created_at?: string
           decision_id?: string
           file_name?: string
@@ -247,7 +250,52 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "decision_attachments_choice_id_fkey"
+            columns: ["choice_id"]
+            isOneToOne: false
+            referencedRelation: "decision_choices"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "decision_attachments_decision_id_fkey"
+            columns: ["decision_id"]
+            isOneToOne: false
+            referencedRelation: "decisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      decision_choices: {
+        Row: {
+          created_at: string
+          decision_id: string
+          description: string | null
+          id: string
+          position: number
+          price_delta: number | null
+          title: string
+        }
+        Insert: {
+          created_at?: string
+          decision_id: string
+          description?: string | null
+          id?: string
+          position?: number
+          price_delta?: number | null
+          title: string
+        }
+        Update: {
+          created_at?: string
+          decision_id?: string
+          description?: string | null
+          id?: string
+          position?: number
+          price_delta?: number | null
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "decision_choices_decision_id_fkey"
             columns: ["decision_id"]
             isOneToOne: false
             referencedRelation: "decisions"
@@ -411,11 +459,13 @@ export type Database = {
           created_at: string
           created_by: string | null
           description: string | null
+          due_date: string | null
           id: string
           kind: Database["public"]["Enums"]["decision_kind"]
           markup_percent: number
           number: number
           project_id: string
+          selected_choice_id: string | null
           status: Database["public"]["Enums"]["decision_status"]
           title: string
           updated_at: string
@@ -427,11 +477,13 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           description?: string | null
+          due_date?: string | null
           id?: string
           kind: Database["public"]["Enums"]["decision_kind"]
           markup_percent?: number
           number: number
           project_id: string
+          selected_choice_id?: string | null
           status?: Database["public"]["Enums"]["decision_status"]
           title: string
           updated_at?: string
@@ -443,11 +495,13 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           description?: string | null
+          due_date?: string | null
           id?: string
           kind?: Database["public"]["Enums"]["decision_kind"]
           markup_percent?: number
           number?: number
           project_id?: string
+          selected_choice_id?: string | null
           status?: Database["public"]["Enums"]["decision_status"]
           title?: string
           updated_at?: string
@@ -472,6 +526,13 @@ export type Database = {
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "decisions_selected_choice_id_fkey"
+            columns: ["selected_choice_id"]
+            isOneToOne: false
+            referencedRelation: "decision_choices"
             referencedColumns: ["id"]
           },
         ]
@@ -1058,6 +1119,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      client_decide_decision: {
+        Args: { p_action: string; p_choice_id?: string; p_decision_id: string }
+        Returns: Json
+      }
       current_role_name: {
         Args: never
         Returns: Database["public"]["Enums"]["user_role"]

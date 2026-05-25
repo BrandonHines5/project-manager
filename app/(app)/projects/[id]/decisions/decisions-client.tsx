@@ -6,9 +6,12 @@ import {
   FilePen,
   Scale,
   Palette,
+  Search,
+  X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Input, Select } from "@/components/ui/input"
 import { EmptyState } from "@/components/ui/empty"
 import { formatCurrency, formatDate, cn } from "@/lib/utils"
 import type { Tables, Enums } from "@/lib/db/types"
@@ -30,8 +33,12 @@ export type DecisionsData = {
   // this is always an empty array — they only see the rolled-up cost_delta.
   cost_items: Tables<"decision_cost_items">[]
   cost_codes: Pick<Tables<"cost_codes">, "id" | "code" | "name" | "position" | "is_active">[]
+  choices: Tables<"decision_choices">[]
   signed_urls: Record<string, string>
 }
+
+type KindFilter = "all" | "change_order" | "selection"
+type StatusFilter = "all" | "open" | Enums<"decision_status">
 
 export function DecisionsClient({ data }: { data: DecisionsData }) {
   const [drawerState, setDrawerState] = useState<
@@ -39,12 +46,32 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
     | { mode: "edit"; decisionId: string }
     | null
   >(null)
+  const [kindFilter, setKindFilter] = useState<KindFilter>("all")
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all")
+  const [query, setQuery] = useState("")
 
   const canEdit = data.role === "staff"
   const editingDecision =
     drawerState?.mode === "edit"
       ? data.decisions.find((d) => d.id === drawerState.decisionId)
       : null
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return data.decisions.filter((d) => {
+      if (kindFilter !== "all" && d.kind !== kindFilter) return false
+      if (statusFilter === "open") {
+        if (d.status !== "draft" && d.status !== "pending_client") return false
+      } else if (statusFilter !== "all" && d.status !== statusFilter) {
+        return false
+      }
+      if (q) {
+        const hay = `${d.number} ${d.title} ${d.description ?? ""}`.toLowerCase()
+        if (!hay.includes(q)) return false
+      }
+      return true
+    })
+  }, [data.decisions, kindFilter, statusFilter, query])
 
   const stats = useMemo(() => {
     const open = data.decisions.filter(
@@ -59,6 +86,9 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
       approvedDelta,
     }
   }, [data.decisions])
+
+  const filtersActive =
+    kindFilter !== "all" || statusFilter !== "all" || query.trim() !== ""
 
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-6 py-5">
@@ -95,6 +125,57 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
         )}
       </div>
 
+      {data.decisions.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <div className="relative flex-1 min-w-[180px] max-w-sm">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted pointer-events-none" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search title or description"
+              className="pl-7 h-8 text-xs"
+            />
+          </div>
+          <Select
+            value={kindFilter}
+            onChange={(e) => setKindFilter(e.target.value as KindFilter)}
+            className="h-8 w-auto text-xs"
+          >
+            <option value="all">All types</option>
+            <option value="change_order">Change orders</option>
+            <option value="selection">Selections</option>
+          </Select>
+          <Select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+            className="h-8 w-auto text-xs"
+          >
+            <option value="all">All statuses</option>
+            <option value="open">Open (draft + pending)</option>
+            <option value="draft">Draft</option>
+            <option value="pending_client">Pending client</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+          </Select>
+          {filtersActive && (
+            <button
+              type="button"
+              onClick={() => {
+                setKindFilter("all")
+                setStatusFilter("all")
+                setQuery("")
+              }}
+              className="text-xs text-muted hover:text-foreground inline-flex items-center gap-1 cursor-pointer"
+            >
+              <X className="h-3 w-3" /> Clear
+            </button>
+          )}
+          <span className="text-xs text-muted ml-auto">
+            {filtered.length} of {data.decisions.length}
+          </span>
+        </div>
+      )}
+
       {data.decisions.length === 0 ? (
         <EmptyState
           icon={<FilePen className="h-10 w-10" />}
@@ -116,6 +197,10 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
             ) : null
           }
         />
+      ) : filtered.length === 0 ? (
+        <div className="bg-surface border border-border rounded-lg px-4 py-8 text-center text-sm text-muted">
+          No decisions match the current filters.
+        </div>
       ) : (
         <div className="bg-surface border border-border rounded-lg overflow-hidden">
           <table className="w-full text-sm">
@@ -125,6 +210,9 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
                 <th className="text-left font-medium px-4 py-2.5 w-32">Type</th>
                 <th className="text-left font-medium px-4 py-2.5">Title</th>
                 <th className="text-left font-medium px-4 py-2.5 w-36">Status</th>
+                <th className="text-left font-medium px-4 py-2.5 w-28 hidden md:table-cell">
+                  Due
+                </th>
                 <th className="text-right font-medium px-4 py-2.5 w-32">Cost delta</th>
                 <th className="text-left font-medium px-4 py-2.5 w-24 hidden md:table-cell">
                   Comments
@@ -132,7 +220,7 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {data.decisions.map((d) => {
+              {filtered.map((d) => {
                 const commentCount = data.comments.filter(
                   (c) => c.decision_id === d.id
                 ).length
@@ -153,6 +241,9 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
                     <td className="px-4 py-3 font-medium">{d.title}</td>
                     <td className="px-4 py-3">
                       <StatusBadge status={d.status} />
+                    </td>
+                    <td className="px-4 py-3 hidden md:table-cell text-xs">
+                      <DueCell due={d.due_date} status={d.status} />
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums">
                       <CostDelta value={d.cost_delta} />
@@ -241,6 +332,25 @@ export function CostDelta({ value }: { value: number | null }) {
     <span className={positive ? "text-foreground" : "text-success"}>
       {positive ? "+" : ""}
       {formatCurrency(value)}
+    </span>
+  )
+}
+
+// Highlight a missed due date in red, but only while the decision is still
+// open. Once approved/rejected the date is just historical context.
+function DueCell({
+  due,
+  status,
+}: {
+  due: string | null
+  status: Enums<"decision_status">
+}) {
+  if (!due) return <span className="text-muted">—</span>
+  const isOpen = status === "draft" || status === "pending_client"
+  const overdue = isOpen && due < new Date().toISOString().slice(0, 10)
+  return (
+    <span className={overdue ? "text-danger font-medium" : "text-foreground"}>
+      {formatDate(due)}
     </span>
   )
 }
