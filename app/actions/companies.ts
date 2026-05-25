@@ -31,10 +31,6 @@ export async function saveCompany(input: CompanyInputT) {
   const supabase = await createSupabaseServerClient()
   const result = CompanyInput.safeParse(input)
   if (!result.success) {
-    await supabase.from("debug_log").insert({
-      tag: "saveCompany:zod_error",
-      payload: JSON.parse(JSON.stringify({ issues: result.error.issues, input })),
-    })
     const first = result.error.issues[0]
     throw new Error(
       `Invalid form data at ${first.path.join(".") || "(root)"}: ${first.message}`
@@ -65,10 +61,16 @@ export async function saveCompany(input: CompanyInputT) {
   revalidatePath("/companies")
 }
 
+const DeleteCompanyInput = z.object({ id: z.string() })
+
 export async function deleteCompany(id: string) {
   await requireStaff()
+  const parsed = DeleteCompanyInput.parse({ id })
   const supabase = await createSupabaseServerClient()
-  const { error } = await supabase.from("companies").delete().eq("id", id)
+  const { error } = await supabase
+    .from("companies")
+    .delete()
+    .eq("id", parsed.id)
   if (error) throw new Error(error.message)
   revalidatePath("/companies")
 }

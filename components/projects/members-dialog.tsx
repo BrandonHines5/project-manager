@@ -46,6 +46,7 @@ export function MembersButton({
   return (
     <>
       <button
+        type="button"
         onClick={() => setOpen(true)}
         className="inline-flex items-center gap-1 text-sm text-muted hover:text-foreground cursor-pointer"
         title="Manage members"
@@ -82,7 +83,12 @@ function MembersDialog({
   const [roleOnProject, setRoleOnProject] = useState("")
 
   const memberMap = new Map(members.map((m) => [m.profile_id, m]))
-  const candidateProfiles = profiles.filter((p) => !memberMap.has(p.id))
+  // Staff already have access to all projects via is_staff() RLS — adding
+  // them as project_members is a no-op and just clutters the picker. Filter
+  // them out of the candidate list.
+  const candidateProfiles = profiles.filter(
+    (p) => !memberMap.has(p.id) && p.role !== "staff"
+  )
 
   function handleAdd() {
     if (!selectedProfile) return
@@ -167,6 +173,7 @@ function MembersDialog({
                           onClick={() => handleRemove(m.profile_id)}
                           className="text-muted hover:text-danger cursor-pointer"
                           title="Remove"
+                          aria-label={`Remove ${p.full_name || p.email} from project`}
                         >
                           <X className="h-3.5 w-3.5" />
                         </button>

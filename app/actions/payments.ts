@@ -26,10 +26,6 @@ export async function savePayment(input: PaymentInputT) {
   const supabase = await createSupabaseServerClient()
   const result = PaymentInput.safeParse(input)
   if (!result.success) {
-    await supabase.from("debug_log").insert({
-      tag: "savePayment:zod_error",
-      payload: JSON.parse(JSON.stringify({ issues: result.error.issues, input })),
-    })
     const first = result.error.issues[0]
     throw new Error(
       `Invalid form data at ${first.path.join(".") || "(root)"}: ${first.message}`

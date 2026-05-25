@@ -8,12 +8,14 @@ In-house construction project management app, intentionally narrower than Builde
 
 Or import the existing repo at https://vercel.com/new and pick `brandonhines5/project-manager`.
 
-**Env vars to paste during import** (Supabase URL + publishable key for `HH-ProjectManager`):
+**Env vars to paste during import:**
 
 ```
-NEXT_PUBLIC_SUPABASE_URL=https://ckvycpfyydmphtizsppn.supabase.co
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_IM95PLI5D3gf8XKdQcN3Tw_Qapif4L3
+NEXT_PUBLIC_SUPABASE_URL=https://<your-project-ref>.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<your-anon-key>
 ```
+
+Find both values in your Supabase project → Settings → API.
 
 After the first deploy: in Supabase Dashboard → Authentication → URL Configuration, add the Vercel URL to **Site URL** + **Redirect URLs** so signup confirmation links work.
 
@@ -82,6 +84,7 @@ Enforced via Postgres RLS — see `supabase/migrations/0001_init.sql`.
 /projects/[id]/files                    Plans + project gallery
 /projects/[id]/pricing                  Contract + decisions + payments
 /companies                              Subs / vendors / client households (staff)
+/team                                   Everyone with an account; promote/demote roles (staff)
 /reports                                Reports landing (staff)
 /reports/delays                         Delay Report
 /reports/variance                       Schedule Variance

@@ -75,29 +75,33 @@ function daysBetween(a: string, b: string) {
 }
 
 export async function saveScheduleItem(input: ScheduleItemInputT) {
-  const dbg = (step: string, extra?: unknown) =>
-    console.log(`[saveScheduleItem] ${step}`, extra ?? "")
-  try {
-    dbg("0:enter", { hasId: !!input.id, kind: input.kind })
-    await requireStaff()
-    dbg("1:requireStaff_ok")
-    // safeParse so a stray validation hiccup never throws an opaque
-    // "Server Components render" error on the client.
-    const result = ScheduleItemInput.safeParse(input)
-    if (!result.success) {
-      const sb = await createSupabaseServerClient()
-      await sb.from("debug_log").insert({
-        tag: "saveScheduleItem:zod_error",
-        payload: JSON.parse(JSON.stringify({ issues: result.error.issues, input })),
-      })
-      const first = result.error.issues[0]
+  await requireStaff()
+  const result = ScheduleItemInput.safeParse(input)
+  if (!result.success) {
+    const first = result.error.issues[0]
+    throw new Error(
+      `Invalid form data at ${first.path.join(".") || "(root)"}: ${first.message}`
+    )
+  }
+  const parsed = result.data
+  const supabase = await createSupabaseServerClient()
+
+  // Enforce assignment XOR: exactly one of profile_id / company_id per row.
+  // Rows where neither is set are dropped silently (user added a row then
+  // didn't pick a value). Rows where both are set are a programming error.
+  const cleanedAssignments = parsed.assignments
+    .map((a) => ({
+      profile_id: nz(a.profile_id),
+      company_id: nz(a.company_id),
+    }))
+    .filter((a) => a.profile_id || a.company_id)
+  for (const a of cleanedAssignments) {
+    if (a.profile_id && a.company_id) {
       throw new Error(
-        `Invalid form data at ${first.path.join(".") || "(root)"}: ${first.message}`
+        "An assignment must reference exactly one of profile or company, not both."
       )
     }
-    const parsed = result.data
-    dbg("2:zod_ok", { title: parsed.title, status: parsed.status })
-    const supabase = await createSupabaseServerClient()
+  }
 
   const startD = nz(parsed.start_date)
   const endD = nz(parsed.end_date)
@@ -109,96 +113,87 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     kind: parsed.kind,
     title: parsed.title,
     description: nz(parsed.description),
-    start_date: nz(parsed.start_date),
-    end_date: nz(parsed.end_date),
+    start_date: startD,
+    end_date: endD,
     due_date: nz(parsed.due_date),
     duration_days: duration,
     status: parsed.status,
     recurrence_rule: (parsed.recurrence_rule ?? null) as RecurrenceRule | null,
   }
 
-  let id = parsed.id
+  let id: string | null = nz(parsed.id)
   if (id) {
     const { error } = await supabase
       .from("schedule_items")
       .update(baseRow)
       .eq("id", id)
-    if (error) {
-      dbg("3:update_fail", error)
-      throw new Error(error.message)
-    }
-    dbg("3:update_ok")
+    if (error) throw new Error(error.message)
   } else {
     const { data, error } = await supabase
       .from("schedule_items")
       .insert(baseRow)
       .select("id")
       .single()
-    if (error) {
-      dbg("3:insert_fail", { code: error.code, msg: error.message, details: error.details, hint: error.hint })
-      throw new Error(error.message)
-    }
+    if (error) throw new Error(error.message)
     id = data.id
-    dbg("3:insert_ok", { id })
   }
 
   // Replace assignments. Track who is newly assigned so we can notify.
-  const { data: oldAssignments, error: aSelErr } = await supabase
+  const { data: oldAssignments } = await supabase
     .from("schedule_assignments")
     .select("profile_id, company_id")
     .eq("schedule_item_id", id)
-  if (aSelErr) dbg("4:assignSelect_fail", aSelErr)
   const { error: aDelErr } = await supabase
     .from("schedule_assignments")
     .delete()
     .eq("schedule_item_id", id)
-  if (aDelErr) {
-    dbg("4:assignDelete_fail", aDelErr)
-    throw new Error(aDelErr.message)
-  }
-  dbg("4:assignReset_ok")
-  if (parsed.assignments.length) {
-    const rows = parsed.assignments
-      .filter((a) => a.profile_id || a.company_id)
-      .map((a) => ({
-        schedule_item_id: id!,
-        profile_id: a.profile_id ?? null,
-        company_id: a.company_id ?? null,
-      }))
-    if (rows.length) {
-      const { error: assignErr } = await supabase
-        .from("schedule_assignments")
-        .insert(rows)
-      if (assignErr) throw new Error(assignErr.message)
+  if (aDelErr) throw new Error(aDelErr.message)
 
-      // Notify newly-assigned profiles + companies (idempotent against re-saves)
-      const oldKeys = new Set(
-        (oldAssignments ?? []).map((a) => `${a.profile_id ?? ""}|${a.company_id ?? ""}`)
+  if (cleanedAssignments.length) {
+    const rows = cleanedAssignments.map((a) => ({
+      schedule_item_id: id!,
+      profile_id: a.profile_id,
+      company_id: a.company_id,
+    }))
+    const { error: assignErr } = await supabase
+      .from("schedule_assignments")
+      .insert(rows)
+    if (assignErr) throw new Error(assignErr.message)
+
+    // Notify newly-assigned profiles + companies (idempotent against re-saves).
+    // Email + notification failures must NOT fail the primary save — wrap in
+    // try/catch and log instead.
+    const oldKeys = new Set(
+      (oldAssignments ?? []).map(
+        (a) => `${a.profile_id ?? ""}|${a.company_id ?? ""}`
       )
-      const newOnes = rows.filter(
-        (r) => !oldKeys.has(`${r.profile_id ?? ""}|${r.company_id ?? ""}`)
-      )
-      if (newOnes.length) {
+    )
+    const newOnes = rows.filter(
+      (r) => !oldKeys.has(`${r.profile_id ?? ""}|${r.company_id ?? ""}`)
+    )
+    if (newOnes.length) {
+      try {
         await notifyScheduleAssignees(
           newOnes,
           parsed.project_id,
           id!,
           parsed.title
         )
+      } catch (e) {
+        console.warn(
+          "[saveScheduleItem] notifyScheduleAssignees failed (non-fatal):",
+          e instanceof Error ? e.message : e
+        )
       }
     }
   }
 
-  // Replace checklist (for todos only)
+  // Replace checklist (for todos only).
   const { error: clDelErr } = await supabase
     .from("todo_checklist_items")
     .delete()
     .eq("schedule_item_id", id)
-  if (clDelErr) {
-    dbg("5:checklistDelete_fail", clDelErr)
-    throw new Error(clDelErr.message)
-  }
-  dbg("5:checklistDelete_ok")
+  if (clDelErr) throw new Error(clDelErr.message)
   if (parsed.kind === "todo" && parsed.checklist.length) {
     const rows = parsed.checklist
       .filter((c) => c.label.trim() !== "")
@@ -217,18 +212,12 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
   }
 
   // Replace predecessors with cycle check.
-  // We always reconcile (parsed.predecessors may legitimately be empty,
-  // meaning "clear all predecessors").
   {
     const { data: existing, error: pSelErr } = await supabase
       .from("schedule_predecessors")
       .select("item_id, predecessor_id, dep_type, lag_days, id, created_at")
       .or(`item_id.eq.${id},predecessor_id.eq.${id}`)
-    if (pSelErr) {
-      dbg("6:predSelect_fail", pSelErr)
-      throw new Error(pSelErr.message)
-    }
-    dbg("6:predSelect_ok", { count: (existing ?? []).length })
+    if (pSelErr) throw new Error(pSelErr.message)
     const allPreds = existing ?? []
     const others = allPreds.filter((p) => p.item_id !== id)
     const proposed = [
@@ -266,20 +255,10 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     }
   }
 
-  // Cascade to successors
-  dbg("7:cascade_start")
   await applyCascade(parsed.project_id, id!)
-  dbg("7:cascade_ok")
 
   revalidatePath(`/projects/${parsed.project_id}/schedule`)
-  dbg("8:done")
   return { id }
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    const stack = e instanceof Error ? e.stack ?? "" : ""
-    console.error("[saveScheduleItem] CAUGHT:", msg, "\n", stack)
-    throw e
-  }
 }
 
 async function notifyScheduleAssignees(
@@ -363,18 +342,18 @@ async function applyCascade(projectId: string, movedId: string) {
   }
 }
 
-export async function deleteScheduleItem({
-  id,
-  project_id,
-}: {
-  id: string
-  project_id: string
-}) {
+const IdProjectInput = z.object({ id: z.string(), project_id: z.string() })
+
+export async function deleteScheduleItem(input: { id: string; project_id: string }) {
   await requireStaff()
+  const parsed = IdProjectInput.parse(input)
   const supabase = await createSupabaseServerClient()
-  const { error } = await supabase.from("schedule_items").delete().eq("id", id)
+  const { error } = await supabase
+    .from("schedule_items")
+    .delete()
+    .eq("id", parsed.id)
   if (error) throw new Error(error.message)
-  revalidatePath(`/projects/${project_id}/schedule`)
+  revalidatePath(`/projects/${parsed.project_id}/schedule`)
 }
 
 export async function logDelay({
@@ -426,26 +405,29 @@ export async function logDelay({
   revalidatePath(`/projects/${project_id}/schedule`)
 }
 
-export async function moveScheduleItem({
-  id,
-  project_id,
-  start_date,
-  end_date,
-}: {
+const MoveInput = z.object({
+  id: z.string(),
+  project_id: z.string(),
+  start_date: z.string().min(1),
+  end_date: z.string().min(1),
+})
+
+export async function moveScheduleItem(input: {
   id: string
   project_id: string
   start_date: string
   end_date: string
 }) {
   await requireStaff()
+  const parsed = MoveInput.parse(input)
   const supabase = await createSupabaseServerClient()
   const { error } = await supabase
     .from("schedule_items")
-    .update({ start_date, end_date })
-    .eq("id", id)
+    .update({ start_date: parsed.start_date, end_date: parsed.end_date })
+    .eq("id", parsed.id)
   if (error) throw new Error(error.message)
-  await applyCascade(project_id, id)
-  revalidatePath(`/projects/${project_id}/schedule`)
+  await applyCascade(parsed.project_id, parsed.id)
+  revalidatePath(`/projects/${parsed.project_id}/schedule`)
 }
 
 export async function setItemStatus({

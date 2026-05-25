@@ -10,14 +10,22 @@ import type { TablesUpdate } from "@/lib/db/types"
 
 const optStr = z.string().nullish()
 
-const Followup = z.object({
-  id: optStr,
-  title: z.string().min(1),
-  assignee_profile_id: optStr,
-  assignee_company_id: optStr,
-  due_offset_days: z.coerce.number().int().min(0).default(7),
-  notes: optStr,
-})
+const Followup = z
+  .object({
+    id: optStr,
+    title: z.string().min(1),
+    assignee_profile_id: optStr,
+    assignee_company_id: optStr,
+    due_offset_days: z.coerce.number().int().min(0).default(7),
+    notes: optStr,
+  })
+  .refine(
+    (f) => !(f.assignee_profile_id && f.assignee_company_id),
+    {
+      message: "A follow-up cannot target both a profile and a company.",
+      path: ["assignee_company_id"],
+    }
+  )
 
 const Attachment = z.object({
   id: optStr,
@@ -52,11 +60,6 @@ export async function saveDecision(input: DecisionInputT) {
   const profile = await requireStaff()
   const result = DecisionInput.safeParse(input)
   if (!result.success) {
-    const supabase = await createSupabaseServerClient()
-    await supabase.from("debug_log").insert({
-      tag: "saveDecision:zod_error",
-      payload: JSON.parse(JSON.stringify({ issues: result.error.issues, input })),
-    })
     const first = result.error.issues[0]
     throw new Error(
       `Invalid form data at ${first.path.join(".") || "(root)"}: ${first.message}`
@@ -173,16 +176,25 @@ export async function saveDecision(input: DecisionInputT) {
   )
   const toDelete = (existingAtts ?? []).filter((e) => !keepIds.has(e.id))
   if (toDelete.length) {
-    await supabase
+    const { error: rmErr } = await supabase
       .from("decision_attachments")
       .delete()
       .in(
         "id",
         toDelete.map((d) => d.id)
       )
-    await supabase.storage
+    if (rmErr) throw new Error(rmErr.message)
+    // Storage cleanup is best-effort — failing to remove the blob shouldn't
+    // block the user from saving (the row is already gone). Log instead.
+    const { error: storageErr } = await supabase.storage
       .from("project-files")
       .remove(toDelete.map((d) => d.storage_path))
+    if (storageErr) {
+      console.warn(
+        "[saveDecision] storage cleanup failed (non-fatal):",
+        storageErr.message
+      )
+    }
   }
   const newOnes = parsed.attachments.filter((a) => !nz(a.id))
   if (newOnes.length) {
@@ -202,10 +214,11 @@ export async function saveDecision(input: DecisionInputT) {
     if (error) throw new Error(error.message)
   }
   for (const a of parsed.attachments.filter((a) => nz(a.id))) {
-    await supabase
+    const { error: capErr } = await supabase
       .from("decision_attachments")
       .update({ caption: a.caption ?? null })
       .eq("id", a.id!)
+    if (capErr) throw new Error(capErr.message)
   }
 
   // Materialize follow-ups whenever the decision is in 'approved' state.

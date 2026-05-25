@@ -47,11 +47,6 @@ export async function saveDailyLog(input: DailyLogInputT) {
   const profile = await requireStaff()
   const result = DailyLogInput.safeParse(input)
   if (!result.success) {
-    const supabase = await createSupabaseServerClient()
-    await supabase.from("debug_log").insert({
-      tag: "saveDailyLog:zod_error",
-      payload: JSON.parse(JSON.stringify({ issues: result.error.issues, input })),
-    })
     const first = result.error.issues[0]
     throw new Error(
       `Invalid form data at ${first.path.join(".") || "(root)"}: ${first.message}`
@@ -114,16 +109,23 @@ export async function saveDailyLog(input: DailyLogInputT) {
   )
   const toDelete = (existing ?? []).filter((e) => !keepIds.has(e.id))
   if (toDelete.length) {
-    await supabase
+    const { error: rmErr } = await supabase
       .from("daily_log_attachments")
       .delete()
       .in(
         "id",
         toDelete.map((d) => d.id)
       )
-    await supabase.storage
+    if (rmErr) throw new Error(rmErr.message)
+    const { error: storageErr } = await supabase.storage
       .from("project-files")
       .remove(toDelete.map((d) => d.storage_path))
+    if (storageErr) {
+      console.warn(
+        "[saveDailyLog] storage cleanup failed (non-fatal):",
+        storageErr.message
+      )
+    }
   }
 
   const newOnes = parsed.attachments.filter((a) => !nz(a.id))
@@ -146,10 +148,11 @@ export async function saveDailyLog(input: DailyLogInputT) {
 
   const retained = parsed.attachments.filter((a) => nz(a.id))
   for (const a of retained) {
-    await supabase
+    const { error: capErr } = await supabase
       .from("daily_log_attachments")
       .update({ caption: nz(a.caption) })
       .eq("id", a.id!)
+    if (capErr) throw new Error(capErr.message)
   }
 
   revalidatePath(`/projects/${parsed.project_id}/daily-logs`)

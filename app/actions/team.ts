@@ -28,10 +28,6 @@ export async function updateProfile(input: UpdateProfileInputT) {
   const supabase = await createSupabaseServerClient()
   const result = UpdateProfileInput.safeParse(input)
   if (!result.success) {
-    await supabase.from("debug_log").insert({
-      tag: "updateProfile:zod_error",
-      payload: JSON.parse(JSON.stringify({ issues: result.error.issues, input })),
-    })
     const first = result.error.issues[0]
     throw new Error(
       `Invalid form data at ${first.path.join(".") || "(root)"}: ${first.message}`

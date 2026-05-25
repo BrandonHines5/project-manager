@@ -18,10 +18,6 @@ export async function addProjectMember(input: z.infer<typeof AddMemberInput>) {
   const supabase = await createSupabaseServerClient()
   const result = AddMemberInput.safeParse(input)
   if (!result.success) {
-    await supabase.from("debug_log").insert({
-      tag: "addProjectMember:zod_error",
-      payload: JSON.parse(JSON.stringify({ issues: result.error.issues, input })),
-    })
     const first = result.error.issues[0]
     throw new Error(
       `Invalid form data at ${first.path.join(".") || "(root)"}: ${first.message}`
@@ -38,20 +34,23 @@ export async function addProjectMember(input: z.infer<typeof AddMemberInput>) {
   revalidatePath(`/projects/${parsed.project_id}`, "layout")
 }
 
-export async function removeProjectMember({
-  project_id,
-  profile_id,
-}: {
+const RemoveMemberInput = z.object({
+  project_id: z.string(),
+  profile_id: z.string(),
+})
+
+export async function removeProjectMember(input: {
   project_id: string
   profile_id: string
 }) {
   await requireStaff()
+  const parsed = RemoveMemberInput.parse(input)
   const supabase = await createSupabaseServerClient()
   const { error } = await supabase
     .from("project_members")
     .delete()
-    .eq("project_id", project_id)
-    .eq("profile_id", profile_id)
+    .eq("project_id", parsed.project_id)
+    .eq("profile_id", parsed.profile_id)
   if (error) throw new Error(error.message)
-  revalidatePath(`/projects/${project_id}`, "layout")
+  revalidatePath(`/projects/${parsed.project_id}`, "layout")
 }

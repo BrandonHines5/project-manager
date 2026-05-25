@@ -49,6 +49,16 @@ export async function getSessionProfile(): Promise<SessionProfile | null> {
     .select("*")
     .maybeSingle()
   if (error) {
+    // Race: another concurrent request inserted the profile first. Don't
+    // bounce the user to /login — just re-fetch the row that won.
+    if ((error as { code?: string }).code === "23505") {
+      const { data: raced } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", user.id)
+        .maybeSingle()
+      return raced ?? null
+    }
     console.error("[auth] self-heal profile insert failed:", error.message)
     return null
   }

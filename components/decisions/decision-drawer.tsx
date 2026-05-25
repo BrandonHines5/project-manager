@@ -500,8 +500,8 @@ function FollowupsEditor({
         </Label>
         {alreadyApproved && (
           <span className="text-xs text-muted">
-            (already approved — adding new templates won&apos;t auto-create
-            until re-approved)
+            (already approved — new templates will be created on the schedule
+            on the next save)
           </span>
         )}
       </div>
