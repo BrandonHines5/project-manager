@@ -6,6 +6,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
 import { wouldCreateCycle, cascadeFromPredecessors } from "@/lib/schedule/scheduling"
 import type { RecurrenceRule } from "@/lib/schedule/recurrence"
+import { sendEmail, appUrl } from "@/lib/email"
 
 const NULLABLE_DATE = z.string().optional().or(z.literal(""))
 
@@ -108,7 +109,11 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     id = data.id
   }
 
-  // Replace assignments
+  // Replace assignments. Track who is newly assigned so we can notify.
+  const { data: oldAssignments } = await supabase
+    .from("schedule_assignments")
+    .select("profile_id, company_id")
+    .eq("schedule_item_id", id)
   await supabase.from("schedule_assignments").delete().eq("schedule_item_id", id)
   if (parsed.assignments.length) {
     const rows = parsed.assignments
@@ -123,6 +128,22 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
         .from("schedule_assignments")
         .insert(rows)
       if (assignErr) throw new Error(assignErr.message)
+
+      // Notify newly-assigned profiles + companies (idempotent against re-saves)
+      const oldKeys = new Set(
+        (oldAssignments ?? []).map((a) => `${a.profile_id ?? ""}|${a.company_id ?? ""}`)
+      )
+      const newOnes = rows.filter(
+        (r) => !oldKeys.has(`${r.profile_id ?? ""}|${r.company_id ?? ""}`)
+      )
+      if (newOnes.length) {
+        await notifyScheduleAssignees(
+          newOnes,
+          parsed.project_id,
+          id!,
+          parsed.title
+        )
+      }
     }
   }
 
@@ -190,6 +211,60 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
 
   revalidatePath(`/projects/${parsed.project_id}/schedule`)
   return { id }
+}
+
+async function notifyScheduleAssignees(
+  rows: { profile_id: string | null; company_id: string | null }[],
+  projectId: string,
+  scheduleItemId: string,
+  title: string
+) {
+  const supabase = await createSupabaseServerClient()
+  const profileIds = rows.map((r) => r.profile_id).filter(Boolean) as string[]
+  const companyIds = rows.map((r) => r.company_id).filter(Boolean) as string[]
+
+  // In-app notifications for profile assignees
+  if (profileIds.length) {
+    await supabase.from("notifications").insert(
+      profileIds.map((id) => ({
+        recipient_id: id,
+        type: "schedule_assignment",
+        title: `Assigned: ${title}`,
+        body: "You were assigned to a schedule item",
+        link_url: `/projects/${projectId}/schedule`,
+      }))
+    )
+  }
+
+  // Email — best-effort, never blocks save
+  try {
+    const link = appUrl(`/projects/${projectId}/schedule`)
+    const emails: string[] = []
+    if (profileIds.length) {
+      const { data: profs } = await supabase
+        .from("profiles")
+        .select("email")
+        .in("id", profileIds)
+      for (const p of profs ?? []) if (p.email) emails.push(p.email)
+    }
+    if (companyIds.length) {
+      const { data: cos } = await supabase
+        .from("companies")
+        .select("email")
+        .in("id", companyIds)
+      for (const c of cos ?? []) if (c.email) emails.push(c.email)
+    }
+    if (emails.length) {
+      await sendEmail({
+        to: emails,
+        subject: `New assignment: ${title}`,
+        text: `You were assigned to "${title}" on the project. Open: ${link}`,
+      })
+    }
+  } catch (e) {
+    console.warn("schedule assignment email failed:", e)
+  }
+  void scheduleItemId
 }
 
 async function applyCascade(projectId: string, movedId: string) {

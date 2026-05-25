@@ -5,6 +5,7 @@ import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireSession, requireStaff } from "@/lib/auth"
 import { addDays, todayISO } from "@/lib/utils"
+import { sendEmail, appUrl } from "@/lib/email"
 import type { TablesUpdate } from "@/lib/db/types"
 
 const Followup = z.object({
@@ -55,7 +56,18 @@ export async function saveDecision(input: DecisionInputT) {
       ).data?.status === "approved"
     : false
 
+  const prevStatus = id
+    ? (
+        await supabase
+          .from("decisions")
+          .select("status")
+          .eq("id", id)
+          .maybeSingle()
+      ).data?.status
+    : null
   const newlyApproved = parsed.status === "approved" && !wasApproved
+  const newlyPendingClient =
+    parsed.status === "pending_client" && prevStatus !== "pending_client"
 
   if (id) {
     const updateRow: TablesUpdate<"decisions"> = {
@@ -173,11 +185,45 @@ export async function saveDecision(input: DecisionInputT) {
     createdFollowups = await materializeFollowups(id!, parsed.project_id)
   }
 
+  if (newlyPendingClient) {
+    try {
+      await notifyClientOfDecision(id!, parsed.project_id, parsed.title)
+    } catch (e) {
+      console.warn("client decision email failed:", e)
+    }
+  }
+
   revalidatePath(`/projects/${parsed.project_id}/decisions`)
   if (createdFollowups > 0) {
     revalidatePath(`/projects/${parsed.project_id}/schedule`)
   }
   return { id, createdFollowups }
+}
+
+async function notifyClientOfDecision(
+  decisionId: string,
+  projectId: string,
+  title: string
+) {
+  const supabase = await createSupabaseServerClient()
+  const { data: clients } = await supabase
+    .from("project_members")
+    .select("profile_id, profiles!inner(email, role)")
+    .eq("project_id", projectId)
+  const emails: string[] = []
+  for (const m of clients ?? []) {
+    const prof = (m as unknown as { profiles: { email: string; role: string } })
+      .profiles
+    if (prof.role === "client" && prof.email) emails.push(prof.email)
+  }
+  if (!emails.length) return
+  const link = appUrl(`/projects/${projectId}/decisions`)
+  await sendEmail({
+    to: emails,
+    subject: `Approval needed: ${title}`,
+    text: `A new item is awaiting your review on the project portal. Open: ${link}`,
+  })
+  void decisionId
 }
 
 async function materializeFollowups(decisionId: string, projectId: string) {
