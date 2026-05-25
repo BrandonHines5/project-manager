@@ -99,6 +99,51 @@ export type Database = {
         }
         Relationships: []
       }
+      project_files: {
+        Row: {
+          category: Database["public"]["Enums"]["file_category"]
+          created_at: string
+          description: string | null
+          file_name: string
+          file_size: number | null
+          file_type: string | null
+          id: string
+          project_id: string
+          storage_bucket: string
+          storage_path: string
+          title: string
+          uploaded_by: string | null
+        }
+        Insert: {
+          category?: Database["public"]["Enums"]["file_category"]
+          created_at?: string
+          description?: string | null
+          file_name: string
+          file_size?: number | null
+          file_type?: string | null
+          id?: string
+          project_id: string
+          storage_bucket?: string
+          storage_path: string
+          title: string
+          uploaded_by?: string | null
+        }
+        Update: {
+          category?: Database["public"]["Enums"]["file_category"]
+          created_at?: string
+          description?: string | null
+          file_name?: string
+          file_size?: number | null
+          file_type?: string | null
+          id?: string
+          project_id?: string
+          storage_bucket?: string
+          storage_path?: string
+          title?: string
+          uploaded_by?: string | null
+        }
+        Relationships: []
+      }
       decisions: {
         Row: {
           approved_at: string | null
@@ -609,6 +654,12 @@ export type Database = {
         | "pending_client"
         | "approved"
         | "rejected"
+      file_category:
+        | "house_plans"
+        | "plot_plan"
+        | "permit"
+        | "contract"
+        | "other"
       delay_reason:
         | "weather"
         | "sub"
