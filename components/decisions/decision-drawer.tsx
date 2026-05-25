@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useTransition, useRef } from "react"
+import { useState, useTransition, useRef, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import {
@@ -15,6 +15,10 @@ import {
   Sparkles,
   Calculator,
   EyeOff,
+  Palette,
+  CheckCircle2,
+  Circle,
+  XCircle,
 } from "lucide-react"
 import { formatCurrency } from "@/lib/utils"
 import {
@@ -29,11 +33,13 @@ import {
 import { Field, Input, Textarea, Select, Label } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Avatar } from "@/components/ui/avatar"
+import { Badge } from "@/components/ui/badge"
 import { cn, formatDate } from "@/lib/utils"
 import {
   saveDecision,
   deleteDecision,
   postComment,
+  clientDecideDecision,
   type DecisionInputT,
 } from "@/app/actions/decisions"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
@@ -56,6 +62,10 @@ type Followup = {
 
 type Attachment = {
   id?: string
+  // For unsaved attachments on unsaved choices, this is "new:N" where N is
+  // the choice's index in `choices`. For saved choices, it's the choice's
+  // real UUID. null/undefined means decision-level (header gallery).
+  choice_id?: string | null
   storage_path: string
   file_name: string
   file_type?: string | null
@@ -71,6 +81,16 @@ type CostItem = {
   quantity: number
   unit?: string | null
   unit_cost: number
+}
+
+type Choice = {
+  id?: string
+  // Stable key so attachments can reference this choice across re-renders
+  // before it's persisted. For saved choices client_key === id.
+  client_key: string
+  title: string
+  description?: string | null
+  price_delta?: number | null
 }
 
 export function DecisionDrawer({
@@ -98,6 +118,7 @@ export function DecisionDrawer({
   const [kind, setKind] = useState<Enums<"decision_kind">>(initialKind)
   const [title, setTitle] = useState(decision?.title ?? "")
   const [description, setDescription] = useState(decision?.description ?? "")
+  const [dueDate, setDueDate] = useState<string>(decision?.due_date ?? "")
   const [costDelta, setCostDelta] = useState<string>(
     decision?.cost_delta != null ? String(decision.cost_delta) : ""
   )
@@ -120,14 +141,6 @@ export function DecisionDrawer({
       }))
   })
 
-  // Derived totals from the breakdown. When items exist, this is the source
-  // of truth for cost_delta on save — the manual `costDelta` input is
-  // ignored. When no items exist, the manual value is used.
-  //
-  // Use the SAME filter the submission uses for hasBreakdown so a row that's
-  // completely blank doesn't flip the UI into "breakdown mode" while still
-  // being dropped from the payload — that would force cost_delta to null and
-  // silently lose the staff's manual entry.
   const effectiveCostItems = costItems.filter(
     (ci) => ci.cost_code_id || ci.description || ci.unit_cost > 0
   )
@@ -138,6 +151,7 @@ export function DecisionDrawer({
   const markupNum = markupPercent === "" ? 0 : Number(markupPercent) || 0
   const breakdownTotal = breakdownSubtotal * (1 + markupNum / 100)
   const hasBreakdown = effectiveCostItems.length > 0
+
   const [status, setStatus] = useState<Enums<"decision_status">>(
     decision?.status ?? "draft"
   )
@@ -160,6 +174,7 @@ export function DecisionDrawer({
       .filter((a) => a.decision_id === decision.id)
       .map((a) => ({
         id: a.id,
+        choice_id: a.choice_id,
         storage_path: a.storage_path,
         file_name: a.file_name,
         file_type: a.file_type,
@@ -168,6 +183,32 @@ export function DecisionDrawer({
         preview_url: data.signed_urls[a.storage_path],
       }))
   })
+  const [choices, setChoices] = useState<Choice[]>(() => {
+    if (!decision) return []
+    return data.choices
+      .filter((c) => c.decision_id === decision.id)
+      .map((c) => ({
+        id: c.id,
+        client_key: c.id,
+        title: c.title,
+        description: c.description,
+        price_delta: c.price_delta,
+      }))
+  })
+  // Mirror `choices` into a ref so the async upload callback can read the
+  // latest list when it resolves — otherwise an upload kicked off before
+  // the staff deletes a choice would re-append attachments referencing
+  // that now-gone client_key.
+  const choicesRef = useRef<Choice[]>(choices)
+  useEffect(() => {
+    choicesRef.current = choices
+  }, [choices])
+  // Client-only: which choice they've highlighted before clicking approve.
+  // Defaults to whatever was previously selected (if re-opening an approved
+  // selection), otherwise null.
+  const [clientSelectedChoiceKey, setClientSelectedChoiceKey] = useState<
+    string | null
+  >(decision?.selected_choice_id ?? null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -177,7 +218,17 @@ export function DecisionDrawer({
     ? data.comments.filter((c) => c.decision_id === decision.id)
     : []
 
-  async function onPickFiles(files: FileList | null) {
+  // Decision-level attachments (header gallery) — exclude per-choice ones.
+  const headerAttachments = attachments.filter((a) => !a.choice_id)
+
+  function attachmentsForChoice(key: string): Attachment[] {
+    return attachments.filter((a) => a.choice_id === key)
+  }
+
+  async function uploadFiles(
+    files: FileList | null,
+    choiceKey: string | null
+  ) {
     if (!files?.length) return
     setUploading(true)
     try {
@@ -200,6 +251,7 @@ export function DecisionDrawer({
           continue
         }
         newAtts.push({
+          choice_id: choiceKey,
           storage_path: path,
           file_name: file.name,
           file_type: file.type || null,
@@ -208,8 +260,21 @@ export function DecisionDrawer({
         })
       }
       if (newAtts.length) {
-        setAttachments([...attachments, ...newAtts])
-        toast.success(`${newAtts.length} file${newAtts.length === 1 ? "" : "s"} uploaded`)
+        // If the user deleted the target choice while this upload was in
+        // flight, drop the new attachments rather than re-attaching them
+        // to a dead client_key. Storage blob is left orphaned for now —
+        // same as the existing cascade pattern.
+        const choiceStillExists =
+          !choiceKey || choicesRef.current.some((c) => c.client_key === choiceKey)
+        if (!choiceStillExists) {
+          toast.info("Choice was removed — uploaded files discarded.")
+        } else {
+          // Functional setState so we don't clobber concurrent edits.
+          setAttachments((current) => [...current, ...newAtts])
+          toast.success(
+            `${newAtts.length} file${newAtts.length === 1 ? "" : "s"} uploaded`
+          )
+        }
       }
     } finally {
       setUploading(false)
@@ -218,9 +283,6 @@ export function DecisionDrawer({
   }
 
   function saveWithStatus(newStatus: Enums<"decision_status">) {
-    // Don't optimistically advance the visible status until the save
-    // succeeds — otherwise a failed approval still shows "Approved" in the UI
-    // and confuses the user. handleSave will update local status on success.
     handleSave(newStatus)
   }
 
@@ -235,9 +297,6 @@ export function DecisionDrawer({
       kind,
       title: title.trim(),
       description: description || null,
-      // When a breakdown exists, the server recomputes cost_delta from the
-      // line items × markup — we send the manual field only as a fallback
-      // for decisions without a breakdown.
       cost_delta: hasBreakdown
         ? null
         : costDelta === ""
@@ -253,6 +312,7 @@ export function DecisionDrawer({
         unit_cost: ci.unit_cost,
       })),
       status: overrideStatus ?? status,
+      due_date: dueDate || null,
       followups: followups
         .filter((f) => f.title.trim() !== "")
         .map((f) => ({
@@ -265,17 +325,32 @@ export function DecisionDrawer({
         })),
       attachments: attachments.map((a) => ({
         id: a.id,
+        choice_id: a.choice_id ?? null,
         storage_path: a.storage_path,
         file_name: a.file_name,
         file_type: a.file_type,
         file_size: a.file_size,
         caption: a.caption,
       })),
+      choices:
+        kind === "selection"
+          ? choices
+              .filter((c) => c.title.trim() !== "")
+              .map((c) => ({
+                id: c.id,
+                client_key: c.client_key,
+                title: c.title.trim(),
+                description: c.description ?? null,
+                price_delta:
+                  c.price_delta == null || (c.price_delta as unknown) === ""
+                    ? null
+                    : Number(c.price_delta),
+              }))
+          : [],
     }
     startTransition(async () => {
       try {
         const result = await saveDecision(payload)
-        // Persist worked — *now* it's safe to advance the visible status.
         setStatus(payload.status)
         if (result.createdFollowups > 0) {
           toast.success(
@@ -309,6 +384,45 @@ export function DecisionDrawer({
     })
   }
 
+  function handleClientDecide(action: "approve" | "decline") {
+    if (!decision) return
+    if (action === "approve" && kind === "selection") {
+      if (!clientSelectedChoiceKey) {
+        toast.error("Pick a choice first")
+        return
+      }
+    }
+    const confirmMsg =
+      action === "approve"
+        ? kind === "selection"
+          ? "Confirm this choice? This will approve the selection."
+          : "Approve this change order?"
+        : "Decline this item? The builder will be notified."
+    if (!confirm(confirmMsg)) return
+    startTransition(async () => {
+      try {
+        const r = await clientDecideDecision({
+          decision_id: decision.id,
+          project_id: data.project_id,
+          action,
+          choice_id:
+            action === "approve" && kind === "selection"
+              ? clientSelectedChoiceKey
+              : null,
+        })
+        toast.success(
+          r.status === "approved"
+            ? "Approved — thanks!"
+            : "Declined — sent back to builder"
+        )
+        router.refresh()
+        onClose()
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Could not submit")
+      }
+    })
+  }
+
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent side="right">
@@ -322,6 +436,11 @@ export function DecisionDrawer({
               )}
               <KindChip kind={kind} />
               <StatusBadge status={status} />
+              {dueDate && (
+                <span className="text-xs text-muted">
+                  Due {formatDate(dueDate)}
+                </span>
+              )}
             </div>
             <DialogTitle>
               {mode === "edit" ? decision?.title : "New " + (kind === "change_order" ? "change order" : "selection")}
@@ -371,6 +490,23 @@ export function DecisionDrawer({
               placeholder={kind === "change_order" ? "Move powder room wall" : "Master bath floor tile"}
             />
           </Field>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Field
+              label="Due date"
+              hint={
+                canEdit
+                  ? "Optional. Shown to the owner so they know when to respond."
+                  : "Builder is asking for a response by this date."
+              }
+            >
+              <Input
+                type="date"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+                disabled={!canEdit}
+              />
+            </Field>
+          </div>
           {canEdit && (
             <CostBreakdownEditor
               items={costItems}
@@ -382,18 +518,13 @@ export function DecisionDrawer({
               total={breakdownTotal}
             />
           )}
-          {/* Manual single-cost mode — only shown when no breakdown is in use.
-              The client sees ONLY this value (well, the marked-up total goes
-              into cost_delta server-side either way), so the label says
-              "client price" to make the markup intent obvious. */}
+          {/* Manual single-cost mode — only shown when no breakdown is in use. */}
           {!hasBreakdown && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field
                 label={
                   canEdit
-                    ? kind === "change_order"
-                      ? "Client price (no breakdown)"
-                      : "Client price (no breakdown)"
+                    ? "Client price (no breakdown)"
                     : kind === "change_order"
                     ? "Cost delta"
                     : "Price"
@@ -420,9 +551,6 @@ export function DecisionDrawer({
               </Field>
             </div>
           )}
-          {/* For clients viewing a decision that has a breakdown, the
-              breakdown editor above is hidden (canEdit false). All they need
-              is the marked-up total — which IS the stored cost_delta. */}
           {!canEdit && hasBreakdown && (
             <Field label="Price">
               <div className="h-9 flex items-center font-mono text-sm">
@@ -440,9 +568,57 @@ export function DecisionDrawer({
             />
           </Field>
 
-          {/* Attachments */}
+          {/* Selection choices — staff editor / client picker */}
+          {kind === "selection" && (
+            canEdit ? (
+              <ChoicesEditor
+                value={choices}
+                onChange={setChoices}
+                attachmentsForChoice={attachmentsForChoice}
+                onAddPhotos={(files, choiceKey) =>
+                  uploadFiles(files, choiceKey)
+                }
+                onRemoveAttachment={(att) =>
+                  setAttachments((current) =>
+                    current.filter(
+                      (x) => x.storage_path !== att.storage_path
+                    )
+                  )
+                }
+                onRemoveChoice={(key) => {
+                  // Prune the choice AND any photos that were attached to it
+                  // so we don't ship dangling attachments to the server.
+                  // Functional updates so a concurrent upload finishing in
+                  // the same tick can't reintroduce them via stale closure.
+                  setChoices((current) =>
+                    current.filter((c) => c.client_key !== key)
+                  )
+                  setAttachments((current) =>
+                    current.filter((a) => a.choice_id !== key)
+                  )
+                }}
+                uploading={uploading}
+                selectedChoiceId={decision?.selected_choice_id ?? null}
+              />
+            ) : (
+              <ClientChoicePicker
+                choices={choices}
+                attachmentsForChoice={attachmentsForChoice}
+                selected={clientSelectedChoiceKey}
+                onSelect={setClientSelectedChoiceKey}
+                locked={status === "approved" || status === "rejected"}
+                approvedChoiceId={decision?.selected_choice_id ?? null}
+              />
+            )
+          )}
+
+          {/* Attachments — header gallery (decision-level only) */}
           <div>
-            <Label>Photos &amp; files</Label>
+            <Label>
+              {kind === "selection"
+                ? "Reference photos & files"
+                : "Photos & files"}
+            </Label>
             {canEdit && (
               <input
                 ref={fileInputRef}
@@ -450,22 +626,28 @@ export function DecisionDrawer({
                 multiple
                 accept="image/*,application/pdf"
                 className="hidden"
-                onChange={(e) => onPickFiles(e.target.files)}
+                onChange={(e) => uploadFiles(e.target.files, null)}
               />
             )}
             <div className="mt-1 grid grid-cols-3 sm:grid-cols-4 gap-2">
-              {attachments.map((a, i) => (
+              {headerAttachments.map((a) => (
                 <AttachmentTile
                   key={a.storage_path}
                   att={a}
                   canEdit={canEdit}
                   onRemove={() =>
-                    setAttachments(attachments.filter((_, idx) => idx !== i))
+                    setAttachments((current) =>
+                      current.filter(
+                        (x) => x.storage_path !== a.storage_path
+                      )
+                    )
                   }
                   onCaption={(c) =>
-                    setAttachments(
-                      attachments.map((x, idx) =>
-                        idx === i ? { ...x, caption: c } : x
+                    setAttachments((current) =>
+                      current.map((x) =>
+                        x.storage_path === a.storage_path
+                          ? { ...x, caption: c }
+                          : x
                       )
                     )
                   }
@@ -571,8 +753,343 @@ export function DecisionDrawer({
             </Button>
           </DialogFooter>
         )}
+        {/* Client-side decide footer: visible only while pending_client. */}
+        {isClient && decision && status === "pending_client" && (
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => handleClientDecide("decline")}
+              disabled={pending}
+              className="text-danger"
+            >
+              <XCircle className="h-4 w-4" /> Decline
+            </Button>
+            <Button
+              type="button"
+              onClick={() => handleClientDecide("approve")}
+              disabled={
+                pending ||
+                (kind === "selection" && !clientSelectedChoiceKey)
+              }
+            >
+              <Check className="h-4 w-4" />
+              {kind === "selection" ? "Confirm choice" : "Approve"}
+            </Button>
+          </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
+  )
+}
+
+function ChoicesEditor({
+  value,
+  onChange,
+  attachmentsForChoice,
+  onAddPhotos,
+  onRemoveAttachment,
+  onRemoveChoice,
+  uploading,
+  selectedChoiceId,
+}: {
+  value: Choice[]
+  onChange: (v: Choice[]) => void
+  attachmentsForChoice: (key: string) => Attachment[]
+  onAddPhotos: (files: FileList | null, choiceKey: string) => void
+  onRemoveAttachment: (att: Attachment) => void
+  // Removing a choice has to also drop its per-choice photos from
+  // `attachments` state, otherwise we'd ship orphaned attachment rows
+  // referencing a key the server can't resolve. Lifted into the parent.
+  onRemoveChoice: (key: string) => void
+  uploading: boolean
+  selectedChoiceId: string | null
+}) {
+  function add() {
+    onChange([
+      ...value,
+      {
+        client_key: `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        title: "",
+        description: "",
+        price_delta: null,
+      },
+    ])
+  }
+  function update(key: string, patch: Partial<Choice>) {
+    onChange(value.map((c) => (c.client_key === key ? { ...c, ...patch } : c)))
+  }
+
+  return (
+    <div className="rounded-md border border-border-strong bg-background/30 p-3 space-y-3">
+      <div className="flex items-center justify-between">
+        <Label>
+          <Palette className="inline h-3 w-3 mr-1 text-blue-500" />
+          Choices to offer
+        </Label>
+        <span className="text-[11px] text-muted">
+          Pre-load options — the owner picks one when they approve.
+        </span>
+      </div>
+      {value.length === 0 && (
+        <p className="text-xs text-muted">
+          No choices yet. Add at least one before sending to the client.
+        </p>
+      )}
+      <ul className="space-y-3">
+        {value.map((c, i) => {
+          const photos = attachmentsForChoice(c.client_key)
+          const isSelected = !!(c.id && selectedChoiceId && c.id === selectedChoiceId)
+          return (
+            <li
+              key={c.client_key}
+              className={cn(
+                "rounded-md border bg-surface p-3 space-y-2",
+                isSelected
+                  ? "border-green-500 ring-1 ring-green-500/20"
+                  : "border-border"
+              )}
+            >
+              <div className="flex items-start gap-2">
+                <span className="text-xs font-mono text-muted mt-2.5 w-5 text-right">
+                  {String.fromCharCode(65 + i)}.
+                </span>
+                <div className="flex-1 grid grid-cols-1 sm:grid-cols-[1fr_140px] gap-2">
+                  <Input
+                    value={c.title}
+                    onChange={(e) =>
+                      update(c.client_key, { title: e.target.value })
+                    }
+                    placeholder="Choice name (e.g. Bianco Carrara)"
+                  />
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={c.price_delta ?? ""}
+                    onChange={(e) =>
+                      update(c.client_key, {
+                        price_delta:
+                          e.target.value === "" ? null : Number(e.target.value),
+                      })
+                    }
+                    placeholder="Price (optional)"
+                  />
+                </div>
+                {isSelected && (
+                  <Badge tone="success" className="mt-1.5">
+                    <CheckCircle2 className="h-3 w-3" /> Picked
+                  </Badge>
+                )}
+                <button
+                  type="button"
+                  onClick={() => onRemoveChoice(c.client_key)}
+                  className="text-muted hover:text-danger p-1 mt-1.5 cursor-pointer"
+                  aria-label="Remove choice"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <Textarea
+                rows={2}
+                value={c.description ?? ""}
+                onChange={(e) =>
+                  update(c.client_key, { description: e.target.value })
+                }
+                placeholder="Short description shown to the client"
+              />
+              <ChoicePhotosRow
+                photos={photos}
+                onAdd={(files) => onAddPhotos(files, c.client_key)}
+                onRemove={onRemoveAttachment}
+                uploading={uploading}
+              />
+            </li>
+          )
+        })}
+      </ul>
+      <button
+        type="button"
+        onClick={add}
+        className="text-xs text-brand-600 hover:underline inline-flex items-center gap-1 cursor-pointer"
+      >
+        <Plus className="h-3 w-3" /> Add choice
+      </button>
+    </div>
+  )
+}
+
+function ChoicePhotosRow({
+  photos,
+  onAdd,
+  onRemove,
+  uploading,
+}: {
+  photos: Attachment[]
+  onAdd: (files: FileList | null) => void
+  onRemove: (att: Attachment) => void
+  uploading: boolean
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  return (
+    <div>
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        accept="image/*,application/pdf"
+        className="hidden"
+        onChange={(e) => {
+          onAdd(e.target.files)
+          if (inputRef.current) inputRef.current.value = ""
+        }}
+      />
+      <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
+        {photos.map((p) => (
+          <div key={p.storage_path} className="relative group">
+            <div className="aspect-square rounded border border-border bg-background overflow-hidden flex items-center justify-center">
+              {p.file_type?.startsWith("image/") && p.preview_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={p.preview_url}
+                  alt={p.file_name}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <FileIcon className="h-5 w-5 text-muted" />
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => onRemove(p)}
+              className="absolute top-0.5 right-0.5 rounded-full bg-black/60 text-white p-0.5 opacity-0 group-hover:opacity-100 cursor-pointer"
+              aria-label="Remove photo"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          disabled={uploading}
+          className="aspect-square rounded border border-dashed border-border-strong flex items-center justify-center text-muted hover:border-brand-500 hover:text-brand-600 cursor-pointer disabled:opacity-50"
+          aria-label="Add photos"
+        >
+          <Upload className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function ClientChoicePicker({
+  choices,
+  attachmentsForChoice,
+  selected,
+  onSelect,
+  locked,
+  approvedChoiceId,
+}: {
+  choices: Choice[]
+  attachmentsForChoice: (key: string) => Attachment[]
+  selected: string | null
+  onSelect: (id: string) => void
+  locked: boolean
+  approvedChoiceId: string | null
+}) {
+  if (choices.length === 0) {
+    return (
+      <div className="rounded-md border border-border bg-background/40 p-3 text-sm text-muted">
+        No options have been added yet.
+      </div>
+    )
+  }
+  return (
+    <div className="space-y-2">
+      <Label>
+        <Palette className="inline h-3 w-3 mr-1 text-blue-500" />
+        {locked ? "Choices" : "Pick one"}
+      </Label>
+      <ul className="space-y-2">
+        {choices.map((c, i) => {
+          const isSelected = selected === c.client_key
+          const isApproved = approvedChoiceId && c.id === approvedChoiceId
+          const photos = attachmentsForChoice(c.client_key)
+          return (
+            <li key={c.client_key}>
+              <button
+                type="button"
+                disabled={locked}
+                onClick={() => onSelect(c.client_key)}
+                className={cn(
+                  "w-full text-left rounded-md border p-3 transition-colors",
+                  locked ? "cursor-default" : "cursor-pointer hover:bg-background/60",
+                  isApproved
+                    ? "border-green-500 ring-1 ring-green-500/20 bg-green-50/40"
+                    : isSelected
+                    ? "border-blue-500 ring-1 ring-blue-500/20"
+                    : "border-border"
+                )}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5">
+                    {isApproved ? (
+                      <CheckCircle2 className="h-5 w-5 text-green-600" />
+                    ) : isSelected ? (
+                      <CheckCircle2 className="h-5 w-5 text-blue-600" />
+                    ) : (
+                      <Circle className="h-5 w-5 text-muted" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium">
+                        {String.fromCharCode(65 + i)}. {c.title}
+                      </span>
+                      {isApproved && (
+                        <Badge tone="success">Your choice</Badge>
+                      )}
+                      {c.price_delta != null && c.price_delta !== 0 && (
+                        <CostDelta value={Number(c.price_delta)} />
+                      )}
+                    </div>
+                    {c.description && (
+                      <p className="text-sm text-muted mt-1 whitespace-pre-wrap">
+                        {c.description}
+                      </p>
+                    )}
+                    {photos.length > 0 && (
+                      <div className="mt-2 grid grid-cols-3 sm:grid-cols-4 gap-1.5">
+                        {photos.map((p) => (
+                          <div
+                            key={p.storage_path}
+                            className="aspect-square rounded border border-border bg-background overflow-hidden flex items-center justify-center"
+                          >
+                            {p.file_type?.startsWith("image/") && p.preview_url ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={p.preview_url}
+                                alt={p.file_name}
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              <FileIcon className="h-5 w-5 text-muted" />
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
   )
 }
 

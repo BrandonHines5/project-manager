@@ -32,6 +32,7 @@ export default async function DecisionsPage({
     { data: companies },
     { data: costItems },
     { data: costCodes },
+    { data: choices },
   ] = await Promise.all([
     supabase
       .from("decisions")
@@ -67,6 +68,11 @@ export default async function DecisionsPage({
       .select("id, code, name, position, is_active")
       .eq("is_active", true)
       .order("position", { ascending: true }),
+    supabase
+      .from("decision_choices")
+      .select("*, decisions!inner(project_id)")
+      .eq("decisions.project_id", projectId)
+      .order("position", { ascending: true }),
   ])
 
   const strip = <T extends { decisions?: unknown }>(rows: T[] | null) =>
@@ -94,6 +100,7 @@ export default async function DecisionsPage({
     companies: companies ?? [],
     cost_items: strip(costItems) as DecisionsData["cost_items"],
     cost_codes: costCodes ?? [],
+    choices: strip(choices) as DecisionsData["choices"],
     signed_urls: signedUrls,
   }
 

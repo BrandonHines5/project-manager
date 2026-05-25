@@ -4,7 +4,11 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
-import { wouldCreateCycle, cascadeFromPredecessors } from "@/lib/schedule/scheduling"
+import {
+  wouldCreateCycle,
+  cascadeFromPredecessors,
+  recomputeAnchoredDueDate,
+} from "@/lib/schedule/scheduling"
 import type { RecurrenceRule } from "@/lib/schedule/recurrence"
 import { sendEmail, appUrl } from "@/lib/email"
 
@@ -51,6 +55,12 @@ const ScheduleItemInput = z
     start_date: optStr,
     end_date: optStr,
     due_date: optStr,
+    // When set, the to-do's due_date is recomputed from the parent's
+    // anchor date + offset on every save and on every parent move. Both
+    // fields must be present together; the action drops them when the
+    // item is a work item or has no parent.
+    parent_anchor: z.enum(["start", "end"]).nullish(),
+    parent_offset_days: z.coerce.number().int().nullish(),
     status: z
       .enum(["not_started", "in_progress", "complete", "delayed"])
       .default("not_started"),
@@ -107,18 +117,64 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
   const endD = nz(parsed.end_date)
   const duration = startD && endD ? daysBetween(startD, endD) : null
 
+  // Resolve anchor fields. Only valid for todos with a parent — strip them
+  // otherwise so we never violate the DB check constraint. When anchored,
+  // due_date is recomputed from the parent and any manual `due_date` value
+  // the form sent is ignored.
+  const parentIdResolved = nz(parsed.parent_id)
+  const anchor =
+    parsed.kind === "todo" && parentIdResolved && parsed.parent_anchor
+      ? parsed.parent_anchor
+      : null
+  const offset =
+    anchor && parsed.parent_offset_days != null
+      ? Math.trunc(parsed.parent_offset_days)
+      : null
+  // Both fields must be set together to satisfy the pair check constraint.
+  const anchorFinal = anchor && offset !== null ? anchor : null
+  const offsetFinal = anchorFinal !== null ? offset : null
+
+  let computedDueDate: string | null = nz(parsed.due_date)
+  if (parsed.kind === "todo" && anchorFinal && parentIdResolved) {
+    // Scope by project + require the parent to be a work item. Two reasons:
+    // (a) defense in depth against a forged parent_id from another project,
+    // (b) RLS already restricts cross-project reads, but the kind filter
+    // catches an accidental to-do→to-do anchor that the DB check constraint
+    // doesn't (parent_id FK doesn't restrict kind).
+    const { data: parentRow, error: parentErr } = await supabase
+      .from("schedule_items")
+      .select("start_date, end_date")
+      .eq("id", parentIdResolved)
+      .eq("project_id", parsed.project_id)
+      .eq("kind", "work")
+      .maybeSingle()
+    if (parentErr) throw new Error(parentErr.message)
+    if (!parentRow) {
+      throw new Error(
+        "Selected parent work item was not found in this project."
+      )
+    }
+    computedDueDate = recomputeAnchoredDueDate(
+      parentRow,
+      anchorFinal,
+      offsetFinal ?? 0
+    )
+  }
+
   const baseRow = {
     project_id: parsed.project_id,
-    parent_id: nz(parsed.parent_id),
+    parent_id: parentIdResolved,
     kind: parsed.kind,
     title: parsed.title,
     description: nz(parsed.description),
     start_date: startD,
     end_date: endD,
-    due_date: nz(parsed.due_date),
+    due_date: computedDueDate,
     duration_days: duration,
     status: parsed.status,
     recurrence_rule: (parsed.recurrence_rule ?? null) as RecurrenceRule | null,
+    parent_anchor: anchorFinal,
+    parent_offset_days: offsetFinal,
   }
 
   let id: string | null = nz(parsed.id)
@@ -255,7 +311,10 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     }
   }
 
-  await applyCascade(parsed.project_id, id!)
+  const movedIds = await applyCascade(parsed.project_id, id!)
+  // When a work item's dates change, every anchored to-do under it has to
+  // recompute. Same for successors the predecessor cascade just moved.
+  await applyAnchoredChildrenCascade(movedIds)
 
   revalidatePath(`/projects/${parsed.project_id}/schedule`)
   return { id }
@@ -315,7 +374,16 @@ async function notifyScheduleAssignees(
   void scheduleItemId
 }
 
-async function applyCascade(projectId: string, movedId: string) {
+/**
+ * Runs the predecessor cascade. Returns the set of item IDs whose dates may
+ * have changed (the seed `movedId` plus every successor the cascade touched)
+ * so the caller can run dependent cascades — e.g. anchored to-do children —
+ * against the same set.
+ */
+async function applyCascade(
+  projectId: string,
+  movedId: string
+): Promise<string[]> {
   const supabase = await createSupabaseServerClient()
   const { data: items } = await supabase
     .from("schedule_items")
@@ -324,7 +392,7 @@ async function applyCascade(projectId: string, movedId: string) {
   const { data: preds } = await supabase
     .from("schedule_predecessors")
     .select("*")
-  if (!items || !preds) return
+  if (!items || !preds) return [movedId]
   const updates = cascadeFromPredecessors(items, preds, movedId)
   for (const u of updates) {
     const { error } = await supabase
@@ -337,6 +405,49 @@ async function applyCascade(projectId: string, movedId: string) {
       // via the JS client).
       throw new Error(
         `Cascade failed at ${u.id}: ${error.message}. Some successor dates may be partially updated.`
+      )
+    }
+  }
+  return [movedId, ...updates.map((u) => u.id)]
+}
+
+/**
+ * For every anchored to-do whose parent appears in `parentIds`, recompute
+ * its due_date from the parent's (now-current) start/end + offset. Cheap:
+ * one SELECT for the parents, one SELECT for the children, one UPDATE per
+ * affected child. Called after applyCascade so we see the post-cascade
+ * parent dates.
+ */
+async function applyAnchoredChildrenCascade(parentIds: string[]) {
+  if (parentIds.length === 0) return
+  const supabase = await createSupabaseServerClient()
+  const { data: parents, error: pErr } = await supabase
+    .from("schedule_items")
+    .select("id, start_date, end_date")
+    .in("id", parentIds)
+  if (pErr) throw new Error(pErr.message)
+  if (!parents?.length) return
+  const { data: children, error: cErr } = await supabase
+    .from("schedule_items")
+    .select("id, parent_id, parent_anchor, parent_offset_days")
+    .in("parent_id", parentIds)
+    .not("parent_anchor", "is", null)
+  if (cErr) throw new Error(cErr.message)
+  for (const c of children ?? []) {
+    const p = parents.find((x) => x.id === c.parent_id)
+    if (!p || !c.parent_anchor || c.parent_offset_days == null) continue
+    const newDue = recomputeAnchoredDueDate(
+      p,
+      c.parent_anchor,
+      c.parent_offset_days
+    )
+    const { error: uErr } = await supabase
+      .from("schedule_items")
+      .update({ due_date: newDue })
+      .eq("id", c.id)
+    if (uErr) {
+      throw new Error(
+        `Anchored cascade failed at ${c.id}: ${uErr.message}.`
       )
     }
   }
@@ -399,7 +510,8 @@ export async function logDelay({
           status: "delayed",
         })
         .eq("id", schedule_item_id)
-      await applyCascade(project_id, schedule_item_id)
+      const movedIds = await applyCascade(project_id, schedule_item_id)
+      await applyAnchoredChildrenCascade(movedIds)
     }
   }
   revalidatePath(`/projects/${project_id}/schedule`)
@@ -426,7 +538,8 @@ export async function moveScheduleItem(input: {
     .update({ start_date: parsed.start_date, end_date: parsed.end_date })
     .eq("id", parsed.id)
   if (error) throw new Error(error.message)
-  await applyCascade(parsed.project_id, parsed.id)
+  const movedIds = await applyCascade(parsed.project_id, parsed.id)
+  await applyAnchoredChildrenCascade(movedIds)
   revalidatePath(`/projects/${parsed.project_id}/schedule`)
 }
 

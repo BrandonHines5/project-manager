@@ -31,11 +31,26 @@ const Followup = z
 
 const Attachment = z.object({
   id: optStr,
+  // For per-choice photos on a selection, this is the choice's `client_key`
+  // (matches Choice.client_key below). The server resolves it to a real UUID
+  // after upserting choices. null/undefined means decision-level.
+  choice_id: optStr,
   storage_path: z.string(),
   file_name: z.string(),
   file_type: optStr,
   file_size: z.number().nullish(),
   caption: optStr,
+})
+
+const Choice = z.object({
+  id: optStr,
+  // Stable client-side key. For saved choices this equals `id`; for unsaved
+  // ones it's a temporary value (e.g. "tmp-XYZ"). Per-choice attachments
+  // reference choices by this key — see Attachment.choice_id above.
+  client_key: z.string(),
+  title: z.string().min(1),
+  description: optStr,
+  price_delta: z.coerce.number().nullish(),
 })
 
 const CostItem = z.object({
@@ -61,8 +76,10 @@ const DecisionInput = z
     markup_percent: z.coerce.number().default(0),
     cost_items: z.array(CostItem).default([]),
     status: z.enum(["draft", "pending_client", "approved", "rejected"]).default("draft"),
+    due_date: optStr,
     followups: z.array(Followup).default([]),
     attachments: z.array(Attachment).default([]),
+    choices: z.array(Choice).default([]),
   })
   .passthrough()
 
@@ -132,6 +149,7 @@ export async function saveDecision(input: DecisionInputT) {
       cost_delta: finalCostDelta,
       markup_percent: parsed.markup_percent,
       status: parsed.status,
+      due_date: nz(parsed.due_date),
     }
     if (newlyApproved) updateRow.approved_at = new Date().toISOString()
     const { error } = await supabase
@@ -162,6 +180,7 @@ export async function saveDecision(input: DecisionInputT) {
           cost_delta: finalCostDelta,
           markup_percent: parsed.markup_percent,
           status: parsed.status,
+          due_date: nz(parsed.due_date),
           number,
           created_by: profile.id,
           approved_at:
@@ -205,6 +224,78 @@ export async function saveDecision(input: DecisionInputT) {
     }))
     const { error } = await supabase.from("decision_cost_items").insert(rows)
     if (error) throw new Error(error.message)
+  }
+
+  // Sync decision_choices (selections only — change orders ignore the list).
+  // We use a reconcile-by-id pattern instead of wipe-and-reinsert because
+  // `decisions.selected_choice_id` references these rows and clients may have
+  // already picked one; recreating the rows would break the FK / orphan the
+  // selected_choice_id.
+  //
+  // Returns a Map<client_key, real_uuid> so we can rewrite attachment
+  // choice_id values from temporary "new:0" / "new:1" keys to real IDs.
+  const choiceIdByClientKey = new Map<string, string>()
+  if (parsed.kind === "selection") {
+    const { data: existingChoices, error: existingChoicesErr } = await supabase
+      .from("decision_choices")
+      .select("id")
+      .eq("decision_id", id)
+    if (existingChoicesErr) throw new Error(existingChoicesErr.message)
+    const keepChoiceIds = new Set(
+      parsed.choices.map((c) => nz(c.id)).filter((x): x is string => !!x)
+    )
+    const choiceIdsToDelete = (existingChoices ?? [])
+      .map((c) => c.id)
+      .filter((cid) => !keepChoiceIds.has(cid))
+    if (choiceIdsToDelete.length) {
+      const { error: dchDelErr } = await supabase
+        .from("decision_choices")
+        .delete()
+        .in("id", choiceIdsToDelete)
+      if (dchDelErr) throw new Error(dchDelErr.message)
+    }
+    // Update existing + insert new, preserving the form's order via position.
+    // We always seed `choiceIdByClientKey` so per-choice attachments resolve
+    // correctly, regardless of whether the choice was new or already saved.
+    for (let i = 0; i < parsed.choices.length; i++) {
+      const c = parsed.choices[i]
+      const cid = nz(c.id)
+      if (cid) {
+        const { error: uErr } = await supabase
+          .from("decision_choices")
+          .update({
+            title: c.title,
+            description: c.description ?? null,
+            price_delta: c.price_delta ?? null,
+            position: i,
+          })
+          .eq("id", cid)
+          .eq("decision_id", id)
+        if (uErr) throw new Error(uErr.message)
+        choiceIdByClientKey.set(c.client_key, cid)
+      } else {
+        const { data: ins, error: iErr } = await supabase
+          .from("decision_choices")
+          .insert({
+            decision_id: id!,
+            title: c.title,
+            description: c.description ?? null,
+            price_delta: c.price_delta ?? null,
+            position: i,
+          })
+          .select("id")
+          .single()
+        if (iErr) throw new Error(iErr.message)
+        if (ins) choiceIdByClientKey.set(c.client_key, ins.id)
+      }
+    }
+  } else {
+    // Non-selection: clear any stale choices from a kind change.
+    const { error: clearChoicesErr } = await supabase
+      .from("decision_choices")
+      .delete()
+      .eq("decision_id", id)
+    if (clearChoicesErr) throw new Error(clearChoicesErr.message)
   }
 
   // Replace follow-up templates
@@ -258,11 +349,22 @@ export async function saveDecision(input: DecisionInputT) {
       )
     }
   }
+  // Resolve a `client_key` (sent by the browser) to a real UUID. For saved
+  // choices we set client_key === id in the loop above, so existing rows map
+  // to themselves. Unknown keys (e.g. the choice was deleted in the same
+  // save) become null — that attachment falls back to decision-level.
+  const resolveChoiceId = (raw: string | null | undefined): string | null => {
+    const v = nz(raw)
+    if (!v) return null
+    return choiceIdByClientKey.get(v) ?? null
+  }
+
   const newOnes = parsed.attachments.filter((a) => !nz(a.id))
   if (newOnes.length) {
     const startPos = existingAtts?.length ?? 0
     const rows = newOnes.map((a, i) => ({
       decision_id: id!,
+      choice_id: resolveChoiceId(a.choice_id),
       storage_path: a.storage_path,
       file_name: a.file_name,
       file_type: a.file_type ?? null,
@@ -278,7 +380,10 @@ export async function saveDecision(input: DecisionInputT) {
   for (const a of parsed.attachments.filter((a) => nz(a.id))) {
     const { error: capErr } = await supabase
       .from("decision_attachments")
-      .update({ caption: a.caption ?? null })
+      .update({
+        caption: a.caption ?? null,
+        choice_id: resolveChoiceId(a.choice_id),
+      })
       .eq("id", a.id!)
       // Defense in depth: only touch attachments owned by this decision.
       .eq("decision_id", id)
@@ -492,6 +597,56 @@ export async function postComment({
   })
   if (error) throw new Error(error.message)
   revalidatePath(`/projects/${project_id}/decisions`)
+}
+
+/**
+ * Client-driven decide action. Wraps the SECURITY DEFINER RPC
+ * `client_decide_decision`, which (a) flips the decision to approved /
+ * rejected, (b) records the chosen selection option, and (c) materializes
+ * the staff's follow-up to-do templates onto the schedule. The RPC itself
+ * enforces that the caller is a client member of the project AND that the
+ * decision is currently `pending_client` — keep this action thin.
+ */
+export async function clientDecideDecision({
+  decision_id,
+  project_id,
+  action,
+  choice_id,
+}: {
+  decision_id: string
+  project_id: string
+  action: "approve" | "decline"
+  choice_id?: string | null
+}) {
+  await requireSession()
+  const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase.rpc("client_decide_decision", {
+    p_decision_id: decision_id,
+    p_action: action,
+    p_choice_id: choice_id ?? undefined,
+  })
+  if (error) throw new Error(error.message)
+  revalidatePath(`/projects/${project_id}/decisions`)
+  // Fire the same dashboard webhook the staff path uses when an approval
+  // happens. Re-fetch the decision row so the webhook payload matches.
+  const result = (data ?? {}) as {
+    status?: string
+    created_followups?: number
+  }
+  if (result.status === "approved") {
+    const { data: decisionRow } = await supabase
+      .from("decisions")
+      .select("*")
+      .eq("id", decision_id)
+      .maybeSingle()
+    if (decisionRow) {
+      await sendDashboardWebhook("decision.approved", decisionRow)
+    }
+    if ((result.created_followups ?? 0) > 0) {
+      revalidatePath(`/projects/${project_id}/schedule`)
+    }
+  }
+  return result
 }
 
 export async function getSignedUrlsForDecisions(paths: string[]) {

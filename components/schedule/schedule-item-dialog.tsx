@@ -26,6 +26,7 @@ import {
   cn,
   formatDate,
   addBusinessDays,
+  addDays,
   nextBusinessDay,
   businessDaysBetween,
   endDateFromDuration,
@@ -88,6 +89,17 @@ export function ScheduleItemDialog({
     return ""
   })
   const [dueDate, setDueDate] = useState(item?.due_date ?? "")
+  // Anchor: when on, the to-do's due_date is computed from the parent's
+  // chosen anchor date + offset, and the manual `dueDate` field is hidden.
+  const [anchorEnabled, setAnchorEnabled] = useState(
+    !!item?.parent_anchor
+  )
+  const [anchor, setAnchor] = useState<"start" | "end">(
+    item?.parent_anchor ?? "end"
+  )
+  const [anchorOffset, setAnchorOffset] = useState<string>(
+    item?.parent_offset_days != null ? String(item.parent_offset_days) : "0"
+  )
 
   // Recompute end from start + duration. Called when either changes.
   function applyDuration(nextStart: string, nextDuration: string) {
@@ -186,6 +198,7 @@ export function ScheduleItemDialog({
       toast.error("End date must be on or after start date")
       return
     }
+    const anchored = kind === "todo" && !!parentId && anchorEnabled
     const payload: ScheduleItemInputT = {
       id: item?.id,
       project_id: data.project_id,
@@ -195,7 +208,15 @@ export function ScheduleItemDialog({
       description: description || null,
       start_date: kind === "work" ? startDate || "" : "",
       end_date: kind === "work" ? endDate || "" : "",
-      due_date: kind === "todo" ? dueDate || "" : "",
+      // When anchored, the server recomputes due_date from the parent — any
+      // value here is ignored. Send "" so we don't mislead.
+      due_date: kind === "todo" && !anchored ? dueDate || "" : "",
+      parent_anchor: anchored ? anchor : null,
+      // Server enforces .int(); truncate decimals here so a "1.5" entry
+      // doesn't get rejected at the schema layer with a confusing error.
+      parent_offset_days: anchored
+        ? Math.trunc(Number(anchorOffset) || 0)
+        : null,
       status,
       recurrence_rule: kind === "todo" ? recurrence : null,
       assignments,
@@ -341,17 +362,16 @@ export function ScheduleItemDialog({
               </>
             ) : (
               <>
-                <Field label="Due date">
-                  <Input
-                    type="date"
-                    value={dueDate}
-                    onChange={(e) => setDueDate(e.target.value)}
-                  />
-                </Field>
                 <Field label="Parent work item">
                   <Select
                     value={parentId}
-                    onChange={(e) => setParentId(e.target.value)}
+                    onChange={(e) => {
+                      const next = e.target.value
+                      setParentId(next)
+                      // Drop the anchor if the parent goes away — the
+                      // server-side check constraint requires both.
+                      if (!next) setAnchorEnabled(false)
+                    }}
                   >
                     <option value="">— (unlinked)</option>
                     {workItemOptions.map((w) => (
@@ -361,6 +381,63 @@ export function ScheduleItemDialog({
                     ))}
                   </Select>
                 </Field>
+                <Field
+                  label={anchorEnabled ? "Linked due date" : "Due date"}
+                >
+                  {anchorEnabled ? (
+                    <AnchoredDuePreview
+                      parent={data.items.find((i) => i.id === parentId) ?? null}
+                      anchor={anchor}
+                      offsetDays={Number(anchorOffset) || 0}
+                    />
+                  ) : (
+                    <Input
+                      type="date"
+                      value={dueDate}
+                      onChange={(e) => setDueDate(e.target.value)}
+                    />
+                  )}
+                </Field>
+                {parentId && (
+                  <div className="sm:col-span-2 -mt-2 space-y-2">
+                    <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={anchorEnabled}
+                        onChange={(e) => setAnchorEnabled(e.target.checked)}
+                        className="h-4 w-4"
+                      />
+                      Link due date to parent (auto-updates when parent
+                      moves)
+                    </label>
+                    {anchorEnabled && (
+                      <div className="grid grid-cols-1 sm:grid-cols-[140px_120px_1fr] gap-2 items-end">
+                        <Field label="Anchor">
+                          <Select
+                            value={anchor}
+                            onChange={(e) =>
+                              setAnchor(e.target.value as "start" | "end")
+                            }
+                          >
+                            <option value="start">Parent start</option>
+                            <option value="end">Parent end</option>
+                          </Select>
+                        </Field>
+                        <Field
+                          label="Offset (days)"
+                          hint="negative = before, positive = after"
+                        >
+                          <Input
+                            type="number"
+                            step={1}
+                            value={anchorOffset}
+                            onChange={(e) => setAnchorOffset(e.target.value)}
+                          />
+                        </Field>
+                      </div>
+                    )}
+                  </div>
+                )}
               </>
             )}
             <Field label="Description" className="sm:col-span-2">
@@ -904,6 +981,38 @@ function DelayLogInline({
       <Button type="button" onClick={submit} disabled={pending}>
         {pending ? "…" : "Log"}
       </Button>
+    </div>
+  )
+}
+
+function AnchoredDuePreview({
+  parent,
+  anchor,
+  offsetDays,
+}: {
+  parent: Tables<"schedule_items"> | null
+  anchor: "start" | "end"
+  offsetDays: number
+}) {
+  if (!parent) {
+    return (
+      <div className="h-9 flex items-center text-xs text-muted px-1">
+        Pick a parent to see the computed date.
+      </div>
+    )
+  }
+  const basis = anchor === "start" ? parent.start_date : parent.end_date
+  if (!basis) {
+    return (
+      <div className="h-9 flex items-center text-xs text-muted px-1">
+        Parent has no {anchor} date yet — due date will fill in once it does.
+      </div>
+    )
+  }
+  const computed = addDays(basis, offsetDays)
+  return (
+    <div className="h-9 flex items-center font-mono text-sm tabular-nums px-1">
+      {formatDate(computed)}
     </div>
   )
 }
