@@ -38,22 +38,31 @@ export async function updateSession(request: NextRequest) {
     path.startsWith("/_next") ||
     path === "/favicon.ico"
 
+  // Build a redirect response that carries forward any cookies Supabase set
+  // on the working response during getUser() (e.g. refreshed auth tokens).
+  // Without this, the redirect strips the new cookies and the next request
+  // looks unauthenticated → endless /login ↔ /projects loop.
+  const redirectKeepingCookies = (url: URL) => {
+    const r = NextResponse.redirect(url)
+    for (const c of response.cookies.getAll()) {
+      r.cookies.set(c)
+    }
+    r.headers.set("cache-control", "no-store")
+    return r
+  }
+
   if (!user && !isPublic) {
     const url = request.nextUrl.clone()
     url.pathname = "/login"
     url.searchParams.set("redirect", path)
-    const r = NextResponse.redirect(url)
-    r.headers.set("cache-control", "no-store")
-    return r
+    return redirectKeepingCookies(url)
   }
 
   if (user && (path === "/login" || path === "/")) {
     const url = request.nextUrl.clone()
     url.pathname = "/projects"
     url.search = ""
-    const r = NextResponse.redirect(url)
-    r.headers.set("cache-control", "no-store")
-    return r
+    return redirectKeepingCookies(url)
   }
 
   // Never let the CDN cache an auth-affected response on protected paths.
