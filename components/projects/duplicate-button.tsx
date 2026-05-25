@@ -19,12 +19,16 @@ import { duplicateProject } from "@/app/actions/projects"
 
 /**
  * Duplicate-project trigger + dialog. Lives in the project header for any
- * staff user. Use case: maintain a "template" project (standard Hines Homes
- * build schedule) and clone it per new build.
+ * staff user, AND is reused from the New Project page's "Start from
+ * template" flow (see DuplicateDialog export below).
  *
- * Copies: schedule items + checklists + predecessors + the project shell
- *   (address, contract price, notes).
- * Skips: assignments, decisions, daily logs, files, payments, members.
+ * Copies: project shell (address, contract price, notes), schedule items
+ *   + checklists + predecessors, decisions (with cost-code breakdowns,
+ *   follow-up templates, and attachments). Status is reset to draft on
+ *   each decision and storage objects are copied to fresh paths under
+ *   the new project.
+ * Skips: schedule assignments, daily logs, project_files, payments,
+ *   project_members, decision_comments.
  *
  * If a new start date is provided, all schedule dates shift by the same
  * delta so the relative cadence of the template is preserved.
@@ -61,7 +65,7 @@ export function DuplicateProjectButton({
   )
 }
 
-function DuplicateDialog({
+export function DuplicateDialog({
   sourceProjectId,
   sourceName,
   sourceProjectNumber,
@@ -91,9 +95,18 @@ function DuplicateDialog({
           new_name: newName.trim() || `${sourceName} (copy)`,
           new_start_date: newStartDate || null,
         })
-        toast.success(
-          `Created · ${result.itemsCopied} schedule item${result.itemsCopied === 1 ? "" : "s"}, ${result.predecessorsCopied} predecessor link${result.predecessorsCopied === 1 ? "" : "s"}`
-        )
+        // Build a concise multi-line toast so staff can confirm everything
+        // they expected to copy actually came across. Each line is only
+        // shown when its count is non-zero so we don't surface "0 decisions"
+        // on schedule-only templates.
+        const parts = [
+          `${result.itemsCopied} schedule item${result.itemsCopied === 1 ? "" : "s"}`,
+          result.predecessorsCopied > 0 &&
+            `${result.predecessorsCopied} predecessor link${result.predecessorsCopied === 1 ? "" : "s"}`,
+          result.decisionsCopied > 0 &&
+            `${result.decisionsCopied} decision${result.decisionsCopied === 1 ? "" : "s"}`,
+        ].filter(Boolean)
+        toast.success(`Created · ${parts.join(", ")}`)
         router.push(`/projects/${result.id}/schedule`)
         onClose()
       } catch (e) {
@@ -109,10 +122,11 @@ function DuplicateDialog({
           <div>
             <DialogTitle>Duplicate &ldquo;{sourceName}&rdquo;</DialogTitle>
             <DialogDescription>
-              Copies the schedule (work items, to-dos, checklists, and
-              predecessor links) plus the project shell. Assignments,
-              decisions, daily logs, files, and payments are NOT copied —
-              those are project-specific.
+              Copies the schedule (work items, to-dos, checklists, predecessor
+              links) AND decisions (selections + change orders, with cost
+              breakdowns, follow-up templates, and attachments). Decisions are
+              reset to draft. Assignments, daily logs, project files, and
+              payments are NOT copied — those are project-specific.
             </DialogDescription>
           </div>
         </DialogHeader>

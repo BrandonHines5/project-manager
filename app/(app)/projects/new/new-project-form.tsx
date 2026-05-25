@@ -2,8 +2,9 @@
 
 import { useActionState, useState } from "react"
 import Link from "next/link"
-import { Building2, Plus, ChevronRight } from "lucide-react"
+import { Building2, ChevronRight, Copy, FilePlus } from "lucide-react"
 import { createProject, type ProjectFormState } from "@/app/actions/projects"
+import { DuplicateDialog } from "@/components/projects/duplicate-button"
 import { Card, CardBody, CardFooter } from "@/components/ui/card"
 import { Field, Input, Select, Textarea } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -11,21 +12,44 @@ import { Badge } from "@/components/ui/badge"
 import { formatCurrency, cn } from "@/lib/utils"
 import type { DashboardProject } from "@/lib/dashboard"
 
-type Mode = "picker" | "form"
+type Mode = "dashboard-picker" | "template-picker" | "form"
+
+type TemplateOption = {
+  id: string
+  project_number: string
+  name: string
+  status: string
+}
 
 export function NewProjectForm({
   available,
+  templates,
 }: {
   available: DashboardProject[]
+  templates: TemplateOption[]
 }) {
-  // Picker mode is the default ONLY if there are projects to pick. Otherwise
-  // skip straight to the blank form — no point showing an empty picker.
-  const [mode, setMode] = useState<Mode>(available.length > 0 ? "picker" : "form")
+  // Default landing depends on what's actually available:
+  // - Dashboard projects first (most common path going forward)
+  // - Otherwise the blank form so we don't show empty pickers
+  const [mode, setMode] = useState<Mode>(
+    available.length > 0 ? "dashboard-picker" : "form"
+  )
   const [picked, setPicked] = useState<DashboardProject | null>(null)
+  const [pickedTemplate, setPickedTemplate] = useState<TemplateOption | null>(
+    null
+  )
 
-  function choose(p: DashboardProject) {
+  function chooseDashboard(p: DashboardProject) {
     setPicked(p)
+    setPickedTemplate(null)
     setMode("form")
+  }
+
+  function chooseTemplate(t: TemplateOption) {
+    // Open the duplicate dialog on top. Once it submits, the dialog
+    // calls duplicateProject and redirects to the new project's
+    // schedule — no createProject call from this page in this path.
+    setPickedTemplate(t)
   }
 
   function createBlank() {
@@ -33,30 +57,64 @@ export function NewProjectForm({
     setMode("form")
   }
 
-  if (mode === "picker") {
-    return (
-      <PickerPanel
-        available={available}
-        onPick={choose}
-        onCreateBlank={createBlank}
-      />
-    )
-  }
   return (
-    <ProjectFormFields
-      picked={picked}
-      onBack={available.length > 0 ? () => setMode("picker") : undefined}
-    />
+    <>
+      {mode === "dashboard-picker" && (
+        <DashboardPickerPanel
+          available={available}
+          hasTemplates={templates.length > 0}
+          onPick={chooseDashboard}
+          onStartFromTemplate={() => setMode("template-picker")}
+          onCreateBlank={createBlank}
+        />
+      )}
+      {mode === "template-picker" && (
+        <TemplatePickerPanel
+          templates={templates}
+          onPick={chooseTemplate}
+          onBack={
+            available.length > 0
+              ? () => setMode("dashboard-picker")
+              : undefined
+          }
+          onCreateBlank={createBlank}
+        />
+      )}
+      {mode === "form" && (
+        <ProjectFormFields
+          picked={picked}
+          hasTemplates={templates.length > 0}
+          onBack={
+            available.length > 0
+              ? () => setMode("dashboard-picker")
+              : undefined
+          }
+          onStartFromTemplate={() => setMode("template-picker")}
+        />
+      )}
+      {pickedTemplate && (
+        <DuplicateDialog
+          sourceProjectId={pickedTemplate.id}
+          sourceName={pickedTemplate.name}
+          sourceProjectNumber={pickedTemplate.project_number}
+          onClose={() => setPickedTemplate(null)}
+        />
+      )}
+    </>
   )
 }
 
-function PickerPanel({
+function DashboardPickerPanel({
   available,
+  hasTemplates,
   onPick,
+  onStartFromTemplate,
   onCreateBlank,
 }: {
   available: DashboardProject[]
+  hasTemplates: boolean
   onPick: (p: DashboardProject) => void
+  onStartFromTemplate: () => void
   onCreateBlank: () => void
 }) {
   return (
@@ -97,15 +155,97 @@ function PickerPanel({
           </ul>
         </CardBody>
       </Card>
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <Link
           href="/projects"
           className="inline-flex items-center text-sm text-muted hover:text-foreground px-3 py-1.5"
         >
           Cancel
         </Link>
+        <div className="flex items-center gap-2">
+          {hasTemplates && (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={onStartFromTemplate}
+            >
+              <Copy className="h-4 w-4" /> Start from a template
+            </Button>
+          )}
+          <Button type="button" variant="secondary" onClick={onCreateBlank}>
+            <FilePlus className="h-4 w-4" /> Create blank
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function TemplatePickerPanel({
+  templates,
+  onPick,
+  onBack,
+  onCreateBlank,
+}: {
+  templates: TemplateOption[]
+  onPick: (t: TemplateOption) => void
+  onBack?: () => void
+  onCreateBlank: () => void
+}) {
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardBody className="p-0">
+          <div className="px-4 py-2.5 border-b border-border flex items-center gap-2 bg-background/40">
+            <Copy className="h-4 w-4 text-muted" />
+            <span className="text-sm font-medium">
+              Start from a template ({templates.length})
+            </span>
+          </div>
+          <p className="text-xs text-muted px-4 py-2 border-b border-border">
+            Copies the schedule (work items, to-dos, checklists, predecessor
+            links) AND decisions (selections + change orders, with cost
+            breakdowns, follow-up templates, and attachments) into a new
+            project. Statuses are reset; assignments and project-specific
+            data are not copied.
+          </p>
+          <ul className="divide-y divide-border max-h-[60vh] overflow-y-auto">
+            {templates.map((t) => (
+              <li key={t.id}>
+                <button
+                  type="button"
+                  onClick={() => onPick(t)}
+                  className="w-full text-left px-4 py-3 hover:bg-background/40 cursor-pointer flex items-center gap-3"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium">{t.name}</span>
+                      <Badge tone="muted">#{t.project_number}</Badge>
+                      <Badge tone="muted">{t.status}</Badge>
+                    </div>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-muted shrink-0" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </CardBody>
+      </Card>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        {onBack ? (
+          <Button type="button" variant="ghost" onClick={onBack}>
+            ← Back
+          </Button>
+        ) : (
+          <Link
+            href="/projects"
+            className="inline-flex items-center text-sm text-muted hover:text-foreground px-3 py-1.5"
+          >
+            Cancel
+          </Link>
+        )}
         <Button type="button" variant="secondary" onClick={onCreateBlank}>
-          <Plus className="h-4 w-4" /> Create blank (not on dashboard)
+          <FilePlus className="h-4 w-4" /> Create blank
         </Button>
       </div>
     </div>
@@ -114,10 +254,14 @@ function PickerPanel({
 
 function ProjectFormFields({
   picked,
+  hasTemplates,
   onBack,
+  onStartFromTemplate,
 }: {
   picked: DashboardProject | null
+  hasTemplates: boolean
   onBack?: () => void
+  onStartFromTemplate: () => void
 }) {
   const [state, formAction, pending] = useActionState<
     ProjectFormState | undefined,
@@ -274,6 +418,17 @@ function ProjectFormFields({
             >
               Cancel
             </Link>
+          )}
+          {/* Even from the blank form, keep "Start from template" reachable
+              so staff who skipped the picker still see the option. */}
+          {hasTemplates && !locked && (
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={onStartFromTemplate}
+            >
+              <Copy className="h-4 w-4" /> Start from template
+            </Button>
           )}
           <Button type="submit" disabled={pending}>
             {pending ? "Creating…" : "Create project"}
