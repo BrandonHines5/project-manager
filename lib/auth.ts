@@ -9,14 +9,29 @@ export async function getSessionProfile(): Promise<SessionProfile | null> {
   const supabase = await createSupabaseServerClient()
   const {
     data: { user },
+    error: userErr,
   } = await supabase.auth.getUser()
+  if (process.env.NODE_ENV === "production") {
+    // Temporary debug — remove once auth is verified working
+    console.log("[auth] getSessionProfile:", {
+      hasUser: !!user,
+      userId: user?.id,
+      userErr: userErr?.message,
+    })
+  }
   if (!user) return null
 
-  const { data: profile } = await supabase
+  const { data: profile, error: profileErr } = await supabase
     .from("profiles")
     .select("*")
     .eq("id", user.id)
     .maybeSingle()
+  if (process.env.NODE_ENV === "production") {
+    console.log("[auth] profile lookup:", {
+      hasProfile: !!profile,
+      profileErr: profileErr?.message,
+    })
+  }
 
   return profile ?? null
 }

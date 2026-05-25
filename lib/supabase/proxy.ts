@@ -30,7 +30,13 @@ export async function updateSession(request: NextRequest) {
     }
   )
 
-  await supabase.auth.getUser()
+  const { data: { user }, error } = await supabase.auth.getUser()
+  console.log("[proxy]", request.nextUrl.pathname, {
+    hasUser: !!user,
+    userId: user?.id,
+    error: error?.message,
+    cookieNames: request.cookies.getAll().map((c) => c.name),
+  })
 
   return response
 }
