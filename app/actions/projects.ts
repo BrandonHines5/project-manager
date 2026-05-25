@@ -137,11 +137,13 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
 
   // Pull everything we need from the source project, including the source
   // project row itself so we can copy its address / status / contract / etc.
+  // We surface read errors explicitly — silently ignoring them could let the
+  // clone proceed with an incomplete source snapshot.
   const [
-    { data: source },
-    { data: srcItems },
-    { data: srcChecklist },
-    { data: srcPreds },
+    { data: source, error: sourceErr },
+    { data: srcItems, error: itemsErr },
+    { data: srcChecklist, error: checklistErr },
+    { data: srcPreds, error: predsErr },
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -166,6 +168,8 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
       )
       .eq("schedule_items.project_id", parsed.source_project_id),
   ])
+  const readErr = sourceErr ?? itemsErr ?? checklistErr ?? predsErr
+  if (readErr) throw new Error(`Source read failed: ${readErr.message}`)
   if (!source) throw new Error("Source project not found")
 
   // Compute the date shift, if any. The "source start" is the earliest
@@ -215,50 +219,45 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     )
   }
 
-  // 2. Insert schedule_items in TWO passes so we can map old → new IDs and
-  //    fix parent_id in pass 2 (a to-do's parent is another schedule_item).
+  // 2. Insert schedule_items. We pre-assign each new row a UUID
+  //    (crypto.randomUUID()) on the client side so we can build the old→new
+  //    ID table deterministically — Supabase's batch INSERT doesn't preserve
+  //    order on RETURNING, and matching by (position, kind, title) can
+  //    collide when two top-level work items share position 0.
+  //    parent_id is filled in pass 2 because a to-do's parent is another
+  //    schedule_item (which doesn't exist until pass 1 commits).
   type Item = Tables<"schedule_items">
   const idMap = new Map<string, string>()
   if (srcItems && srcItems.length > 0) {
-    // Pass 1: insert without parent_id, capture new IDs.
-    const firstPass = srcItems.map((it: Item) => ({
-      project_id: newProject.id,
-      parent_id: null,
-      kind: it.kind,
-      title: it.title,
-      description: it.description,
-      start_date: shift(it.start_date),
-      end_date: shift(it.end_date),
-      due_date: shift(it.due_date),
-      duration_days: it.duration_days,
-      status: "not_started" as const,
-      position: it.position,
-      recurrence_rule: it.recurrence_rule,
-      baseline_start_date: shift(it.baseline_start_date),
-      baseline_end_date: shift(it.baseline_end_date),
-      created_by: profile.id,
-    }))
-    const { data: inserted, error: iErr } = await supabase
+    const firstPass = (srcItems as Item[]).map((it) => {
+      const newId = crypto.randomUUID()
+      idMap.set(it.id, newId)
+      return {
+        id: newId,
+        project_id: newProject.id,
+        parent_id: null,
+        kind: it.kind,
+        title: it.title,
+        description: it.description,
+        start_date: shift(it.start_date),
+        end_date: shift(it.end_date),
+        due_date: shift(it.due_date),
+        duration_days: it.duration_days,
+        status: "not_started" as const,
+        position: it.position,
+        recurrence_rule: it.recurrence_rule,
+        baseline_start_date: shift(it.baseline_start_date),
+        baseline_end_date: shift(it.baseline_end_date),
+        created_by: profile.id,
+      }
+    })
+    const { error: iErr } = await supabase
       .from("schedule_items")
       .insert(firstPass)
-      .select("id, title, kind, position")
     if (iErr) throw new Error(iErr.message)
-    if (!inserted) throw new Error("schedule_items insert returned no rows")
-
-    // Match inserted back to source rows by (position, kind, title). Position
-    // is unique enough in practice; title + kind is the tiebreaker for items
-    // that share a position (e.g. multiple top-level work items at position 0).
-    const byKey = new Map<string, string>()
-    for (const row of inserted) {
-      byKey.set(`${row.position}|${row.kind}|${row.title}`, row.id)
-    }
-    for (const src of srcItems) {
-      const newId = byKey.get(`${src.position}|${src.kind}|${src.title}`)
-      if (newId) idMap.set(src.id, newId)
-    }
 
     // Pass 2: parent_id fixups for to-dos that nested under a work item.
-    const reparents = srcItems
+    const reparents = (srcItems as Item[])
       .filter((s) => s.parent_id && idMap.has(s.id) && idMap.has(s.parent_id))
       .map((s) => ({
         id: idMap.get(s.id)!,
