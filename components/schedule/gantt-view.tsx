@@ -1,10 +1,13 @@
 "use client"
 
-import { useMemo, useRef } from "react"
+import { useMemo, useRef, useState, useTransition } from "react"
+import { useRouter } from "next/navigation"
+import { toast } from "sonner"
 import { addDays as fnsAddDays, differenceInCalendarDays, parseISO, format, isWeekend, startOfDay } from "date-fns"
 import { CalendarDays } from "lucide-react"
 import { EmptyState } from "@/components/ui/empty"
-import { cn, todayISO } from "@/lib/utils"
+import { cn, todayISO, addDays } from "@/lib/utils"
+import { moveScheduleItem } from "@/app/actions/schedule"
 import type { ScheduleData } from "@/app/(app)/projects/[id]/schedule/schedule-client"
 
 const DAY_PX = 28
@@ -53,6 +56,60 @@ export function GanttView({
   const rowIndex = new Map(sortedItems.map((it, i) => [it.id, i]))
 
   const containerRef = useRef<HTMLDivElement>(null)
+  const router = useRouter()
+  const [pending, startTransition] = useTransition()
+  const [dragOffsets, setDragOffsets] = useState<Record<string, number>>({})
+
+  function startDrag(
+    e: React.MouseEvent,
+    itemId: string,
+    currentStart: string,
+    currentEnd: string,
+    projectId: string
+  ) {
+    e.preventDefault()
+    e.stopPropagation()
+    const startX = e.clientX
+    let liveDays = 0
+
+    function onMove(ev: MouseEvent) {
+      const dx = ev.clientX - startX
+      liveDays = Math.round(dx / DAY_PX)
+      setDragOffsets((s) => ({ ...s, [itemId]: liveDays }))
+    }
+
+    function onUp() {
+      window.removeEventListener("mousemove", onMove)
+      window.removeEventListener("mouseup", onUp)
+      setDragOffsets((s) => {
+        const next = { ...s }
+        delete next[itemId]
+        return next
+      })
+      if (liveDays === 0) return
+      const newStart = addDays(currentStart, liveDays)
+      const newEnd = addDays(currentEnd, liveDays)
+      startTransition(async () => {
+        try {
+          await moveScheduleItem({
+            id: itemId,
+            project_id: projectId,
+            start_date: newStart,
+            end_date: newEnd,
+          })
+          toast.success(
+            `Moved ${liveDays > 0 ? "+" : ""}${liveDays}d (successors cascaded)`
+          )
+          router.refresh()
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : "Move failed")
+        }
+      })
+    }
+
+    window.addEventListener("mousemove", onMove)
+    window.addEventListener("mouseup", onUp)
+  }
 
   if (sortedItems.length === 0) {
     return (
@@ -227,18 +284,32 @@ export function GanttView({
               {/* Bar */}
               <button
                 type="button"
-                onClick={() => onEdit(item.id)}
+                onClick={() => {
+                  if (dragOffsets[item.id]) return
+                  onEdit(item.id)
+                }}
+                onMouseDown={(e) =>
+                  startDrag(
+                    e,
+                    item.id,
+                    item.start_date!,
+                    item.end_date!,
+                    item.project_id
+                  )
+                }
+                disabled={pending}
                 className={cn(
-                  "absolute rounded-md text-white text-xs font-medium px-2 truncate shadow-sm hover:opacity-90 cursor-pointer text-left",
-                  barColor
+                  "absolute rounded-md text-white text-xs font-medium px-2 truncate shadow-sm hover:opacity-90 active:opacity-80 text-left",
+                  barColor,
+                  dragOffsets[item.id] ? "cursor-grabbing" : "cursor-grab"
                 )}
                 style={{
-                  left: x + 2,
+                  left: x + 2 + (dragOffsets[item.id] ?? 0) * DAY_PX,
                   top: y + 6,
                   width: w,
                   height: ROW_PX - 12,
                 }}
-                title={`${item.title} · ${dur}d`}
+                title={`${item.title} · ${dur}d · drag to reschedule`}
               >
                 {item.title}
               </button>

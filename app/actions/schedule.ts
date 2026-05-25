@@ -349,6 +349,28 @@ export async function logDelay({
   revalidatePath(`/projects/${project_id}/schedule`)
 }
 
+export async function moveScheduleItem({
+  id,
+  project_id,
+  start_date,
+  end_date,
+}: {
+  id: string
+  project_id: string
+  start_date: string
+  end_date: string
+}) {
+  await requireStaff()
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase
+    .from("schedule_items")
+    .update({ start_date, end_date })
+    .eq("id", id)
+  if (error) throw new Error(error.message)
+  await applyCascade(project_id, id)
+  revalidatePath(`/projects/${project_id}/schedule`)
+}
+
 export async function setItemStatus({
   id,
   project_id,
