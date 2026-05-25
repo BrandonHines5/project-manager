@@ -72,10 +72,13 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
   try {
     return await _saveScheduleItem(input)
   } catch (e) {
-    // Temporary: surface the real cause to the client so we can debug.
     const msg = e instanceof Error ? e.message : String(e)
-    console.error("[saveScheduleItem]", msg, e instanceof Error ? e.stack : "")
-    throw new Error(`saveScheduleItem failed: ${msg}`)
+    const stack = e instanceof Error ? e.stack ?? "" : ""
+    console.error("[saveScheduleItem]", msg, stack)
+    // Re-throw as a plain Error with embedded diag info. Next.js masks the
+    // *message* of unhandled server-action errors in prod, but the wrapping
+    // pushes the diagnostic into a separately-handled path.
+    throw new Error(`SAVE_FAILED: ${msg} | ${stack.split("\n").slice(0, 3).join(" >> ")}`)
   }
 }
 
