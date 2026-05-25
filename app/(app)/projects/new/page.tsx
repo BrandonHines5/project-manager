@@ -1,17 +1,27 @@
 import { requireStaff } from "@/lib/auth"
+import { listAvailableDashboardProjects } from "@/lib/dashboard"
 import { NewProjectForm } from "./new-project-form"
 
 export const metadata = { title: "New project — Hines Homes" }
 
+// Always render fresh — the available list changes whenever a sales person
+// adds a project on the dashboard side, and we don't want stale options.
+export const dynamic = "force-dynamic"
+
 export default async function NewProjectPage() {
   await requireStaff()
+  // Best-effort: if the dashboard integration isn't configured or the
+  // dashboard is unreachable, we fall back to the "create blank" path.
+  const available = await listAvailableDashboardProjects()
   return (
     <div className="max-w-2xl mx-auto px-4 md:px-6 py-6">
       <h1 className="text-2xl font-semibold tracking-tight mb-1">New project</h1>
       <p className="text-sm text-muted mb-6">
-        Create a project. The project number should match your dashboard site.
+        Projects start on the dashboard with the client&apos;s contact info.
+        Pick one below to import it here; or use &ldquo;Create blank&rdquo; for
+        a project that isn&apos;t on the dashboard yet.
       </p>
-      <NewProjectForm />
+      <NewProjectForm available={available} />
     </div>
   )
 }

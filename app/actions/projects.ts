@@ -8,6 +8,7 @@ import { requireStaff } from "@/lib/auth"
 import { addDays } from "@/lib/utils"
 import {
   dashboardProjectUrl,
+  getDashboardProject,
   sendDashboardWebhook,
 } from "@/lib/dashboard"
 import type { Tables } from "@/lib/db/types"
@@ -30,6 +31,28 @@ const ProjectInput = z.object({
     .optional()
     .or(z.literal("")),
   notes: z.string().optional().or(z.literal("")),
+  // Client identity. Source of truth is the dashboard when this project was
+  // pulled from there; for blank-created projects staff can still type them.
+  // Validation: email must look like an email, phone must contain only the
+  // characters phone numbers actually use. Empty strings pass through (the
+  // field is optional). Stricter than necessary keeps mailto:/tel: links
+  // safe to render in the project header.
+  client_name: z.string().max(200).optional().or(z.literal("")),
+  client_email: z
+    .string()
+    .max(200)
+    .email("Must be a valid email")
+    .optional()
+    .or(z.literal("")),
+  client_phone: z
+    .string()
+    .max(50)
+    .regex(/^[+\d\s().\-x]*$/, "Phone may only contain digits, spaces, +, -, (), ., or x")
+    .optional()
+    .or(z.literal("")),
+  // "1" if this came from the dashboard picker. Used to set dashboard_pulled_at
+  // server-side so we don't trust a client-supplied timestamp.
+  dashboard_pulled: z.string().optional().or(z.literal("")),
 })
 
 export type ProjectFormState = {
@@ -62,6 +85,20 @@ export async function createProject(
   const finalDashboardUrl =
     emptyToNull(input.dashboard_url) ?? dashboardProjectUrl(input.project_number)
 
+  // Server-side verify the "this came from the dashboard" claim. The form
+  // sends dashboard_pulled=1 when staff used the picker, but we can't trust
+  // that flag — a crafted request could set it for any project_number. So
+  // we re-fetch the project from the dashboard and only stamp
+  // dashboard_pulled_at when the dashboard actually has this project.
+  // If the dashboard is unreachable / not configured / the project is no
+  // longer there, we silently leave the timestamp NULL (the row still saves
+  // — staff get their project, it just looks like a blank-created one).
+  let dashboardPulledAt: string | null = null
+  if (input.dashboard_pulled === "1") {
+    const remote = await getDashboardProject(input.project_number)
+    if (remote) dashboardPulledAt = new Date().toISOString()
+  }
+
   const supabase = await createSupabaseServerClient()
   const { data, error } = await supabase
     .from("projects")
@@ -75,6 +112,12 @@ export async function createProject(
       target_completion_date: emptyToNull(input.target_completion_date) ?? null,
       dashboard_url: finalDashboardUrl,
       notes: emptyToNull(input.notes),
+      client_name: emptyToNull(input.client_name),
+      client_email: emptyToNull(input.client_email),
+      client_phone: emptyToNull(input.client_phone),
+      // Set server-side after re-fetching the dashboard to confirm the
+      // pull. See the dashboardPulledAt computation above.
+      dashboard_pulled_at: dashboardPulledAt,
       created_by: profile.id,
     })
     .select("*")

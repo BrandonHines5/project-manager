@@ -1,23 +1,38 @@
 # Hines Homes Dashboard sync
 
-The PM app (this repo) pushes project + progress events to the public
-Hines Homes Dashboard via signed webhooks. The dashboard is a separate
-Supabase project; it mirrors what it needs locally rather than reading
-the PM app's database directly.
+Two halves to the integration:
+
+1. **Outbound webhooks (PM → dashboard).** PM pushes project + progress
+   events to the dashboard via signed POSTs whenever something interesting
+   happens (project created, decision approved, daily log published, payment
+   recorded).
+2. **Inbound API reads (PM → dashboard).** Projects start their life on the
+   dashboard (with the client's contact info captured during sales). When
+   staff begins the build, the New Project page lists the dashboard's
+   not-yet-attached projects so staff can pick one and PM mirrors the
+   identity fields locally.
+
+The dashboard is a separate Supabase project; it mirrors what it needs
+locally rather than reading the PM app's database directly, and PM mirrors
+the dashboard's project identity locally rather than joining across DBs.
 
 ## Configuration
 
-Three env vars on this app's deployment (Vercel → Settings → Environment
+Four env vars on the PM app's Vercel deployment (Settings → Environment
 Variables):
 
 | Var | Example | Purpose |
 |---|---|---|
-| `DASHBOARD_BASE_URL` | `https://dashboard.hineshomes.com` | Used to auto-derive `dashboard_url` on new projects (`{base}/projects/{project_number}`). |
-| `DASHBOARD_WEBHOOK_URL` | `https://dashboard.hineshomes.com/api/sync` | Endpoint that receives every event POST. |
-| `DASHBOARD_WEBHOOK_SECRET` | random 32+ char string | Shared secret for HMAC-SHA256 signing. |
+| `DASHBOARD_BASE_URL` | `https://hines-homes-dashboard.vercel.app` | Used to auto-derive `dashboard_url` on new projects (`{base}/projects/{project_number}`) AND as the base for inbound API reads. |
+| `DASHBOARD_WEBHOOK_URL` | `https://hines-homes-dashboard.vercel.app/api/sync` | Endpoint that receives outbound event POSTs. |
+| `DASHBOARD_WEBHOOK_SECRET` | random 32+ char string | Shared secret for HMAC-SHA256 signing of outbound webhooks. |
+| `DASHBOARD_API_SECRET` | random 32+ char string | Bearer token PM sends on inbound GETs. Independent of the webhook secret so each can be rotated separately. |
 
-If any of the three is unset, the whole integration is a no-op — safe for
-local dev and preview deploys.
+If `DASHBOARD_BASE_URL` / `DASHBOARD_WEBHOOK_URL` / `DASHBOARD_WEBHOOK_SECRET`
+are unset, **outbound webhooks** are a no-op. If `DASHBOARD_API_SECRET` is
+unset (or the base URL is unset), the **inbound picker** silently shows
+nothing and staff fall back to the "Create blank" path. Both halves are
+independently safe for local dev and preview deploys.
 
 ## Events
 
@@ -106,3 +121,82 @@ export async function POST(req: Request) {
 3. Update this doc.
 4. Make sure the dashboard handler knows what to do with the new event
    name (default is "log and ignore unknown events").
+
+---
+
+# Inbound API (PM → dashboard)
+
+PM calls the dashboard's REST API when staff opens the New Project page so
+the "Pull from dashboard" picker can render a list of projects that exist
+on the dashboard but haven't been adopted by PM yet.
+
+## Endpoints the dashboard MUST expose
+
+Both endpoints authenticate via `Authorization: Bearer <DASHBOARD_API_SECRET>`.
+They should reject missing / wrong tokens with `401`. Both return JSON.
+
+### `GET /api/projects/available`
+
+Returns dashboard projects with `pm_attached_at IS NULL`. Used to populate
+the picker.
+
+```json
+[
+  {
+    "project_number": "2026-001",
+    "name": "Smith Residence",
+    "address": "123 Main St, Springfield",
+    "contract_price": 850000,
+    "client_name": "Jane Smith",
+    "client_email": "jane@example.com",
+    "client_phone": "(555) 123-4567",
+    "target_completion_date": "2027-03-15"
+  }
+]
+```
+
+- `project_number` and `name` are required; everything else is nullable.
+- Order doesn't matter — PM renders them as-is.
+- Return `[]` (not 204) when there are no available projects.
+- Cap response size at 200 projects (PM doesn't paginate yet); send
+  `5xx` if you'd exceed that and we'll add pagination.
+
+### `GET /api/projects/:project_number`
+
+Returns full project + client info for one project. Used when re-pulling
+data for a project that already exists in PM (future feature). Same shape
+as one element of the `/available` array.
+
+- Return `404` if not found.
+- Return `403` (or `404` — your call) if the project exists but is locked
+  to a different PM tenant. We're single-tenant for now so this never fires.
+
+## What the dashboard does when PM adopts a project
+
+When PM sends the `project.created` webhook for a project that already
+exists on the dashboard (matched by `project_number`), the dashboard should
+set `pm_attached_at = now()` on its row. That removes it from the
+`/available` list and signals "the build phase has started." PM's
+`projects.id` (sent in the webhook payload) can be stored alongside if the
+dashboard wants to deep-link back later.
+
+## Failure modes PM tolerates
+
+- **Dashboard down.** Both list and get return `null` / `[]`. The New
+  Project page falls back to the "Create blank" path. No retries.
+- **Bad credentials.** Same as above — the picker just shows nothing.
+  Check `[dashboard list]` warnings in Vercel logs if staff reports an
+  empty picker when they expect projects.
+- **Schema drift.** PM normalizes the response and skips rows missing
+  `project_number` or `name`. Adding fields is safe; renaming / dropping
+  the two required ones will silently drop the project from the picker.
+
+## Adding new pull-down fields
+
+1. Add the field to the `DashboardProject` interface in `lib/dashboard.ts`.
+2. Add it to `normalizeDashboardProject` so the field survives parsing.
+3. Add a column on `projects` (migration) if PM needs to persist it.
+4. Update `createProject` in `app/actions/projects.ts` to read the form
+   field and write the column.
+5. Update the picker form (`new-project-form.tsx`) to render & submit it.
+6. Update this doc.

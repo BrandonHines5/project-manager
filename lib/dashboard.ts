@@ -1,6 +1,7 @@
 /**
  * Outbound webhook sender for syncing project + progress data to the
- * Hines Homes Dashboard site.
+ * Hines Homes Dashboard site, plus an inbound API client for pulling
+ * dashboard-owned project + client info into PM at project start.
  *
  * The dashboard is a SEPARATE Supabase project. Rather than share a DB, the
  * PM app POSTs signed webhooks on key events:
@@ -19,10 +20,15 @@
  *
  *   DASHBOARD_BASE_URL       e.g. https://dashboard.hineshomes.com
  *                            Used to build per-project URLs
- *                            (`/projects/{project_number}`).
+ *                            (`/projects/{project_number}`) AND as the API
+ *                            base for inbound reads.
  *   DASHBOARD_WEBHOOK_URL    e.g. https://dashboard.hineshomes.com/api/sync
  *                            Endpoint that receives every event POST.
- *   DASHBOARD_WEBHOOK_SECRET shared secret for HMAC signing.
+ *   DASHBOARD_WEBHOOK_SECRET shared secret for HMAC signing (outbound).
+ *   DASHBOARD_API_SECRET     bearer token for INBOUND reads (PM → dashboard).
+ *                            Distinct from the webhook secret so it can be
+ *                            rotated independently. The dashboard validates
+ *                            this on GET /api/projects/* endpoints.
  */
 
 import { createHmac, timingSafeEqual } from "crypto"
@@ -139,5 +145,153 @@ export function verifyDashboardSignature(
     return timingSafeEqual(Buffer.from(expected), Buffer.from(signature))
   } catch {
     return false
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Inbound API client (PM → dashboard reads)
+// ---------------------------------------------------------------------------
+
+/**
+ * Shape returned by the dashboard's project endpoints. Kept narrow on
+ * purpose — only the fields PM actually consumes at project-creation time.
+ * The dashboard is the source of truth for everything here; PM mirrors them.
+ */
+export interface DashboardProject {
+  project_number: string
+  name: string
+  address: string | null
+  contract_price: number | null
+  client_name: string | null
+  client_email: string | null
+  client_phone: string | null
+  // ISO date string or null. Optional: dashboards may not capture it.
+  target_completion_date?: string | null
+}
+
+function dashboardApiHeaders(): Record<string, string> | null {
+  const secret = process.env.DASHBOARD_API_SECRET
+  if (!secret) return null
+  return {
+    accept: "application/json",
+    authorization: `Bearer ${secret}`,
+  }
+}
+
+/**
+ * Lists projects on the dashboard that have NOT yet been adopted into PM
+ * (i.e. the dashboard's `pm_attached_at` is NULL). Returns [] if the
+ * integration env is incomplete OR the dashboard is unreachable — the New
+ * Project UI keeps its "create blank" path as a fallback either way.
+ */
+export async function listAvailableDashboardProjects(): Promise<
+  DashboardProject[]
+> {
+  const base = dashboardBaseUrl()
+  const headers = dashboardApiHeaders()
+  if (!base || !headers) return []
+  try {
+    const res = await fetch(`${base}/api/projects/available`, {
+      method: "GET",
+      headers,
+      signal: AbortSignal.timeout(5_000),
+      // Don't cache — staff create projects rarely but the freshness matters
+      // when they do (a project added in the dashboard 30s ago should show).
+      cache: "no-store",
+    })
+    if (!res.ok) {
+      console.warn(
+        `[dashboard list] HTTP ${res.status} ${res.statusText} — returning []`
+      )
+      return []
+    }
+    const json = (await res.json()) as unknown
+    return normalizeDashboardProjects(json)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.warn("[dashboard list] failed:", msg)
+    return []
+  }
+}
+
+/**
+ * Fetches one dashboard project by its project_number. Returns null if the
+ * env is incomplete, the dashboard is down, or the project doesn't exist
+ * there. The caller decides what to do with null (typically: surface a
+ * field error so staff knows the pull didn't work).
+ */
+export async function getDashboardProject(
+  projectNumber: string
+): Promise<DashboardProject | null> {
+  const base = dashboardBaseUrl()
+  const headers = dashboardApiHeaders()
+  if (!base || !headers) return null
+  try {
+    const res = await fetch(
+      `${base}/api/projects/${encodeURIComponent(projectNumber)}`,
+      {
+        method: "GET",
+        headers,
+        signal: AbortSignal.timeout(5_000),
+        cache: "no-store",
+      }
+    )
+    if (res.status === 404) return null
+    if (!res.ok) {
+      console.warn(
+        `[dashboard get ${projectNumber}] HTTP ${res.status} ${res.statusText}`
+      )
+      return null
+    }
+    const json = (await res.json()) as unknown
+    return normalizeDashboardProject(json)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.warn(`[dashboard get ${projectNumber}] failed:`, msg)
+    return null
+  }
+}
+
+// The dashboard may evolve its response shape, so we coerce defensively
+// instead of trusting it blindly. Missing fields become null/[].
+function normalizeDashboardProjects(json: unknown): DashboardProject[] {
+  if (!Array.isArray(json)) return []
+  return json
+    .map((row) => normalizeDashboardProject(row))
+    .filter((p): p is DashboardProject => p !== null)
+}
+
+// Number coercion that preserves valid zero. The naive `Number(x) || null`
+// pattern silently turns "0"/0 into null — but a $0 contract price is a
+// legitimate value (e.g. spec-build placeholder), so we use Number.isFinite
+// to distinguish "couldn't be parsed" from "parsed as 0".
+function coerceNumberOrNull(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null
+  if (v == null) return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
+function normalizeDashboardProject(json: unknown): DashboardProject | null {
+  if (!json || typeof json !== "object") return null
+  const r = json as Record<string, unknown>
+  const projectNumber =
+    typeof r.project_number === "string" ? r.project_number : null
+  const name = typeof r.name === "string" ? r.name : null
+  // project_number + name are the only truly required fields — without them
+  // we can't even render a sensible picker row.
+  if (!projectNumber || !name) return null
+  return {
+    project_number: projectNumber,
+    name,
+    address: typeof r.address === "string" ? r.address : null,
+    contract_price: coerceNumberOrNull(r.contract_price),
+    client_name: typeof r.client_name === "string" ? r.client_name : null,
+    client_email: typeof r.client_email === "string" ? r.client_email : null,
+    client_phone: typeof r.client_phone === "string" ? r.client_phone : null,
+    target_completion_date:
+      typeof r.target_completion_date === "string"
+        ? r.target_completion_date
+        : null,
   }
 }
