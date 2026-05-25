@@ -72,15 +72,24 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
   const dbg = (step: string, extra?: unknown) =>
     console.log(`[saveScheduleItem] ${step}`, extra ?? "")
   try {
-    dbg("0:enter", { hasId: !!input.id, kind: input.kind, raw: JSON.stringify(input) })
+    dbg("0:enter", { hasId: !!input.id, kind: input.kind })
     await requireStaff()
     dbg("1:requireStaff_ok")
+    // Write the raw input to debug_log so we can inspect it server-side later.
+    const debugSb = await createSupabaseServerClient()
+    await debugSb.from("debug_log").insert({
+      tag: "saveScheduleItem:input",
+      payload: input as unknown as Record<string, unknown>,
+    })
     let parsed: ScheduleItemInputT
     try {
       parsed = ScheduleItemInput.parse(input)
     } catch (zerr) {
       if (zerr instanceof z.ZodError) {
-        console.error("[saveScheduleItem] ZOD_ISSUES:", JSON.stringify(zerr.issues))
+        await debugSb.from("debug_log").insert({
+          tag: "saveScheduleItem:zod_error",
+          payload: { issues: zerr.issues, input: input as unknown as Record<string, unknown> },
+        })
       }
       throw zerr
     }
