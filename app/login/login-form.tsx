@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useSearchParams } from "next/navigation"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
 import { Card, CardBody, CardFooter } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -9,7 +9,6 @@ import { Field, Input } from "@/components/ui/input"
 import { toast } from "sonner"
 
 export function LoginForm() {
-  const router = useRouter()
   const params = useSearchParams()
   const redirectTo = params.get("redirect") ?? "/projects"
 
@@ -35,19 +34,21 @@ export function LoginForm() {
         })
         if (error) throw error
         toast.success("Account created. Check your email if confirmation is enabled.")
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        })
-        if (error) throw error
+        setSubmitting(false)
+        return
       }
-      router.replace(redirectTo)
-      router.refresh()
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
+      if (error) throw error
+      // Hard navigation — forces the browser to fully commit the auth cookies
+      // before the next request, avoiding a router-cache race where the server
+      // renders before the new cookies are sent.
+      window.location.assign(redirectTo)
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Sign-in failed"
       toast.error(msg)
-    } finally {
       setSubmitting(false)
     }
   }
