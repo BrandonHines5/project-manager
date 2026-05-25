@@ -103,3 +103,19 @@ function daysBetween(a: string, b: string): number {
   const bd = new Date(b).getTime()
   return Math.round((bd - ad) / (1000 * 60 * 60 * 24)) + 1
 }
+
+/**
+ * For a to-do anchored to a parent work item, compute the due_date from the
+ * parent's chosen anchor (start or end) plus a signed day offset. Returns
+ * null when the parent hasn't been scheduled yet (caller stores null due_date
+ * and the cascade will fill it in later when the parent gets dates).
+ */
+export function recomputeAnchoredDueDate(
+  parent: Pick<ScheduleItem, "start_date" | "end_date">,
+  anchor: "start" | "end",
+  offsetDays: number
+): string | null {
+  const basis = anchor === "start" ? parent.start_date : parent.end_date
+  if (!basis) return null
+  return addDays(basis, offsetDays)
+}

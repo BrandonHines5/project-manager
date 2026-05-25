@@ -944,7 +944,11 @@ export type Database = {
           end_date: string | null
           id: string
           kind: Database["public"]["Enums"]["schedule_item_kind"]
+          parent_anchor:
+            | Database["public"]["Enums"]["schedule_parent_anchor"]
+            | null
           parent_id: string | null
+          parent_offset_days: number | null
           position: number
           project_id: string
           recurrence_parent_id: string | null
@@ -966,7 +970,11 @@ export type Database = {
           end_date?: string | null
           id?: string
           kind: Database["public"]["Enums"]["schedule_item_kind"]
+          parent_anchor?:
+            | Database["public"]["Enums"]["schedule_parent_anchor"]
+            | null
           parent_id?: string | null
+          parent_offset_days?: number | null
           position?: number
           project_id: string
           recurrence_parent_id?: string | null
@@ -988,7 +996,11 @@ export type Database = {
           end_date?: string | null
           id?: string
           kind?: Database["public"]["Enums"]["schedule_item_kind"]
+          parent_anchor?:
+            | Database["public"]["Enums"]["schedule_parent_anchor"]
+            | null
           parent_id?: string | null
+          parent_offset_days?: number | null
           position?: number
           project_id?: string
           recurrence_parent_id?: string | null
@@ -1164,6 +1176,7 @@ export type Database = {
         | "in_progress"
         | "complete"
         | "delayed"
+      schedule_parent_anchor: "start" | "end"
       user_role: "staff" | "trade" | "client"
     }
     CompositeTypes: {
@@ -1328,6 +1341,7 @@ export const Constants = {
         "complete",
         "delayed",
       ],
+      schedule_parent_anchor: ["start", "end"],
       user_role: ["staff", "trade", "client"],
     },
   },
