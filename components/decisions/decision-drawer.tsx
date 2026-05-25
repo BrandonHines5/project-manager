@@ -13,7 +13,10 @@ import {
   FileIcon,
   MessageSquare,
   Sparkles,
+  Calculator,
+  EyeOff,
 } from "lucide-react"
+import { formatCurrency } from "@/lib/utils"
 import {
   Dialog,
   DialogContent,
@@ -61,6 +64,15 @@ type Attachment = {
   preview_url?: string
 }
 
+type CostItem = {
+  id?: string
+  cost_code_id?: string | null
+  description?: string | null
+  quantity: number
+  unit?: string | null
+  unit_cost: number
+}
+
 export function DecisionDrawer({
   open,
   onClose,
@@ -89,6 +101,35 @@ export function DecisionDrawer({
   const [costDelta, setCostDelta] = useState<string>(
     decision?.cost_delta != null ? String(decision.cost_delta) : ""
   )
+  const [markupPercent, setMarkupPercent] = useState<string>(
+    decision?.markup_percent != null && Number(decision.markup_percent) !== 0
+      ? String(decision.markup_percent)
+      : ""
+  )
+  const [costItems, setCostItems] = useState<CostItem[]>(() => {
+    if (!decision) return []
+    return data.cost_items
+      .filter((ci) => ci.decision_id === decision.id)
+      .map((ci) => ({
+        id: ci.id,
+        cost_code_id: ci.cost_code_id,
+        description: ci.description,
+        quantity: Number(ci.quantity),
+        unit: ci.unit,
+        unit_cost: Number(ci.unit_cost),
+      }))
+  })
+
+  // Derived totals from the breakdown. When items exist, this is the source
+  // of truth for cost_delta on save — the manual `costDelta` input is
+  // ignored. When no items exist, the manual value is used.
+  const breakdownSubtotal = costItems.reduce(
+    (sum, ci) => sum + (Number(ci.quantity) || 0) * (Number(ci.unit_cost) || 0),
+    0
+  )
+  const markupNum = markupPercent === "" ? 0 : Number(markupPercent) || 0
+  const breakdownTotal = breakdownSubtotal * (1 + markupNum / 100)
+  const hasBreakdown = costItems.length > 0
   const [status, setStatus] = useState<Enums<"decision_status">>(
     decision?.status ?? "draft"
   )
@@ -186,7 +227,25 @@ export function DecisionDrawer({
       kind,
       title: title.trim(),
       description: description || null,
-      cost_delta: costDelta === "" ? null : Number(costDelta),
+      // When a breakdown exists, the server recomputes cost_delta from the
+      // line items × markup — we send the manual field only as a fallback
+      // for decisions without a breakdown.
+      cost_delta: hasBreakdown
+        ? null
+        : costDelta === ""
+        ? null
+        : Number(costDelta),
+      markup_percent: markupNum,
+      cost_items: costItems
+        .filter((ci) => ci.cost_code_id || ci.description || ci.unit_cost > 0)
+        .map((ci) => ({
+          id: ci.id,
+          cost_code_id: ci.cost_code_id || null,
+          description: ci.description || null,
+          quantity: ci.quantity,
+          unit: ci.unit || null,
+          unit_cost: ci.unit_cost,
+        })),
       status: overrideStatus ?? status,
       followups: followups
         .filter((f) => f.title.trim() !== "")
@@ -306,26 +365,65 @@ export function DecisionDrawer({
               placeholder={kind === "change_order" ? "Move powder room wall" : "Master bath floor tile"}
             />
           </Field>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Field
-              label={kind === "change_order" ? "Cost delta" : "Cost"}
-              hint="Positive = adds to contract. Negative = credit."
-            >
-              <Input
-                type="number"
-                step="0.01"
-                value={costDelta}
-                onChange={(e) => setCostDelta(e.target.value)}
-                disabled={!canEdit}
-                placeholder="0.00"
-              />
-            </Field>
-            <Field label="Cost preview">
+          {canEdit && (
+            <CostBreakdownEditor
+              items={costItems}
+              onChange={setCostItems}
+              costCodes={data.cost_codes}
+              markupPercent={markupPercent}
+              onMarkupChange={setMarkupPercent}
+              subtotal={breakdownSubtotal}
+              total={breakdownTotal}
+            />
+          )}
+          {/* Manual single-cost mode — only shown when no breakdown is in use.
+              The client sees ONLY this value (well, the marked-up total goes
+              into cost_delta server-side either way), so the label says
+              "client price" to make the markup intent obvious. */}
+          {!hasBreakdown && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Field
+                label={
+                  canEdit
+                    ? kind === "change_order"
+                      ? "Client price (no breakdown)"
+                      : "Client price (no breakdown)"
+                    : kind === "change_order"
+                    ? "Cost delta"
+                    : "Price"
+                }
+                hint={
+                  canEdit
+                    ? "Used when you don't itemize the cost. Positive adds to contract, negative is a credit."
+                    : "Positive adds to contract, negative is a credit."
+                }
+              >
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={costDelta}
+                  onChange={(e) => setCostDelta(e.target.value)}
+                  disabled={!canEdit}
+                  placeholder="0.00"
+                />
+              </Field>
+              <Field label={canEdit ? "Preview" : "Total"}>
+                <div className="h-9 flex items-center font-mono text-sm">
+                  <CostDelta value={costDelta === "" ? null : Number(costDelta)} />
+                </div>
+              </Field>
+            </div>
+          )}
+          {/* For clients viewing a decision that has a breakdown, the
+              breakdown editor above is hidden (canEdit false). All they need
+              is the marked-up total — which IS the stored cost_delta. */}
+          {!canEdit && hasBreakdown && (
+            <Field label="Price">
               <div className="h-9 flex items-center font-mono text-sm">
-                <CostDelta value={costDelta === "" ? null : Number(costDelta)} />
+                <CostDelta value={decision?.cost_delta ?? null} />
               </div>
             </Field>
-          </div>
+          )}
           <Field label="Description / scope">
             <Textarea
               value={description}
@@ -715,6 +813,191 @@ function CommentsThread({
         <p className="mt-2 text-xs text-muted">
           Comments are available after saving the decision.
         </p>
+      )}
+    </div>
+  )
+}
+
+function CostBreakdownEditor({
+  items,
+  onChange,
+  costCodes,
+  markupPercent,
+  onMarkupChange,
+  subtotal,
+  total,
+}: {
+  items: CostItem[]
+  onChange: (v: CostItem[]) => void
+  costCodes: DecisionsData["cost_codes"]
+  markupPercent: string
+  onMarkupChange: (v: string) => void
+  subtotal: number
+  total: number
+}) {
+  function add() {
+    onChange([
+      ...items,
+      {
+        cost_code_id: null,
+        description: "",
+        quantity: 1,
+        unit: null,
+        unit_cost: 0,
+      },
+    ])
+  }
+
+  function update(i: number, patch: Partial<CostItem>) {
+    onChange(items.map((it, idx) => (idx === i ? { ...it, ...patch } : it)))
+  }
+
+  function remove(i: number) {
+    onChange(items.filter((_, idx) => idx !== i))
+  }
+
+  return (
+    <div className="rounded-md border border-border-strong bg-background/30 p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <Label>
+          <Calculator className="inline h-3 w-3 mr-1 text-brand-500" />
+          Cost breakdown
+        </Label>
+        <span className="inline-flex items-center gap-1 text-[11px] text-muted">
+          <EyeOff className="h-3 w-3" />
+          Internal — clients see only the marked-up total
+        </span>
+      </div>
+      {items.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="text-muted">
+              <tr>
+                <th className="text-left font-medium pb-1.5 w-[28%]">Cost code</th>
+                <th className="text-left font-medium pb-1.5">Description</th>
+                <th className="text-right font-medium pb-1.5 w-20">Qty</th>
+                <th className="text-left font-medium pb-1.5 w-16">Unit</th>
+                <th className="text-right font-medium pb-1.5 w-28">Unit cost</th>
+                <th className="text-right font-medium pb-1.5 w-28">Line total</th>
+                <th className="w-6"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((ci, i) => {
+                const lineTotal = (ci.quantity || 0) * (ci.unit_cost || 0)
+                return (
+                  <tr key={i} className="align-top">
+                    <td className="pr-1.5 pb-1.5">
+                      <Select
+                        value={ci.cost_code_id ?? ""}
+                        onChange={(e) =>
+                          update(i, { cost_code_id: e.target.value || null })
+                        }
+                      >
+                        <option value="">— Select —</option>
+                        {costCodes.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.code} · {c.name}
+                          </option>
+                        ))}
+                      </Select>
+                    </td>
+                    <td className="pr-1.5 pb-1.5">
+                      <Input
+                        value={ci.description ?? ""}
+                        onChange={(e) =>
+                          update(i, { description: e.target.value })
+                        }
+                        placeholder="Detail"
+                      />
+                    </td>
+                    <td className="pr-1.5 pb-1.5">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        className="text-right tabular-nums"
+                        value={ci.quantity}
+                        onChange={(e) =>
+                          update(i, { quantity: Number(e.target.value) || 0 })
+                        }
+                      />
+                    </td>
+                    <td className="pr-1.5 pb-1.5">
+                      <Input
+                        value={ci.unit ?? ""}
+                        onChange={(e) => update(i, { unit: e.target.value })}
+                        placeholder="ea"
+                      />
+                    </td>
+                    <td className="pr-1.5 pb-1.5">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        className="text-right tabular-nums"
+                        value={ci.unit_cost}
+                        onChange={(e) =>
+                          update(i, { unit_cost: Number(e.target.value) || 0 })
+                        }
+                      />
+                    </td>
+                    <td className="pr-1.5 pb-1.5 text-right font-mono tabular-nums pt-2">
+                      {formatCurrency(lineTotal)}
+                    </td>
+                    <td className="pb-1.5 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => remove(i)}
+                        className="text-muted hover:text-danger p-1 cursor-pointer"
+                        aria-label="Remove line"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={add}
+        className="text-xs text-brand-600 hover:underline inline-flex items-center gap-1 cursor-pointer"
+      >
+        <Plus className="h-3 w-3" /> Add line
+      </button>
+      {items.length > 0 && (
+        <div className="border-t border-border pt-2 space-y-1 text-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-muted">Subtotal (cost)</span>
+            <span className="font-mono tabular-nums">
+              {formatCurrency(subtotal)}
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <label className="text-muted flex items-center gap-2">
+              Markup %
+              <Input
+                type="number"
+                step="0.01"
+                value={markupPercent}
+                onChange={(e) => onMarkupChange(e.target.value)}
+                placeholder="0"
+                className="w-24 text-right tabular-nums"
+              />
+            </label>
+            <span className="font-mono tabular-nums text-muted">
+              + {formatCurrency(total - subtotal)}
+            </span>
+          </div>
+          <div className="flex items-center justify-between font-semibold border-t border-border pt-1.5">
+            <span>Client price</span>
+            <span className="font-mono tabular-nums">
+              {formatCurrency(total)}
+            </span>
+          </div>
+        </div>
       )}
     </div>
   )

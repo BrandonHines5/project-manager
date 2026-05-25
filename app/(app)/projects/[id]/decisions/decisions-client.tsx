@@ -26,6 +26,10 @@ export type DecisionsData = {
   comments: Tables<"decision_comments">[]
   profiles: Pick<Tables<"profiles">, "id" | "full_name" | "email" | "role">[]
   companies: Pick<Tables<"companies">, "id" | "name" | "type" | "trade_category">[]
+  // Cost line items are visible to staff only (RLS-enforced). For clients
+  // this is always an empty array — they only see the rolled-up cost_delta.
+  cost_items: Tables<"decision_cost_items">[]
+  cost_codes: Pick<Tables<"cost_codes">, "id" | "code" | "name" | "position" | "is_active">[]
   signed_urls: Record<string, string>
 }
 
