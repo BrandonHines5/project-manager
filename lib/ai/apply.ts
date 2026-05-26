@@ -15,7 +15,34 @@ async function applyOne(
   try {
     switch (mutation.kind) {
       case "add_checklist_item": {
+        // Re-validate the target's kind on the server even though the
+        // propose tool already checked. A tampered apply payload could
+        // request a checklist insert against a work item; there's no DB
+        // constraint preventing that, so we have to gate it here.
+        const { data: target, error: tErr } = await supabase
+          .from("schedule_items")
+          .select("id, kind")
+          .eq("id", mutation.schedule_item_id)
+          .maybeSingle()
+        if (tErr) throw new Error(tErr.message)
+        if (!target) {
+          throw new Error("schedule item not found or not permitted")
+        }
+        if (target.kind !== "todo") {
+          throw new Error(
+            "checklist items can only be added to to-do items"
+          )
+        }
         // Append at the end; position = max(existing) + 1.
+        //
+        // Known race: two concurrent appends on the same checklist can
+        // compute the same `nextPos` and end up co-located, producing an
+        // unstable sort between the two new rows. There's no unique
+        // constraint on (schedule_item_id, position), so no insert fails
+        // and no data is corrupted — the worst case is a cosmetic ordering
+        // glitch on simultaneous applies. If this becomes a real problem,
+        // move to a SECURITY DEFINER RPC that allocates `position`
+        // atomically. Not worth the round-trip for v1.
         const { data: existing, error: pErr } = await supabase
           .from("todo_checklist_items")
           .select("position")
@@ -34,11 +61,19 @@ async function applyOne(
         return { mutation, ok: true }
       }
       case "update_schedule_item_status": {
-        const { error } = await supabase
+        // .select() after .update() so we can tell apart "updated 1 row"
+        // from "RLS hid the row" / "id doesn't exist" — without it, both
+        // come back as `error: null` and we'd report false-positive success.
+        const { data, error } = await supabase
           .from("schedule_items")
           .update({ status: mutation.status })
           .eq("id", mutation.schedule_item_id)
+          .select("id")
+          .maybeSingle()
         if (error) throw new Error(error.message)
+        if (!data) {
+          throw new Error("schedule item not found or not permitted")
+        }
         return { mutation, ok: true }
       }
     }

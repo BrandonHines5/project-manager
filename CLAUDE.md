@@ -48,7 +48,7 @@
 
 - Server action `runAgentTurnAction` in `app/actions/ai-agent.ts` wraps a manual Claude tool-use loop in `lib/ai/agent.ts`. Model is `claude-sonnet-4-6`. Requires `ANTHROPIC_API_KEY` env var (set in Vercel + `.env.local` for dev) — action returns a typed `error` result if the key is missing, never throws.
 - Plan-then-approve flow: the agent's `propose_*` tools record mutations into a per-turn array but DON'T execute anything. Only `applyPlanAction` actually writes to the DB, and it runs under the caller's session so RLS still gates writes.
-- Adding a new mutation kind takes three changes: extend `ProposedMutation` in `lib/ai/types.ts`, add the `propose_*` tool definition + handler in `lib/ai/agent.ts`, and add the apply path in `lib/ai/apply.ts`. The plan-row renderer in `components/layout/ai-agent.tsx:MutationRow` needs a case too.
+- Adding a new mutation kind takes four changes: extend `ProposedMutation` in `lib/ai/types.ts`, add the `propose_*` tool definition + handler in `lib/ai/agent.ts`, add the apply path in `lib/ai/apply.ts`, and add a case in the plan-row renderer `components/layout/ai-agent.tsx:MutationRow`.
 
 ## Workflow
 
