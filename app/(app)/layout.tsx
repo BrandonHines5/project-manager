@@ -1,6 +1,8 @@
 import { requireSession } from "@/lib/auth"
 import { Sidebar } from "@/components/layout/sidebar"
 import { Topbar } from "@/components/layout/topbar"
+import { ProjectContextShell } from "@/components/layout/project-context-shell"
+import { ProjectListSidebar } from "@/components/layout/project-list-sidebar"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 
 // Every authenticated page depends on cookies and per-user data, so we opt out
@@ -16,11 +18,22 @@ export default async function AppLayout({
 }) {
   const profile = await requireSession()
   const supabase = await createSupabaseServerClient()
-  const { count: unreadCount } = await supabase
-    .from("notifications")
-    .select("id", { count: "exact", head: true })
-    .eq("recipient_id", profile.id)
-    .is("read_at", null)
+
+  // Both queries are RLS-scoped; trades / clients only see projects they're a
+  // member of. We fetch the project list here (not in each page) so the
+  // sidebar stays consistent across navigations and benefits from React's
+  // server-component dedupe.
+  const [{ count: unreadCount }, { data: projects }] = await Promise.all([
+    supabase
+      .from("notifications")
+      .select("id", { count: "exact", head: true })
+      .eq("recipient_id", profile.id)
+      .is("read_at", null),
+    supabase
+      .from("projects")
+      .select("id, name, project_number, address, status")
+      .order("project_number", { ascending: false }),
+  ])
 
   return (
     <div className="flex min-h-screen flex-1">
@@ -32,7 +45,11 @@ export default async function AppLayout({
           role={profile.role}
           unreadCount={unreadCount ?? 0}
         />
-        <main className="flex-1 overflow-y-auto">{children}</main>
+        <ProjectContextShell
+          sidebar={<ProjectListSidebar projects={projects ?? []} />}
+        >
+          <main className="flex-1 overflow-y-auto">{children}</main>
+        </ProjectContextShell>
       </div>
     </div>
   )
