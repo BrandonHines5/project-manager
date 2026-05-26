@@ -79,18 +79,38 @@ async function applyOne(
       case "update_schedule_item": {
         // Patch-only update — only the keys present in `patch` are sent.
         // duration_days isn't in the patch but the schedule UI shows it
-        // derived from start/end; if both are present in the patch, also
-        // recompute duration_days so the gantt stays consistent. Keeps
-        // behavior aligned with saveScheduleItem in app/actions/schedule.ts.
+        // derived from start/end. If EITHER date changed (not both), fall
+        // back to the stored value for the other side so duration stays
+        // consistent — otherwise a one-sided patch would leave a stale
+        // duration in the DB. Mirrors how saveScheduleItem keeps these in
+        // sync via its (startD, endD) pair.
         const patch: TablesUpdate<"schedule_items"> = { ...mutation.patch }
-        if (
-          typeof patch.start_date === "string" &&
-          typeof patch.end_date === "string"
-        ) {
-          const start = new Date(patch.start_date)
-          const end = new Date(patch.end_date)
-          patch.duration_days =
-            Math.round((end.getTime() - start.getTime()) / 86400000) + 1
+        const hasStartPatch = "start_date" in patch
+        const hasEndPatch = "end_date" in patch
+        if (hasStartPatch || hasEndPatch) {
+          let startStr = patch.start_date as string | null | undefined
+          let endStr = patch.end_date as string | null | undefined
+          if (startStr === undefined || endStr === undefined) {
+            const { data: existing, error: exErr } = await supabase
+              .from("schedule_items")
+              .select("start_date, end_date")
+              .eq("id", mutation.schedule_item_id)
+              .maybeSingle()
+            if (exErr) throw new Error(exErr.message)
+            if (existing) {
+              if (startStr === undefined) startStr = existing.start_date
+              if (endStr === undefined) endStr = existing.end_date
+            }
+          }
+          if (typeof startStr === "string" && typeof endStr === "string") {
+            const start = new Date(startStr)
+            const end = new Date(endStr)
+            patch.duration_days =
+              Math.round((end.getTime() - start.getTime()) / 86400000) + 1
+          } else if (startStr === null || endStr === null) {
+            // Date was explicitly cleared — duration no longer meaningful.
+            patch.duration_days = null
+          }
         }
         const { data, error } = await supabase
           .from("schedule_items")

@@ -632,6 +632,7 @@ function PlanFooter({
             value={confirmText}
             onChange={(e) => onConfirmTextChange(e.target.value)}
             placeholder="type apply"
+            aria-label="Type apply to confirm destructive changes"
             className="h-7 w-28 rounded-md border border-border-strong bg-surface px-2 text-xs font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40"
           />
         </div>
