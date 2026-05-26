@@ -3,7 +3,7 @@
 import { useState, useMemo, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { Search, UserCog } from "lucide-react"
+import { Search, UserCog, UserPlus, Trash2, Copy, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { EmptyState } from "@/components/ui/empty"
@@ -18,19 +18,28 @@ import {
   DialogBody,
   DialogFooter,
 } from "@/components/ui/dialog"
-import { updateProfile, type UpdateProfileInputT } from "@/app/actions/team"
+import {
+  updateProfile,
+  inviteTeamMember,
+  deleteTeamMember,
+  type UpdateProfileInputT,
+  type InviteTeamMemberInputT,
+} from "@/app/actions/team"
 import type { Tables, Enums } from "@/lib/db/types"
 
 export function TeamClient({
   profiles,
   companies,
+  currentUserId,
 }: {
   profiles: Tables<"profiles">[]
   companies: Pick<Tables<"companies">, "id" | "name" | "type" | "trade_category">[]
+  currentUserId: string
 }) {
   const [search, setSearch] = useState("")
   const [roleFilter, setRoleFilter] = useState<"all" | Enums<"user_role">>("all")
   const [editing, setEditing] = useState<Tables<"profiles"> | null>(null)
+  const [inviting, setInviting] = useState(false)
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -51,8 +60,8 @@ export function TeamClient({
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Team</h1>
           <p className="text-sm text-muted">
-            Everyone with an account. New users sign up themselves at
-            /login (every signup defaults to staff — change their role here).
+            Add staff, trades, or clients. New users get a temporary password
+            you share with them — they can change it after signing in.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -77,20 +86,20 @@ export function TeamClient({
               className="pl-8 w-56"
             />
           </div>
+          <Button onClick={() => setInviting(true)}>
+            <UserPlus className="h-4 w-4" />
+            Add team member
+          </Button>
         </div>
       </div>
 
       {filtered.length === 0 ? (
         <EmptyState
           icon={<UserCog className="h-10 w-10" />}
-          title={
-            profiles.length === 0
-              ? "No accounts yet"
-              : "No matches"
-          }
+          title={profiles.length === 0 ? "No accounts yet" : "No matches"}
           description={
             profiles.length === 0
-              ? "Sign up at /login first to create your account."
+              ? 'Click "Add team member" to invite someone.'
               : "Try different search terms."
           }
         />
@@ -144,9 +153,12 @@ export function TeamClient({
           key={editing.id}
           profile={editing}
           companies={companies}
+          currentUserId={currentUserId}
           onClose={() => setEditing(null)}
         />
       )}
+
+      {inviting && <InviteDialog onClose={() => setInviting(false)} />}
     </div>
   )
 }
@@ -160,18 +172,24 @@ function RoleBadge({ role }: { role: Enums<"user_role"> }) {
 function EditDialog({
   profile,
   companies,
+  currentUserId,
   onClose,
 }: {
   profile: Tables<"profiles">
   companies: Pick<Tables<"companies">, "id" | "name" | "type" | "trade_category">[]
+  currentUserId: string
   onClose: () => void
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
+  const [deleting, startDelete] = useTransition()
   const [fullName, setFullName] = useState(profile.full_name)
   const [role, setRole] = useState<Enums<"user_role">>(profile.role)
   const [companyId, setCompanyId] = useState(profile.company_id ?? "")
   const [phone, setPhone] = useState(profile.phone ?? "")
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
+  const isSelf = profile.id === currentUserId
 
   function submit() {
     if (!fullName.trim()) {
@@ -193,6 +211,19 @@ function EditDialog({
         onClose()
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Save failed")
+      }
+    })
+  }
+
+  function doDelete() {
+    startDelete(async () => {
+      try {
+        await deleteTeamMember(profile.id)
+        toast.success(`Deleted ${profile.full_name || profile.email}`)
+        router.refresh()
+        onClose()
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Delete failed")
       }
     })
   }
@@ -254,13 +285,211 @@ function EditDialog({
               onChange={(e) => setPhone(e.target.value)}
             />
           </Field>
+
+          {confirmDelete && (
+            <div className="rounded-md border border-danger/40 bg-danger/5 px-3 py-2.5 text-sm space-y-2">
+              <p className="font-medium text-foreground">
+                Delete {profile.full_name || profile.email}?
+              </p>
+              <p className="text-muted text-xs">
+                This removes their account and signs them out. Their authored
+                content (decisions, daily logs, comments) is preserved with the
+                author shown as removed.
+              </p>
+              <div className="flex gap-2 pt-1">
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={doDelete}
+                  disabled={deleting}
+                >
+                  {deleting ? "Deleting…" : "Yes, delete"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setConfirmDelete(false)}
+                  disabled={deleting}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogBody>
+        <DialogFooter className="justify-between">
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => setConfirmDelete(true)}
+            disabled={pending || deleting || isSelf || confirmDelete}
+            className="text-danger hover:bg-danger/10"
+            title={isSelf ? "You can't delete your own account" : undefined}
+          >
+            <Trash2 className="h-4 w-4" />
+            Delete
+          </Button>
+          <div className="flex gap-2">
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={submit}
+              disabled={pending || deleting}
+            >
+              {pending ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function generatePassword() {
+  // 14 chars, A-Z a-z 0-9 plus a symbol from a safe set so password managers don't
+  // mis-handle it. Uses crypto.getRandomValues so it's not Math.random-predictable.
+  const alphabet =
+    "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+  const symbols = "!@#$%&*?"
+  const buf = new Uint32Array(14)
+  crypto.getRandomValues(buf)
+  let out = ""
+  for (let i = 0; i < 13; i++) out += alphabet[buf[i] % alphabet.length]
+  out += symbols[buf[13] % symbols.length]
+  return out
+}
+
+function InviteDialog({ onClose }: { onClose: () => void }) {
+  const router = useRouter()
+  const [pending, startTransition] = useTransition()
+  const [fullName, setFullName] = useState("")
+  const [email, setEmail] = useState("")
+  const [role, setRole] = useState<Enums<"user_role">>("staff")
+  const [password, setPassword] = useState(() => generatePassword())
+
+  function submit() {
+    if (!fullName.trim()) {
+      toast.error("Name is required")
+      return
+    }
+    if (!email.trim()) {
+      toast.error("Email is required")
+      return
+    }
+    if (password.length < 8) {
+      toast.error("Password must be at least 8 characters")
+      return
+    }
+    const payload: InviteTeamMemberInputT = {
+      full_name: fullName.trim(),
+      email: email.trim(),
+      role,
+      password,
+    }
+    startTransition(async () => {
+      try {
+        await inviteTeamMember(payload)
+        toast.success(
+          `${payload.full_name} added. Share their temp password securely.`
+        )
+        router.refresh()
+        onClose()
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed to add user")
+      }
+    })
+  }
+
+  function copyPassword() {
+    navigator.clipboard.writeText(password).then(
+      () => toast.success("Password copied"),
+      () => toast.error("Copy failed")
+    )
+  }
+
+  return (
+    <Dialog open={true} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent size="md">
+        <DialogHeader>
+          <div>
+            <DialogTitle>Add team member</DialogTitle>
+            <DialogDescription>
+              Creates a confirmed account with the temp password below.
+            </DialogDescription>
+          </div>
+        </DialogHeader>
+        <DialogBody className="space-y-3">
+          <Field label="Full name">
+            <Input
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              placeholder="Jane Builder"
+              autoFocus
+            />
+          </Field>
+          <Field label="Email">
+            <Input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="jane@hineshomes.com"
+              autoComplete="off"
+            />
+          </Field>
+          <Field label="Role">
+            <Select
+              value={role}
+              onChange={(e) => setRole(e.target.value as Enums<"user_role">)}
+            >
+              <option value="staff">Staff — full access</option>
+              <option value="trade">
+                Trade — only schedule items assigned to them
+              </option>
+              <option value="client">
+                Client — only their project (read-only)
+              </option>
+            </Select>
+          </Field>
+          <Field label="Temporary password">
+            <div className="flex gap-2">
+              <Input
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="font-mono"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={() => setPassword(generatePassword())}
+                title="Regenerate"
+              >
+                <RefreshCw className="h-4 w-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={copyPassword}
+                title="Copy"
+              >
+                <Copy className="h-4 w-4" />
+              </Button>
+            </div>
+            <p className="text-xs text-muted mt-1">
+              Share this with the new user — they should change it after
+              signing in.
+            </p>
+          </Field>
         </DialogBody>
         <DialogFooter>
           <Button type="button" variant="ghost" onClick={onClose}>
             Cancel
           </Button>
           <Button type="button" onClick={submit} disabled={pending}>
-            {pending ? "Saving…" : "Save"}
+            {pending ? "Adding…" : "Add"}
           </Button>
         </DialogFooter>
       </DialogContent>
