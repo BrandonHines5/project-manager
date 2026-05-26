@@ -206,7 +206,16 @@ export function GlobalSearch() {
                     ref={inputRef}
                     type="text"
                     value={query}
-                    onChange={(e) => setQuery(e.target.value)}
+                    onChange={(e) => {
+                      // Clear stale results on every keystroke so Enter
+                      // can't navigate into a hit that no longer matches
+                      // the text in the box. The debounced fetch repopulates
+                      // them ~200ms later, with a "Searching…" placeholder
+                      // in the gap.
+                      setQuery(e.target.value)
+                      setResults([])
+                      setActiveIdx(0)
+                    }}
                     onKeyDown={onKeyDown}
                     placeholder="Search…"
                     className="h-9 w-full rounded-md border border-border-strong bg-surface pl-8 pr-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40"

@@ -1,5 +1,6 @@
 "use server"
 
+import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireSession } from "@/lib/auth"
 
@@ -38,6 +39,12 @@ type SearchInput = {
   project_id?: string | null
 }
 
+const SearchInputSchema = z.object({
+  query: z.string().max(200),
+  scope: z.enum(["current", "all"]),
+  project_id: z.string().uuid().nullish(),
+})
+
 // Truncate a long body to a snippet. Tries to start the snippet near the
 // match so the relevant text is visible.
 function snippet(body: string | null | undefined, query: string): string | null {
@@ -52,12 +59,11 @@ function snippet(body: string | null | undefined, query: string): string | null 
 }
 
 // Build the `or(...)` PostgREST filter that runs ILIKE across several
-// columns of the same table. Escapes commas / parens that would confuse
-// the filter parser.
-function ilikeOr(query: string, columns: string[]): string {
-  const safe = query.replace(/[,()*]/g, " ").trim()
-  if (!safe) return ""
-  const pattern = `*${safe}*`
+// columns of the same table. Caller passes the already-sanitized query
+// (with PostgREST-reserved chars stripped). Never returns an empty string —
+// callers gate on safeQuery being non-empty before calling this.
+function ilikeOr(safeQuery: string, columns: string[]): string {
+  const pattern = `*${safeQuery}*`
   return columns.map((c) => `${c}.ilike.${pattern}`).join(",")
 }
 
@@ -65,15 +71,24 @@ const PER_TYPE_LIMIT = 8
 
 export async function globalSearch(input: SearchInput): Promise<SearchResult[]> {
   await requireSession()
+  const parsed = SearchInputSchema.safeParse(input)
+  if (!parsed.success) return []
   const supabase = await createSupabaseServerClient()
 
-  const query = input.query.trim()
-  if (query.length < 2) return []
+  // Sanitize once: strip PostgREST-reserved chars so the assembled `or=()`
+  // filter is always well-formed. If sanitization collapses the term to
+  // fewer than 2 chars, short-circuit — passing `.or("")` produces an
+  // invalid filter, and a single-char ILIKE pattern is too noisy to be useful.
+  const query = parsed.data.query.trim()
+  const safeQuery = query.replace(/[,()*]/g, " ").trim()
+  if (safeQuery.length < 2) return []
 
   // Helper: returns the projects.id filter when scoping to a single project,
   // or null when searching across everything the user can see.
   const projectFilter =
-    input.scope === "current" && input.project_id ? input.project_id : null
+    parsed.data.scope === "current" && parsed.data.project_id
+      ? parsed.data.project_id
+      : null
 
   // Run all queries in parallel. Each query selects from one table and
   // pulls the parent project's name/number via the FK join. RLS already
@@ -84,7 +99,7 @@ export async function globalSearch(input: SearchInput): Promise<SearchResult[]> 
     .from("projects")
     .select(projectColumns)
     .or(
-      ilikeOr(query, [
+      ilikeOr(safeQuery, [
         "name",
         "project_number",
         "address",
@@ -104,7 +119,7 @@ export async function globalSearch(input: SearchInput): Promise<SearchResult[]> 
     .select(
       "id, project_id, title, description, kind, projects!inner(id, name, project_number)"
     )
-    .or(ilikeOr(query, ["title", "description"]))
+    .or(ilikeOr(safeQuery, ["title", "description"]))
     .limit(PER_TYPE_LIMIT * 2)
   const scheduleP = projectFilter
     ? scheduleQ.eq("project_id", projectFilter)
@@ -115,7 +130,7 @@ export async function globalSearch(input: SearchInput): Promise<SearchResult[]> 
     .select(
       "id, project_id, number, title, description, kind, projects!inner(id, name, project_number)"
     )
-    .or(ilikeOr(query, ["title", "description"]))
+    .or(ilikeOr(safeQuery, ["title", "description"]))
     .limit(PER_TYPE_LIMIT)
   const decisionsP = projectFilter
     ? decisionsQ.eq("project_id", projectFilter)
@@ -126,7 +141,7 @@ export async function globalSearch(input: SearchInput): Promise<SearchResult[]> 
     .select(
       "id, decision_id, title, description, decisions!inner(id, number, project_id, projects!inner(id, name, project_number))"
     )
-    .or(ilikeOr(query, ["title", "description"]))
+    .or(ilikeOr(safeQuery, ["title", "description"]))
     .limit(PER_TYPE_LIMIT)
   const choicesP = projectFilter
     ? choicesQ.eq("decisions.project_id", projectFilter)
@@ -137,7 +152,7 @@ export async function globalSearch(input: SearchInput): Promise<SearchResult[]> 
     .select(
       "id, project_id, log_date, notes, visibility, projects!inner(id, name, project_number)"
     )
-    .ilike("notes", `%${query}%`)
+    .ilike("notes", `%${safeQuery}%`)
     .limit(PER_TYPE_LIMIT)
   const dailyLogsP = projectFilter
     ? dailyLogsQ.eq("project_id", projectFilter)
@@ -148,7 +163,7 @@ export async function globalSearch(input: SearchInput): Promise<SearchResult[]> 
     .select(
       "id, body, decision_id, decisions!inner(id, number, title, project_id, projects!inner(id, name, project_number))"
     )
-    .ilike("body", `%${query}%`)
+    .ilike("body", `%${safeQuery}%`)
     .limit(PER_TYPE_LIMIT)
   const commentsP = projectFilter
     ? commentsQ.eq("decisions.project_id", projectFilter)
@@ -159,7 +174,7 @@ export async function globalSearch(input: SearchInput): Promise<SearchResult[]> 
     .select(
       "id, project_id, title, file_name, description, category, projects!inner(id, name, project_number)"
     )
-    .or(ilikeOr(query, ["title", "file_name", "description"]))
+    .or(ilikeOr(safeQuery, ["title", "file_name", "description"]))
     .limit(PER_TYPE_LIMIT)
   const filesP = projectFilter ? filesQ.eq("project_id", projectFilter) : filesQ
 
@@ -180,6 +195,24 @@ export async function globalSearch(input: SearchInput): Promise<SearchResult[]> 
     commentsP,
     filesP,
   ])
+
+  // Surface per-table errors. Search is best-effort across many tables, so
+  // we log a warning rather than throw — that way one broken table doesn't
+  // black out hits from the others. Stays out of the user's face.
+  const checks: Array<[string, { error: { message: string } | null }]> = [
+    ["projects", projectsRes],
+    ["schedule_items", scheduleRes],
+    ["decisions", decisionsRes],
+    ["decision_choices", choicesRes],
+    ["daily_logs", dailyLogsRes],
+    ["decision_comments", commentsRes],
+    ["project_files", filesRes],
+  ]
+  for (const [name, res] of checks) {
+    if (res.error) {
+      console.warn(`[globalSearch] ${name}: ${res.error.message}`)
+    }
+  }
 
   const out: SearchResult[] = []
 
