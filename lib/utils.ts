@@ -71,15 +71,19 @@ export function nextBusinessDay(dateStr: string): string {
 
 /**
  * Add `n` business days to `dateStr`. n=0 returns the same date (snapped
- * forward to the next weekday if it was on a weekend). n=1 advances to the
- * next business day, etc.
+ * forward to the next weekday if it was on a weekend). Positive n advances
+ * by that many weekdays; negative n walks backwards the same way, snapping
+ * a weekend input to the previous Friday first so the result is symmetric.
  */
 export function addBusinessDays(dateStr: string, n: number): string {
   const d = new Date(dateStr + "T00:00:00Z")
-  while (isWeekendUTC(d)) d.setUTCDate(d.getUTCDate() + 1)
-  let remaining = n
+  const step = n >= 0 ? 1 : -1
+  // Snap into a weekday in the direction we're about to walk. For n=0 this
+  // matches the previous behavior (snap forward to next Monday).
+  while (isWeekendUTC(d)) d.setUTCDate(d.getUTCDate() + step)
+  let remaining = Math.abs(n)
   while (remaining > 0) {
-    d.setUTCDate(d.getUTCDate() + 1)
+    d.setUTCDate(d.getUTCDate() + step)
     if (!isWeekendUTC(d)) remaining--
   }
   return d.toISOString().slice(0, 10)

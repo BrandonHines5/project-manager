@@ -138,7 +138,8 @@ export function ScheduleItemDialog({
     if (!basis) return
     // FS / SS: start AT (or after) the basis + lag + 1 business day (FS only).
     // FF / SF: align end first; we approximate by starting at basis + lag.
-    const lagApplied = addBusinessDays(basis, Math.max(p.lag_days, 0))
+    // Lag may be negative (lead time) — addBusinessDays walks backwards.
+    const lagApplied = addBusinessDays(basis, p.lag_days)
     const newStart =
       p.dep_type === "FS"
         ? addBusinessDays(lagApplied, 1)
