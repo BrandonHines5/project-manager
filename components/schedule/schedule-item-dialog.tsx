@@ -1062,10 +1062,14 @@ function buildSubTextMessage(opts: {
   readyDate: string
 }): string {
   const address = opts.projectAddress?.trim() || "[address not set]"
-  // "Ready now" if today >= start_date; otherwise "Ready by <date>". Compare
-  // as YYYY-MM-DD strings since both sides are local-day dates and we don't
-  // want timezone arithmetic introducing off-by-one drift.
-  const today = new Date().toISOString().slice(0, 10)
+  // "Ready now" if today >= readyDate; otherwise "Ready by <date>". Build
+  // today from the local clock — `toISOString()` returns UTC, which for
+  // users west of UTC in the evening would flip the boundary a day early.
+  const now = new Date()
+  const today =
+    `${now.getFullYear()}-` +
+    `${String(now.getMonth() + 1).padStart(2, "0")}-` +
+    `${String(now.getDate()).padStart(2, "0")}`
   let status: string
   if (!opts.readyDate) {
     status = "ready now"
