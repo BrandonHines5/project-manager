@@ -6,7 +6,7 @@ import type { Tables } from "@/lib/db/types"
 export const metadata = { title: "Team — Hines Homes" }
 
 export default async function TeamPage() {
-  await requireStaff()
+  const me = await requireStaff()
   const supabase = await createSupabaseServerClient()
   const [{ data: profiles }, { data: companies }] = await Promise.all([
     supabase
@@ -27,6 +27,7 @@ export default async function TeamPage() {
           "id" | "name" | "type" | "trade_category"
         >[]
       }
+      currentUserId={me.id}
     />
   )
 }

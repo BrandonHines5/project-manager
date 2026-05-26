@@ -24,9 +24,11 @@ type TemplateOption = {
 export function NewProjectForm({
   available,
   templates,
+  dashboardBaseUrl,
 }: {
   available: DashboardProject[]
   templates: TemplateOption[]
+  dashboardBaseUrl: string | null
 }) {
   // Default landing depends on what's actually available:
   // - Dashboard projects first (most common path going forward)
@@ -83,7 +85,8 @@ export function NewProjectForm({
       {mode === "form" && (
         <ProjectFormFields
           picked={picked}
-          hasTemplates={templates.length > 0}
+          templates={templates}
+          dashboardBaseUrl={dashboardBaseUrl}
           onBack={
             available.length > 0
               ? () => setMode("dashboard-picker")
@@ -254,12 +257,14 @@ function TemplatePickerPanel({
 
 function ProjectFormFields({
   picked,
-  hasTemplates,
+  templates,
+  dashboardBaseUrl,
   onBack,
   onStartFromTemplate,
 }: {
   picked: DashboardProject | null
-  hasTemplates: boolean
+  templates: TemplateOption[]
+  dashboardBaseUrl: string | null
   onBack?: () => void
   onStartFromTemplate: () => void
 }) {
@@ -273,11 +278,28 @@ function ProjectFormFields({
   // dashboard — staff can't edit them here. The "Back" button lets them
   // re-pick or switch to blank if they picked the wrong one.
   const locked = picked !== null
+  const hasTemplates = templates.length > 0
+  // When a dashboard project is picked, derive the canonical dashboard URL
+  // client-side so staff can see it in the form before submitting. Same
+  // logic the server uses if the field is left blank.
+  const prefilledDashboardUrl =
+    picked && dashboardBaseUrl
+      ? `${dashboardBaseUrl}/projects/${encodeURIComponent(picked.project_number)}`
+      : ""
+  const [sourceTemplateId, setSourceTemplateId] = useState("")
+  const selectedTemplate = templates.find((t) => t.id === sourceTemplateId)
 
   return (
     <form action={formAction}>
       {locked && (
         <input type="hidden" name="dashboard_pulled" value="1" />
+      )}
+      {sourceTemplateId && (
+        <input
+          type="hidden"
+          name="source_template_id"
+          value={sourceTemplateId}
+        />
       )}
       <Card>
         {locked && (
@@ -377,7 +399,11 @@ function ProjectFormFields({
             />
           </Field>
           <Field label="Start date">
-            <Input name="start_date" type="date" />
+            <Input
+              name="start_date"
+              type="date"
+              defaultValue={picked?.start_date ?? ""}
+            />
           </Field>
           <Field label="Target completion">
             <Input
@@ -386,13 +412,45 @@ function ProjectFormFields({
               defaultValue={picked?.target_completion_date ?? ""}
             />
           </Field>
-          <Field label="Dashboard URL" className="sm:col-span-2">
+          <Field
+            label="Dashboard URL"
+            className="sm:col-span-2"
+            hint={
+              prefilledDashboardUrl
+                ? "Pre-filled from the dashboard. Edit only if you need a custom link."
+                : undefined
+            }
+          >
             <Input
               name="dashboard_url"
               type="url"
               placeholder="https://dashboard.example.com/projects/2026-001"
+              defaultValue={prefilledDashboardUrl}
             />
           </Field>
+          {hasTemplates && (
+            <Field
+              label="Copy schedule + decisions from"
+              className="sm:col-span-2"
+              hint={
+                selectedTemplate
+                  ? "We'll duplicate this project's schedule (work items, to-dos, checklists, predecessors) and decisions (with cost breakdowns + follow-up templates) into the new project. Statuses are reset; assignments aren't copied."
+                  : "Optional — pick a template (e.g. \"New House Template\") to start with a pre-built schedule + selection set instead of an empty project."
+              }
+            >
+              <Select
+                value={sourceTemplateId}
+                onChange={(e) => setSourceTemplateId(e.target.value)}
+              >
+                <option value="">— None (empty schedule) —</option>
+                {templates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name} (#{t.project_number})
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
           <Field label="Notes" className="sm:col-span-2">
             <Textarea name="notes" rows={3} />
           </Field>

@@ -53,6 +53,9 @@ const ProjectInput = z.object({
   // "1" if this came from the dashboard picker. Used to set dashboard_pulled_at
   // server-side so we don't trust a client-supplied timestamp.
   dashboard_pulled: z.string().optional().or(z.literal("")),
+  // If present, the new project is created by duplicating this source
+  // project (template) and then layering the form's identity fields on top.
+  source_template_id: z.string().optional().or(z.literal("")),
 })
 
 export type ProjectFormState = {
@@ -97,6 +100,42 @@ export async function createProject(
   if (input.dashboard_pulled === "1") {
     const remote = await getDashboardProject(input.project_number)
     if (remote) dashboardPulledAt = new Date().toISOString()
+  }
+
+  // Combo path: copy a template's schedule + decisions, but use the form's
+  // identity fields (typically pulled from the dashboard) for the new
+  // project shell. duplicateProject does the heavy lifting; we just hand it
+  // the overrides. We resolve the new id outside the try/catch so the
+  // redirect() throw isn't swallowed (Next 16 redirect throws a special
+  // NEXT_REDIRECT error that has to propagate).
+  if (input.source_template_id) {
+    let templateResult: Awaited<ReturnType<typeof duplicateProject>> | null = null
+    try {
+      templateResult = await duplicateProject({
+        source_project_id: input.source_template_id,
+        new_project_number: input.project_number,
+        new_name: input.name,
+        new_start_date: emptyToNull(input.start_date),
+        override_address: emptyToNull(input.address),
+        override_status: input.status,
+        override_contract_price: input.contract_price ?? null,
+        override_target_completion_date: emptyToNull(input.target_completion_date),
+        override_dashboard_url: finalDashboardUrl,
+        override_notes: emptyToNull(input.notes),
+        override_client_name: emptyToNull(input.client_name),
+        override_client_email: emptyToNull(input.client_email),
+        override_client_phone: emptyToNull(input.client_phone),
+        override_dashboard_pulled_at: dashboardPulledAt,
+      })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to copy from template"
+      if (/already exists/i.test(msg) || /23505/.test(msg)) {
+        return { fieldErrors: { project_number: msg }, error: msg }
+      }
+      return { error: msg }
+    }
+    revalidatePath("/projects")
+    redirect(`/projects/${templateResult.id}/schedule`)
   }
 
   const supabase = await createSupabaseServerClient()
@@ -153,6 +192,25 @@ const DuplicateProjectInput = z
     // If omitted, dates are copied verbatim (useful when the template was
     // authored against an explicit calendar already).
     new_start_date: z.string().nullish(),
+    // Optional identity overrides — used by the New Project page's
+    // "dashboard + template" combo path so the new project shell carries
+    // the dashboard's identity instead of the template's placeholder
+    // values. When any of these is undefined, the source project's value
+    // is used (existing behavior).
+    override_address: z.string().nullish(),
+    override_status: z
+      .enum(["lead", "pre_construction", "active", "on_hold", "complete", "cancelled"])
+      .optional(),
+    override_contract_price: z.number().nullable().optional(),
+    override_target_completion_date: z.string().nullish(),
+    override_dashboard_url: z.string().nullish(),
+    override_notes: z.string().nullish(),
+    override_client_name: z.string().nullish(),
+    override_client_email: z.string().nullish(),
+    override_client_phone: z.string().nullish(),
+    // Already-verified timestamp (set by createProject after re-fetching
+    // from the dashboard). Pass-through — never trust a client-supplied one.
+    override_dashboard_pulled_at: z.string().nullish(),
   })
   .passthrough()
 
@@ -278,19 +336,34 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
   const shift = (d: string | null): string | null =>
     d ? addDays(d, shiftDays) : null
 
-  // 1. Insert the new project shell.
+  // 1. Insert the new project shell. Optional override_* fields let the
+  //    caller layer dashboard-provided identity on top of the template's
+  //    defaults. `undefined` falls back to source; explicit null overrides
+  //    to empty.
+  const ovr = <T,>(o: T | undefined | null, fallback: T): T =>
+    o === undefined ? fallback : (o as T)
   const insertProject = {
     project_number: parsed.new_project_number,
     name: parsed.new_name,
-    address: source.address,
-    status: source.status,
-    contract_price: source.contract_price,
+    address: ovr(parsed.override_address, source.address),
+    status: parsed.override_status ?? source.status,
+    contract_price: ovr(parsed.override_contract_price, source.contract_price),
     start_date: parsed.new_start_date ?? source.start_date,
-    target_completion_date: source.target_completion_date
-      ? shift(source.target_completion_date)
-      : null,
-    dashboard_url: dashboardProjectUrl(parsed.new_project_number),
-    notes: source.notes,
+    target_completion_date:
+      parsed.override_target_completion_date !== undefined
+        ? parsed.override_target_completion_date
+        : source.target_completion_date
+        ? shift(source.target_completion_date)
+        : null,
+    dashboard_url:
+      parsed.override_dashboard_url !== undefined
+        ? parsed.override_dashboard_url
+        : dashboardProjectUrl(parsed.new_project_number),
+    notes: ovr(parsed.override_notes, source.notes),
+    client_name: ovr(parsed.override_client_name, source.client_name),
+    client_email: ovr(parsed.override_client_email, source.client_email),
+    client_phone: ovr(parsed.override_client_phone, source.client_phone),
+    dashboard_pulled_at: parsed.override_dashboard_pulled_at ?? null,
     created_by: profile.id,
   }
   const { data: newProject, error: pErr } = await supabase
