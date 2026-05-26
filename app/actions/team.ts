@@ -29,6 +29,10 @@ const InviteTeamMemberInput = z.object({
 
 export type InviteTeamMemberInputT = z.infer<typeof InviteTeamMemberInput>
 
+const DeleteTeamMemberInput = z.object({
+  id: z.string().uuid(),
+})
+
 function nz(v: string | null | undefined) {
   return v && v !== "" ? v : null
 }
@@ -89,7 +93,15 @@ export async function inviteTeamMember(input: InviteTeamMemberInputT) {
     .eq("id", newId)
   if (upErr) {
     // Roll back the auth user so we don't leave an orphan with the wrong role.
-    await admin.auth.admin.deleteUser(newId)
+    // If the rollback ALSO fails (rare but possible) we want to surface both
+    // errors — otherwise staff see "profile update failed" but never learn
+    // that an orphaned auth user is still around.
+    const { error: rollbackErr } = await admin.auth.admin.deleteUser(newId)
+    if (rollbackErr) {
+      throw new Error(
+        `Profile update failed: ${upErr.message}. Rollback also failed (orphaned auth user ${newId}): ${rollbackErr.message}`
+      )
+    }
     throw new Error(upErr.message)
   }
 
@@ -99,8 +111,8 @@ export async function inviteTeamMember(input: InviteTeamMemberInputT) {
 
 export async function deleteTeamMember(id: string) {
   const me = await requireStaff()
-  if (!id || typeof id !== "string") throw new Error("Missing user id.")
-  if (id === me.id) {
+  const parsed = DeleteTeamMemberInput.parse({ id })
+  if (parsed.id === me.id) {
     throw new Error("You can't delete your own account.")
   }
 
@@ -111,12 +123,16 @@ export async function deleteTeamMember(id: string) {
     )
   }
 
-  // Guard: never delete the last remaining staff account.
+  // Guard: never delete the last remaining staff account. This is
+  // best-effort — a true atomic check would need a DB function that also
+  // performs the auth.users delete, which is more involved than the value
+  // for a 1-2-admin tool. The race window is sub-second between two
+  // concurrent admin sessions.
   const supabase = await createSupabaseServerClient()
   const { data: target, error: lookupErr } = await supabase
     .from("profiles")
     .select("role")
-    .eq("id", id)
+    .eq("id", parsed.id)
     .single()
   if (lookupErr) throw new Error(lookupErr.message)
   if (target?.role === "staff") {
@@ -131,7 +147,7 @@ export async function deleteTeamMember(id: string) {
   }
 
   // Deleting the auth user cascades to public.profiles via the FK.
-  const { error } = await admin.auth.admin.deleteUser(id)
+  const { error } = await admin.auth.admin.deleteUser(parsed.id)
   if (error) throw new Error(error.message)
 
   revalidatePath("/team")
