@@ -37,7 +37,7 @@ export default async function AggregateDecisionsPage({
   if (ids.length === 0) return <EmptySelection entity="decisions" />
 
   const supabase = await createSupabaseServerClient()
-  const [{ data: projects }, { data: decisions }] = await Promise.all([
+  const [projectsRes, decisionsRes] = await Promise.all([
     supabase
       .from("projects")
       .select("id, name, project_number")
@@ -50,11 +50,11 @@ export default async function AggregateDecisionsPage({
       .in("project_id", ids)
       .order("created_at", { ascending: false }),
   ])
+  if (projectsRes.error) throw new Error(projectsRes.error.message)
+  if (decisionsRes.error) throw new Error(decisionsRes.error.message)
 
-  const projectMap = new Map(
-    (projects ?? []).map((p) => [p.id, p] as const)
-  )
-  const rows = decisions ?? []
+  const projectMap = new Map(projectsRes.data.map((p) => [p.id, p] as const))
+  const rows = decisionsRes.data
 
   return (
     <div>

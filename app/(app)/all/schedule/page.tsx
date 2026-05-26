@@ -39,27 +39,36 @@ export default async function AggregateSchedulePage({
   const supabase = await createSupabaseServerClient()
 
   // RLS still applies — projects the user can't see drop out automatically.
-  // We sort by the earliest-relevant date per row so the resulting list reads
-  // chronologically: work items use start_date, to-dos use due_date.
-  const [{ data: projects }, { data: items }] = await Promise.all([
+  const [projectsRes, itemsRes] = await Promise.all([
     supabase
       .from("projects")
       .select("id, name, project_number")
       .in("id", ids),
+    // We can't order by COALESCE(start_date, due_date) via PostgREST cleanly,
+    // and ordering by start_date first pushes all to-dos (start_date NULL)
+    // to the end regardless of when they're due. Fetch unordered and sort
+    // in-memory by whichever date is meaningful for the row's kind.
     supabase
       .from("schedule_items")
       .select(
         "id, project_id, kind, title, status, start_date, end_date, due_date"
       )
-      .in("project_id", ids)
-      .order("start_date", { ascending: true, nullsFirst: false })
-      .order("due_date", { ascending: true, nullsFirst: false }),
+      .in("project_id", ids),
   ])
+  if (projectsRes.error) throw new Error(projectsRes.error.message)
+  if (itemsRes.error) throw new Error(itemsRes.error.message)
+  const projects = projectsRes.data
+  const items = itemsRes.data
 
-  const projectMap = new Map(
-    (projects ?? []).map((p) => [p.id, p] as const)
-  )
-  const rows = items ?? []
+  const projectMap = new Map(projects.map((p) => [p.id, p] as const))
+  const rows = [...items].sort((a, b) => {
+    const aDate = a.kind === "work" ? a.start_date : a.due_date
+    const bDate = b.kind === "work" ? b.start_date : b.due_date
+    if (aDate == null && bDate == null) return 0
+    if (aDate == null) return 1
+    if (bDate == null) return -1
+    return aDate.localeCompare(bDate)
+  })
   const workCount = rows.filter((r) => r.kind === "work").length
   const todoCount = rows.length - workCount
 

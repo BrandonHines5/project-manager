@@ -21,7 +21,7 @@ export default async function AggregateDailyLogsPage({
   const supabase = await createSupabaseServerClient()
   // RLS handles per-row visibility: clients only see logs where
   // visibility='client' AND they're a project member. Staff see everything.
-  const [{ data: projects }, { data: logs }] = await Promise.all([
+  const [projectsRes, logsRes] = await Promise.all([
     supabase
       .from("projects")
       .select("id, name, project_number")
@@ -34,11 +34,11 @@ export default async function AggregateDailyLogsPage({
       .order("created_at", { ascending: false })
       .limit(200),
   ])
+  if (projectsRes.error) throw new Error(projectsRes.error.message)
+  if (logsRes.error) throw new Error(logsRes.error.message)
 
-  const projectMap = new Map(
-    (projects ?? []).map((p) => [p.id, p] as const)
-  )
-  const rows = logs ?? []
+  const projectMap = new Map(projectsRes.data.map((p) => [p.id, p] as const))
+  const rows = logsRes.data
 
   return (
     <div>
