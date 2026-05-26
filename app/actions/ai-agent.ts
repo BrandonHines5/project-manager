@@ -189,24 +189,40 @@ const ApplyInputSchema = z.object({
   mutations: z.array(MutationSchema).min(1).max(200),
 })
 
+export type ApplyPlanResult =
+  | { ok: true; results: AppliedMutation[] }
+  | { ok: false; error: string }
+
 export async function applyPlanAction(input: {
   mutations: ProposedMutation[]
-}): Promise<{ results: AppliedMutation[] }> {
+}): Promise<ApplyPlanResult> {
+  // Important: never `throw` from this action. Thrown errors get their
+  // message scrubbed by Next.js in production builds and surface to the
+  // client as the generic "Server Components render" digest, which is
+  // useless for the user. Return typed errors instead so the dialog can
+  // show the real reason a plan didn't apply.
   await requireStaff()
   const parsed = ApplyInputSchema.safeParse(input)
   if (!parsed.success) {
-    throw new Error(
-      `Invalid plan payload: ${parsed.error.issues[0]?.message ?? "unknown"}`
-    )
+    const issue = parsed.error.issues[0]
+    const detail = issue
+      ? `${issue.path.join(".") || "(root)"}: ${issue.message}`
+      : "unknown"
+    // Server-side log so we can correlate with a stack trace in Vercel
+    // logs if the user reports the same error twice.
+    console.warn("[applyPlanAction] payload rejected:", detail, parsed.error.issues)
+    return {
+      ok: false,
+      error: `Invalid plan payload — ${detail}. This is usually because the agent fabricated an ID or a date format the database can't store; refining the prompt and re-running often fixes it.`,
+    }
   }
   const supabase = await createSupabaseServerClient()
   const results = await applyPlanInternal(supabase, parsed.data.mutations)
-  // We don't track project_id per mutation, and schedule pages are
-  // server-rendered with `force-dynamic` anyway — revalidating the entire
-  // /projects tree on any success is cheap and guarantees the user sees
-  // their change after the dialog closes.
   if (results.some((r) => r.ok)) {
+    // Schedule pages are dynamic anyway — revalidating the /projects tree
+    // on any success is cheap and guarantees the user sees their change
+    // after the dialog closes.
     revalidatePath("/projects", "layout")
   }
-  return { results }
+  return { ok: true, results }
 }

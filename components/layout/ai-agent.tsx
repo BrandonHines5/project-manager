@@ -163,7 +163,15 @@ export function AIAgent() {
     setPhase({ kind: "applying" })
     startTransition(async () => {
       try {
-        const { results } = await applyPlanAction({ mutations })
+        const response = await applyPlanAction({ mutations })
+        if (!response.ok) {
+          // Validation / pre-flight failure — show the real reason in the
+          // dialog. (Per-mutation failures during apply land in
+          // response.results below as ok: false rows, not here.)
+          setPhase({ kind: "error", message: response.error })
+          return
+        }
+        const { results } = response
         setPhase({ kind: "applied", results })
         const okCount = results.filter((r) => r.ok).length
         const failCount = results.length - okCount
@@ -176,9 +184,15 @@ export function AIAgent() {
         }
         router.refresh()
       } catch (e) {
+        // Network / unexpected failure — server actions in production may
+        // scrub the message; log whatever we have client-side too.
+        console.error("[applyPlan] unexpected failure:", e)
         setPhase({
           kind: "error",
-          message: e instanceof Error ? e.message : "Apply failed",
+          message:
+            e instanceof Error
+              ? e.message
+              : "Apply failed — open the dev tools console for details.",
         })
       }
     })
