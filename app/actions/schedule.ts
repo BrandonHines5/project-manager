@@ -11,6 +11,7 @@ import {
 } from "@/lib/schedule/scheduling"
 import type { RecurrenceRule } from "@/lib/schedule/recurrence"
 import { sendEmail, appUrl } from "@/lib/email"
+import { sendQuoSms, normalizeE164 } from "@/lib/quo"
 
 // Permissive schema: accept anything reasonable and normalize inside the
 // action. Never let a benign client quirk (null vs "", missing key, extra
@@ -560,6 +561,63 @@ export async function setItemStatus({
     .eq("id", id)
   if (error) throw new Error(error.message)
   revalidatePath(`/projects/${project_id}/schedule`)
+}
+
+const SendSubTextInput = z.object({
+  schedule_item_id: z.string(),
+  company_id: z.string(),
+  message: z.string().min(1).max(1600),
+})
+
+/**
+ * Sends an SMS via Quo to a subcontractor company that's assigned to the
+ * given schedule item. Verifies the assignment server-side (defense in
+ * depth — the client picks the recipient, but we never trust that on its
+ * own) and that the company actually has a phone number on file.
+ */
+export async function sendQuoTextToSub(input: {
+  schedule_item_id: string
+  company_id: string
+  message: string
+}) {
+  await requireStaff()
+  const parsed = SendSubTextInput.parse(input)
+  const supabase = await createSupabaseServerClient()
+
+  // Verify the company is actually assigned to this schedule item.
+  const { data: assignment, error: aErr } = await supabase
+    .from("schedule_assignments")
+    .select("id")
+    .eq("schedule_item_id", parsed.schedule_item_id)
+    .eq("company_id", parsed.company_id)
+    .maybeSingle()
+  if (aErr) throw new Error(aErr.message)
+  if (!assignment) {
+    throw new Error("That company is not assigned to this schedule item.")
+  }
+
+  const { data: company, error: cErr } = await supabase
+    .from("companies")
+    .select("name, phone")
+    .eq("id", parsed.company_id)
+    .maybeSingle()
+  if (cErr) throw new Error(cErr.message)
+  if (!company) throw new Error("Company not found.")
+  if (!company.phone) {
+    throw new Error(`${company.name} has no phone number on file.`)
+  }
+  const normalized = normalizeE164(company.phone)
+  if (!normalized) {
+    throw new Error(
+      `${company.name}'s phone number (${company.phone}) isn't a valid US number.`
+    )
+  }
+
+  const result = await sendQuoSms({ to: normalized, content: parsed.message })
+  if (!result.sent) {
+    throw new Error(result.reason ?? "Failed to send text")
+  }
+  return { sent: true, to: normalized, company_name: company.name }
 }
 
 export async function toggleChecklistItem({

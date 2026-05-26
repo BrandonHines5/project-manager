@@ -11,13 +11,14 @@ import { ScheduleItemDialog } from "@/components/schedule/schedule-item-dialog"
 
 export type ScheduleData = {
   project_id: string
+  project_address: string | null
   items: Tables<"schedule_items">[]
   assignments: Tables<"schedule_assignments">[]
   predecessors: Tables<"schedule_predecessors">[]
   checklist: Tables<"todo_checklist_items">[]
   delays: Tables<"schedule_delays">[]
   profiles: Pick<Tables<"profiles">, "id" | "full_name" | "email" | "role" | "company_id">[]
-  companies: Pick<Tables<"companies">, "id" | "name" | "type" | "trade_category">[]
+  companies: Pick<Tables<"companies">, "id" | "name" | "type" | "trade_category" | "phone">[]
 }
 
 type View = "list" | "gantt"

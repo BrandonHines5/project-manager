@@ -1,0 +1,69 @@
+/**
+ * Sends an SMS via Quo (built on OpenPhone — host is api.openphone.com).
+ * Graceful no-op if QUO_API_KEY or QUO_FROM_NUMBER is missing so dev / preview
+ * environments don't break.
+ *
+ * QUO_FROM_NUMBER accepts either a Quo phone number ID ("PN…") or an E.164
+ * number ("+15555555555"); the Quo API takes either form.
+ *
+ * Auth header is `Authorization: <api-key>` (raw key, no `Bearer` prefix) —
+ * that's what the Quo OpenAPI spec specifies for its apiKey security scheme.
+ */
+export async function sendQuoSms(opts: {
+  to: string
+  content: string
+}): Promise<{ sent: boolean; reason?: string }> {
+  const key = process.env.QUO_API_KEY
+  const from = process.env.QUO_FROM_NUMBER
+  if (!key || !from) {
+    return { sent: false, reason: "QUO_API_KEY or QUO_FROM_NUMBER not set" }
+  }
+
+  const to = normalizeE164(opts.to)
+  if (!to) {
+    return { sent: false, reason: `Invalid recipient phone number: ${opts.to}` }
+  }
+  const content = opts.content.trim()
+  if (!content) {
+    return { sent: false, reason: "Empty message content" }
+  }
+  if (content.length > 1600) {
+    return { sent: false, reason: "Message exceeds 1600-character limit" }
+  }
+
+  try {
+    const res = await fetch("https://api.openphone.com/v1/messages", {
+      method: "POST",
+      headers: {
+        Authorization: key,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ from, to: [to], content }),
+    })
+    if (!res.ok) {
+      const text = await res.text().catch(() => "")
+      console.error(`Quo send failed (${res.status}):`, text)
+      return { sent: false, reason: `Quo API ${res.status}: ${text || res.statusText}` }
+    }
+    return { sent: true }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error("Quo send exception:", msg)
+    return { sent: false, reason: msg }
+  }
+}
+
+/**
+ * Coerces a US-style phone number string into E.164. Accepts inputs like
+ * "(555) 555-5555", "555-555-5555", "5555555555", "+15555555555". Returns
+ * null if the input doesn't parse to a plausible E.164 number.
+ */
+export function normalizeE164(input: string): string | null {
+  const raw = input.trim()
+  if (!raw) return null
+  if (/^\+[1-9]\d{1,14}$/.test(raw)) return raw
+  const digits = raw.replace(/\D/g, "")
+  if (digits.length === 10) return `+1${digits}`
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`
+  return null
+}
