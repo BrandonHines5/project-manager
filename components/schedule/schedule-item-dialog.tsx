@@ -9,6 +9,7 @@ import {
   X,
   AlertTriangle,
   GripVertical,
+  MessageSquare,
 } from "lucide-react"
 import {
   Dialog,
@@ -35,6 +36,7 @@ import {
   saveScheduleItem,
   deleteScheduleItem,
   logDelay,
+  sendQuoTextToSub,
   type ScheduleItemInputT,
 } from "@/app/actions/schedule"
 import type {
@@ -476,6 +478,17 @@ export function ScheduleItemDialog({
           {/* Recurrence (todos only) */}
           {kind === "todo" && (
             <RecurrenceEditor value={recurrence} onChange={setRecurrence} />
+          )}
+
+          {/* Text a sub (edit only) */}
+          {mode === "edit" && item && (
+            <SendTextToSubSection
+              scheduleItemId={item.id}
+              readyDate={item.start_date ?? item.due_date ?? ""}
+              projectAddress={data.project_address}
+              assignments={assignments}
+              companies={data.companies}
+            />
           )}
 
           {/* Delay log (edit only) */}
@@ -1039,6 +1052,185 @@ function AnchoredDuePreview({
   return (
     <div className="h-9 flex items-center font-mono text-sm tabular-nums px-1">
       {formatDate(computed)}
+    </div>
+  )
+}
+
+function buildSubTextMessage(opts: {
+  companyName: string
+  projectAddress: string | null
+  readyDate: string
+}): string {
+  const address = opts.projectAddress?.trim() || "[address not set]"
+  // "Ready now" if today >= readyDate; otherwise "Ready by <date>". Build
+  // today from the local clock — `toISOString()` returns UTC, which for
+  // users west of UTC in the evening would flip the boundary a day early.
+  const now = new Date()
+  const today =
+    `${now.getFullYear()}-` +
+    `${String(now.getMonth() + 1).padStart(2, "0")}-` +
+    `${String(now.getDate()).padStart(2, "0")}`
+  let status: string
+  if (!opts.readyDate) {
+    status = "ready now"
+  } else if (opts.readyDate <= today) {
+    status = "ready now"
+  } else {
+    status = `ready by ${formatDate(opts.readyDate)}`
+  }
+  return `Hi ${opts.companyName} — ${address} is ${status}. Let me know if you have any questions.`
+}
+
+function SendTextToSubSection({
+  scheduleItemId,
+  readyDate,
+  projectAddress,
+  assignments,
+  companies,
+}: {
+  scheduleItemId: string
+  readyDate: string
+  projectAddress: string | null
+  assignments: Assignment[]
+  companies: ScheduleData["companies"]
+}) {
+  const subAssignees = assignments
+    .map((a) => {
+      if (!a.company_id) return null
+      const c = companies.find((x) => x.id === a.company_id)
+      if (!c || c.type === "client") return null
+      return c
+    })
+    .filter((c): c is NonNullable<typeof c> => c !== null)
+
+  const [open, setOpen] = useState(false)
+  const [companyId, setCompanyId] = useState<string>(
+    subAssignees[0]?.id ?? ""
+  )
+  const [message, setMessage] = useState("")
+  const [pending, startTransition] = useTransition()
+
+  // Keep the picker in sync if the user adds/removes assignees while the
+  // dialog is open. Also reset the message whenever the picked company
+  // changes so the preview reflects the new recipient name.
+  const selectedCompany =
+    subAssignees.find((c) => c.id === companyId) ?? subAssignees[0] ?? null
+
+  function openPanel() {
+    const co = selectedCompany ?? subAssignees[0]
+    if (!co) return
+    setCompanyId(co.id)
+    setMessage(
+      buildSubTextMessage({
+        companyName: co.name,
+        projectAddress,
+        readyDate,
+      })
+    )
+    setOpen(true)
+  }
+
+  function pickCompany(id: string) {
+    setCompanyId(id)
+    const co = subAssignees.find((c) => c.id === id)
+    if (co) {
+      setMessage(
+        buildSubTextMessage({
+          companyName: co.name,
+          projectAddress,
+          readyDate,
+        })
+      )
+    }
+  }
+
+  function send() {
+    if (!selectedCompany) return
+    if (!message.trim()) {
+      toast.error("Message is empty")
+      return
+    }
+    startTransition(async () => {
+      try {
+        const res = await sendQuoTextToSub({
+          schedule_item_id: scheduleItemId,
+          company_id: selectedCompany.id,
+          message: message.trim(),
+        })
+        toast.success(`Text sent to ${res.company_name}`)
+        setOpen(false)
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Could not send text")
+      }
+    })
+  }
+
+  if (subAssignees.length === 0) return null
+
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <Label>Notify sub</Label>
+        <button
+          type="button"
+          onClick={() => (open ? setOpen(false) : openPanel())}
+          className="text-xs text-brand-600 hover:underline cursor-pointer inline-flex items-center gap-1"
+        >
+          <MessageSquare className="h-3 w-3" />
+          {open ? "Cancel" : "Send text to sub"}
+        </button>
+      </div>
+      {open && selectedCompany && (
+        <div className="mt-2 p-3 bg-brand-50/60 border border-brand-200 rounded-md space-y-2">
+          {subAssignees.length > 1 && (
+            <Field label="Recipient">
+              <Select
+                value={companyId}
+                onChange={(e) => pickCompany(e.target.value)}
+              >
+                {subAssignees.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                    {c.phone ? "" : " (no phone on file)"}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
+          {!selectedCompany.phone && (
+            <p className="text-xs text-danger">
+              {selectedCompany.name} has no phone number on file. Add one on the
+              company profile before sending.
+            </p>
+          )}
+          <Field label="Message" hint={`${message.length} / 1600`}>
+            <Textarea
+              value={message}
+              onChange={(e) => setMessage(e.target.value.slice(0, 1600))}
+              rows={4}
+            />
+          </Field>
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setOpen(false)}
+              disabled={pending}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={send}
+              disabled={pending || !selectedCompany.phone}
+            >
+              {pending ? "Sending…" : "Send text"}
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

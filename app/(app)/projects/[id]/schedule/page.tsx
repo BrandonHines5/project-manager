@@ -17,7 +17,7 @@ export default async function SchedulePage({
 
   const { data: project } = await supabase
     .from("projects")
-    .select("id, project_number, name")
+    .select("id, project_number, name, address")
     .eq("id", projectId)
     .maybeSingle()
   if (!project) notFound()
@@ -59,7 +59,10 @@ export default async function SchedulePage({
       .from("profiles")
       .select("id, full_name, email, role, company_id")
       .order("full_name"),
-    supabase.from("companies").select("id, name, type, trade_category").order("name"),
+    supabase
+      .from("companies")
+      .select("id, name, type, trade_category, phone")
+      .order("name"),
   ])
 
   const strip = <T extends { schedule_items?: unknown }>(rows: T[] | null) =>
@@ -71,6 +74,7 @@ export default async function SchedulePage({
 
   const data: ScheduleData = {
     project_id: projectId,
+    project_address: project.address,
     items: items ?? [],
     assignments: strip(assignments) as ScheduleData["assignments"],
     predecessors: strip(predecessors) as ScheduleData["predecessors"],
