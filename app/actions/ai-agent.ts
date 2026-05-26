@@ -98,6 +98,92 @@ const MutationSchema = z.discriminatedUnion("kind", [
       previous_status: z.string(),
     }),
   }),
+  z.object({
+    kind: z.literal("update_schedule_item"),
+    schedule_item_id: z.string().uuid(),
+    patch: z
+      .object({
+        title: z.string().min(1).max(300).optional(),
+        description: z.string().max(5000).nullable().optional(),
+        start_date: z.string().nullable().optional(),
+        end_date: z.string().nullable().optional(),
+        due_date: z.string().nullable().optional(),
+        parent_id: z.string().uuid().nullable().optional(),
+      })
+      // At least one key — guards against an empty patch sneaking through.
+      .refine((p) => Object.keys(p).length > 0, {
+        message: "patch must include at least one field",
+      }),
+    context: z.object({
+      project_name: z.string(),
+      project_number: z.string(),
+      item_title: z.string(),
+      changes: z.array(z.string()),
+    }),
+  }),
+  z.object({
+    kind: z.literal("create_todo"),
+    project_id: z.string().uuid(),
+    title: z.string().min(1).max(300),
+    description: z.string().max(5000).nullable(),
+    due_date: z.string().nullable(),
+    parent_id: z.string().uuid().nullable(),
+    context: z.object({
+      project_name: z.string(),
+      project_number: z.string(),
+      parent_title: z.string().nullable(),
+    }),
+  }),
+  z.object({
+    kind: z.literal("create_work_item"),
+    project_id: z.string().uuid(),
+    title: z.string().min(1).max(300),
+    description: z.string().max(5000).nullable(),
+    start_date: z.string(),
+    end_date: z.string(),
+    context: z.object({
+      project_name: z.string(),
+      project_number: z.string(),
+    }),
+  }),
+  z.object({
+    kind: z.literal("create_decision"),
+    project_id: z.string().uuid(),
+    decision_kind: z.enum(["change_order", "selection"]),
+    title: z.string().min(1).max(300),
+    description: z.string().max(5000).nullable(),
+    context: z.object({
+      project_name: z.string(),
+      project_number: z.string(),
+    }),
+  }),
+  z.object({
+    kind: z.literal("update_decision_status"),
+    decision_id: z.string().uuid(),
+    status: z.enum(["draft", "pending_client", "approved", "rejected"]),
+    context: z.object({
+      project_name: z.string(),
+      project_number: z.string(),
+      decision_number: z.number(),
+      decision_title: z.string(),
+      previous_status: z.string(),
+    }),
+  }),
+  z.object({
+    kind: z.literal("add_decision_followup"),
+    decision_id: z.string().uuid(),
+    title: z.string().min(1).max(300),
+    due_offset_days: z.number().int().min(0).max(365),
+    assignee_profile_id: z.string().uuid().nullable(),
+    assignee_company_id: z.string().uuid().nullable(),
+    context: z.object({
+      project_name: z.string(),
+      project_number: z.string(),
+      decision_number: z.number(),
+      decision_title: z.string(),
+      assignee_name: z.string().nullable(),
+    }),
+  }),
 ])
 const ApplyInputSchema = z.object({
   mutations: z.array(MutationSchema).min(1).max(200),

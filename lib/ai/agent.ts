@@ -17,15 +17,27 @@ const MAX_ITERATIONS = 30
 const SYSTEM_PROMPT = `You are an AI assistant for Hines Homes' project management system. You help staff make bulk updates across construction projects.
 
 Your job in a single turn:
-1. Use the read tools (list_projects, list_schedule_items, get_schedule_item) to understand what the user wants and find the relevant rows.
+1. Use the read tools to understand what the user wants and find the relevant rows.
 2. Call the propose_* tools to RECORD intended mutations. These do NOT execute immediately — they're queued for the user to review and approve in a separate step.
 3. End with a short text summary describing what you queued and why.
 
+Capability map — what you CAN propose:
+- Schedule: create a to-do, create a work item, add a checklist item to an existing to-do, update a schedule item's status, update other fields on a schedule item (title/description/dates/parent).
+- Decisions: create a draft change order or selection, update its status, add a follow-up to-do template.
+
+What you CANNOT do (don't pretend you can):
+- Delete or archive anything.
+- Manage assignments, predecessors, or attachments.
+- Touch daily logs, files, payments, or companies.
+
 Rules:
-- Never assume — if the request is ambiguous (e.g., "all framing items" — work items, to-dos, or both?), call ask_user to clarify and stop.
+- Never assume — if the request is ambiguous (e.g., "all framing items" → work items, to-dos, or both? "add Final Inspection" → which project? which parent? what date?), call ask_user to clarify and stop. Don't make up project IDs or dates.
 - When the user says "open projects", that means status IN ('lead', 'pre_construction', 'active', 'on_hold'). 'complete' and 'cancelled' are CLOSED.
 - Match titles case-insensitively. "Framing" should match items titled "Framing", "FRAMING", "Framing - Phase 1", etc.
 - Don't propose duplicate work — if a checklist item with the same label already exists on a target, skip it and mention the skip in your summary.
+- For create_work_item, both start_date and end_date are required and end must be on or after start. Use YYYY-MM-DD.
+- For update_schedule_item, only include the fields that are changing in the patch.
+- New decisions start as draft. To send to the client, propose a separate update_decision_status to 'pending_client' after creating.
 - Keep your final text summary short (2-3 sentences). The plan UI shows each mutation row separately.
 - Only use tools that exist. Do not invent capabilities.
 `
@@ -119,6 +131,147 @@ const TOOLS: Anthropic.Messages.Tool[] = [
         },
       },
       required: ["schedule_item_id", "status"],
+    },
+  },
+  {
+    name: "propose_update_schedule_item",
+    description:
+      "Queue an 'update schedule item' mutation. Only include the fields that should change. For work items, start_date + end_date must both be set if either is changed, and end_date >= start_date. For to-dos, due_date is the relevant date field. parent_id can be set to a work item's ID to nest a to-do under it, or null to detach.",
+    input_schema: {
+      type: "object",
+      properties: {
+        schedule_item_id: { type: "string" },
+        title: { type: "string" },
+        description: { type: "string" },
+        start_date: { type: "string", description: "YYYY-MM-DD or null to clear" },
+        end_date: { type: "string", description: "YYYY-MM-DD or null to clear" },
+        due_date: { type: "string", description: "YYYY-MM-DD or null to clear" },
+        parent_id: {
+          type: "string",
+          description: "Work item id to set as parent, or null to detach",
+        },
+      },
+      required: ["schedule_item_id"],
+    },
+  },
+  {
+    name: "propose_create_todo",
+    description:
+      "Queue creation of a new to-do (kind='todo') in a project. Optionally nests under a work item via parent_id. Use this when the user wants to ADD a new actionable task (e.g. 'Add a Final Inspection to-do').",
+    input_schema: {
+      type: "object",
+      properties: {
+        project_id: { type: "string" },
+        title: { type: "string" },
+        description: { type: "string" },
+        due_date: { type: "string", description: "YYYY-MM-DD, optional" },
+        parent_id: {
+          type: "string",
+          description: "A work item id to nest this to-do under. Optional.",
+        },
+      },
+      required: ["project_id", "title"],
+    },
+  },
+  {
+    name: "propose_create_work_item",
+    description:
+      "Queue creation of a new work item (kind='work') in a project. Work items have a start_date and end_date (both required, end >= start, YYYY-MM-DD).",
+    input_schema: {
+      type: "object",
+      properties: {
+        project_id: { type: "string" },
+        title: { type: "string" },
+        description: { type: "string" },
+        start_date: { type: "string", description: "YYYY-MM-DD" },
+        end_date: { type: "string", description: "YYYY-MM-DD" },
+      },
+      required: ["project_id", "title", "start_date", "end_date"],
+    },
+  },
+  {
+    name: "list_decisions",
+    description:
+      "List decisions in a project, optionally filtered by kind (change_order | selection) and status. Statuses: draft, pending_client, approved, rejected.",
+    input_schema: {
+      type: "object",
+      properties: {
+        project_id: { type: "string" },
+        kind: { type: "string", enum: ["change_order", "selection"] },
+        status: {
+          type: "string",
+          enum: ["draft", "pending_client", "approved", "rejected"],
+        },
+      },
+      required: ["project_id"],
+    },
+  },
+  {
+    name: "get_decision",
+    description:
+      "Get a single decision with its existing follow-up templates so you can avoid proposing duplicate follow-ups.",
+    input_schema: {
+      type: "object",
+      properties: { decision_id: { type: "string" } },
+      required: ["decision_id"],
+    },
+  },
+  {
+    name: "propose_create_decision",
+    description:
+      "Queue creation of a new decision (change_order or selection) in a project. The decision starts in 'draft' status. To send it to the client, propose a separate update_decision_status with status='pending_client'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        project_id: { type: "string" },
+        decision_kind: {
+          type: "string",
+          enum: ["change_order", "selection"],
+        },
+        title: { type: "string" },
+        description: { type: "string" },
+      },
+      required: ["project_id", "decision_kind", "title"],
+    },
+  },
+  {
+    name: "propose_update_decision_status",
+    description:
+      "Queue a status change on an existing decision. Valid transitions: draft → pending_client; pending_client → approved | rejected. Don't propose moves backwards (e.g. approved → draft).",
+    input_schema: {
+      type: "object",
+      properties: {
+        decision_id: { type: "string" },
+        status: {
+          type: "string",
+          enum: ["draft", "pending_client", "approved", "rejected"],
+        },
+      },
+      required: ["decision_id", "status"],
+    },
+  },
+  {
+    name: "propose_add_decision_followup",
+    description:
+      "Queue addition of a follow-up to-do template to a decision. These materialize as schedule_items (kind='todo') when the decision becomes 'approved'. due_offset_days is the integer number of days after approval the to-do should be due.",
+    input_schema: {
+      type: "object",
+      properties: {
+        decision_id: { type: "string" },
+        title: { type: "string" },
+        due_offset_days: { type: "integer", minimum: 0 },
+        assignee_profile_id: {
+          type: "string",
+          description:
+            "Staff profile UUID to assign the to-do to (mutually exclusive with assignee_company_id).",
+        },
+        assignee_company_id: {
+          type: "string",
+          description:
+            "Sub/vendor company UUID to assign the to-do to (mutually exclusive with assignee_profile_id).",
+        },
+      },
+      required: ["decision_id", "title", "due_offset_days"],
     },
   },
   {
@@ -279,6 +432,333 @@ async function executeTool({
           project_number: project?.project_number ?? "",
           item_title: item.title,
           previous_status: item.status,
+        },
+      })
+      return JSON.stringify({ queued: true })
+    }
+
+    case "propose_update_schedule_item": {
+      const scheduleItemId = input.schedule_item_id as string
+      const patch: Record<string, string | null> = {}
+      const changes: string[] = []
+      const { data: item, error } = await supabase
+        .from("schedule_items")
+        .select(
+          "id, title, description, kind, start_date, end_date, due_date, parent_id, projects:project_id(name, project_number)"
+        )
+        .eq("id", scheduleItemId)
+        .maybeSingle()
+      if (error) return JSON.stringify({ error: error.message })
+      if (!item) return JSON.stringify({ error: "schedule item not found" })
+
+      // Build the patch field-by-field and produce a human-readable diff
+      // for the plan UI. Only include keys the agent actually passed.
+      for (const f of [
+        "title",
+        "description",
+        "start_date",
+        "end_date",
+        "due_date",
+        "parent_id",
+      ] as const) {
+        if (f in input) {
+          const next = input[f] as string | null
+          const prev = (item as unknown as Record<string, unknown>)[f] as
+            | string
+            | null
+          if (next !== prev) {
+            patch[f] = next
+            changes.push(`${f}: ${prev ?? "—"} → ${next ?? "—"}`)
+          }
+        }
+      }
+      if (Object.keys(patch).length === 0) {
+        return JSON.stringify({
+          queued: false,
+          reason: "no fields changed; skipping",
+        })
+      }
+      // Refuse obviously-bad patches up front rather than failing at apply
+      // time — keeps the agent's plan honest.
+      if (item.kind === "work") {
+        const finalStart = (patch.start_date ?? item.start_date) as
+          | string
+          | null
+        const finalEnd = (patch.end_date ?? item.end_date) as string | null
+        if (finalStart && finalEnd && finalEnd < finalStart) {
+          return JSON.stringify({
+            error: "end_date must be on or after start_date",
+          })
+        }
+      }
+      const project = Array.isArray(item.projects)
+        ? item.projects[0]
+        : item.projects
+      state.mutations.push({
+        kind: "update_schedule_item",
+        schedule_item_id: scheduleItemId,
+        patch,
+        context: {
+          project_name: project?.name ?? "",
+          project_number: project?.project_number ?? "",
+          item_title: item.title,
+          changes,
+        },
+      })
+      return JSON.stringify({ queued: true, changes })
+    }
+
+    case "propose_create_todo": {
+      const projectId = input.project_id as string
+      const title = (input.title as string).trim()
+      const description = (input.description as string | undefined) ?? null
+      const dueDate = (input.due_date as string | undefined) ?? null
+      const parentId = (input.parent_id as string | undefined) ?? null
+      if (!title) return JSON.stringify({ error: "title required" })
+      const { data: project, error: pErr } = await supabase
+        .from("projects")
+        .select("id, name, project_number")
+        .eq("id", projectId)
+        .maybeSingle()
+      if (pErr) return JSON.stringify({ error: pErr.message })
+      if (!project) return JSON.stringify({ error: "project not found" })
+      let parentTitle: string | null = null
+      if (parentId) {
+        const { data: parent } = await supabase
+          .from("schedule_items")
+          .select("title, kind, project_id")
+          .eq("id", parentId)
+          .maybeSingle()
+        if (!parent)
+          return JSON.stringify({ error: "parent item not found" })
+        if (parent.project_id !== projectId)
+          return JSON.stringify({
+            error: "parent belongs to a different project",
+          })
+        if (parent.kind !== "work")
+          return JSON.stringify({
+            error: "parent must be a work item",
+          })
+        parentTitle = parent.title
+      }
+      state.mutations.push({
+        kind: "create_todo",
+        project_id: projectId,
+        title,
+        description: description?.trim() || null,
+        due_date: dueDate || null,
+        parent_id: parentId,
+        context: {
+          project_name: project.name,
+          project_number: project.project_number,
+          parent_title: parentTitle,
+        },
+      })
+      return JSON.stringify({ queued: true })
+    }
+
+    case "propose_create_work_item": {
+      const projectId = input.project_id as string
+      const title = (input.title as string).trim()
+      const description = (input.description as string | undefined) ?? null
+      const startDate = input.start_date as string
+      const endDate = input.end_date as string
+      if (!title) return JSON.stringify({ error: "title required" })
+      if (!startDate || !endDate)
+        return JSON.stringify({
+          error: "start_date and end_date are both required",
+        })
+      if (endDate < startDate)
+        return JSON.stringify({
+          error: "end_date must be on or after start_date",
+        })
+      const { data: project, error } = await supabase
+        .from("projects")
+        .select("id, name, project_number")
+        .eq("id", projectId)
+        .maybeSingle()
+      if (error) return JSON.stringify({ error: error.message })
+      if (!project) return JSON.stringify({ error: "project not found" })
+      state.mutations.push({
+        kind: "create_work_item",
+        project_id: projectId,
+        title,
+        description: description?.trim() || null,
+        start_date: startDate,
+        end_date: endDate,
+        context: {
+          project_name: project.name,
+          project_number: project.project_number,
+        },
+      })
+      return JSON.stringify({ queued: true })
+    }
+
+    case "list_decisions": {
+      const projectId = input.project_id as string
+      const kind = input.kind as "change_order" | "selection" | undefined
+      const status = input.status as
+        | "draft"
+        | "pending_client"
+        | "approved"
+        | "rejected"
+        | undefined
+      let q = supabase
+        .from("decisions")
+        .select("id, project_id, number, kind, title, status, due_date")
+        .eq("project_id", projectId)
+        .order("number", { ascending: false })
+      if (kind) q = q.eq("kind", kind)
+      if (status) q = q.eq("status", status)
+      const { data, error } = await q
+      if (error) return JSON.stringify({ error: error.message })
+      return JSON.stringify({ decisions: data ?? [] })
+    }
+
+    case "get_decision": {
+      const decisionId = input.decision_id as string
+      const { data: decision, error: dErr } = await supabase
+        .from("decisions")
+        .select(
+          "id, project_id, number, kind, title, description, status, due_date"
+        )
+        .eq("id", decisionId)
+        .maybeSingle()
+      if (dErr) return JSON.stringify({ error: dErr.message })
+      if (!decision) return JSON.stringify({ error: "decision not found" })
+      const { data: followups } = await supabase
+        .from("decision_followup_templates")
+        .select(
+          "id, title, due_offset_days, assignee_profile_id, assignee_company_id"
+        )
+        .eq("decision_id", decisionId)
+        .order("position")
+      return JSON.stringify({ decision, followups: followups ?? [] })
+    }
+
+    case "propose_create_decision": {
+      const projectId = input.project_id as string
+      const decisionKind = input.decision_kind as "change_order" | "selection"
+      const title = (input.title as string).trim()
+      const description = (input.description as string | undefined) ?? null
+      if (!title) return JSON.stringify({ error: "title required" })
+      const { data: project, error } = await supabase
+        .from("projects")
+        .select("id, name, project_number")
+        .eq("id", projectId)
+        .maybeSingle()
+      if (error) return JSON.stringify({ error: error.message })
+      if (!project) return JSON.stringify({ error: "project not found" })
+      state.mutations.push({
+        kind: "create_decision",
+        project_id: projectId,
+        decision_kind: decisionKind,
+        title,
+        description: description?.trim() || null,
+        context: {
+          project_name: project.name,
+          project_number: project.project_number,
+        },
+      })
+      return JSON.stringify({ queued: true })
+    }
+
+    case "propose_update_decision_status": {
+      const decisionId = input.decision_id as string
+      const status = input.status as
+        | "draft"
+        | "pending_client"
+        | "approved"
+        | "rejected"
+      const { data: decision, error } = await supabase
+        .from("decisions")
+        .select(
+          "id, number, title, status, projects:project_id(name, project_number)"
+        )
+        .eq("id", decisionId)
+        .maybeSingle()
+      if (error) return JSON.stringify({ error: error.message })
+      if (!decision) return JSON.stringify({ error: "decision not found" })
+      if (decision.status === status) {
+        return JSON.stringify({
+          queued: false,
+          reason: `status is already ${status}; skipping`,
+        })
+      }
+      const project = Array.isArray(decision.projects)
+        ? decision.projects[0]
+        : decision.projects
+      state.mutations.push({
+        kind: "update_decision_status",
+        decision_id: decisionId,
+        status,
+        context: {
+          project_name: project?.name ?? "",
+          project_number: project?.project_number ?? "",
+          decision_number: decision.number,
+          decision_title: decision.title,
+          previous_status: decision.status,
+        },
+      })
+      return JSON.stringify({ queued: true })
+    }
+
+    case "propose_add_decision_followup": {
+      const decisionId = input.decision_id as string
+      const title = (input.title as string).trim()
+      const dueOffsetDays = input.due_offset_days as number
+      const assigneeProfileId =
+        (input.assignee_profile_id as string | undefined) ?? null
+      const assigneeCompanyId =
+        (input.assignee_company_id as string | undefined) ?? null
+      if (!title) return JSON.stringify({ error: "title required" })
+      if (assigneeProfileId && assigneeCompanyId) {
+        return JSON.stringify({
+          error:
+            "assignee_profile_id and assignee_company_id are mutually exclusive",
+        })
+      }
+      const { data: decision, error } = await supabase
+        .from("decisions")
+        .select(
+          "id, number, title, projects:project_id(name, project_number)"
+        )
+        .eq("id", decisionId)
+        .maybeSingle()
+      if (error) return JSON.stringify({ error: error.message })
+      if (!decision) return JSON.stringify({ error: "decision not found" })
+      let assigneeName: string | null = null
+      if (assigneeProfileId) {
+        const { data: prof } = await supabase
+          .from("profiles")
+          .select("full_name, email")
+          .eq("id", assigneeProfileId)
+          .maybeSingle()
+        assigneeName = prof?.full_name || prof?.email || null
+      } else if (assigneeCompanyId) {
+        const { data: co } = await supabase
+          .from("companies")
+          .select("name")
+          .eq("id", assigneeCompanyId)
+          .maybeSingle()
+        assigneeName = co?.name ?? null
+      }
+      const project = Array.isArray(decision.projects)
+        ? decision.projects[0]
+        : decision.projects
+      state.mutations.push({
+        kind: "add_decision_followup",
+        decision_id: decisionId,
+        title,
+        due_offset_days: Math.trunc(dueOffsetDays),
+        assignee_profile_id: assigneeProfileId,
+        assignee_company_id: assigneeCompanyId,
+        context: {
+          project_name: project?.name ?? "",
+          project_number: project?.project_number ?? "",
+          decision_number: decision.number,
+          decision_title: decision.title,
+          assignee_name: assigneeName,
         },
       })
       return JSON.stringify({ queued: true })
