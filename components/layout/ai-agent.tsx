@@ -13,6 +13,12 @@ import {
   Pencil,
   ListChecks,
   AlertTriangle,
+  Plus,
+  Calendar,
+  Scale,
+  Palette,
+  Send as SendIcon,
+  UserPlus,
 } from "lucide-react"
 import {
   Dialog,
@@ -30,10 +36,11 @@ import {
   runAgentTurnAction,
   applyPlanAction,
 } from "@/app/actions/ai-agent"
-import type {
-  ProposedMutation,
-  AgentTurnResult,
-  AppliedMutation,
+import {
+  isDestructive,
+  type ProposedMutation,
+  type AgentTurnResult,
+  type AppliedMutation,
 } from "@/lib/ai/types"
 
 type Message = { role: "user" | "assistant"; content: string }
@@ -60,6 +67,10 @@ export function AIAgent() {
   const [draft, setDraft] = useState("")
   const [phase, setPhase] = useState<Phase>({ kind: "compose" })
   const [pending, startTransition] = useTransition()
+  // Typed confirmation gate for plans that include destructive mutations
+  // (any update_*). User must type "apply" before the Apply button enables.
+  // Reset whenever the phase transitions to a new plan.
+  const [confirmText, setConfirmText] = useState("")
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -68,6 +79,7 @@ export function AIAgent() {
   const openDialog = useCallback(() => {
     setMessages([])
     setDraft("")
+    setConfirmText("")
     setPhase({ kind: "compose" })
     setOpen(true)
     requestAnimationFrame(() => textareaRef.current?.focus())
@@ -137,6 +149,7 @@ export function AIAgent() {
       ...currentMessages,
       { role: "assistant", content: result.summary || "Plan ready." },
     ])
+    setConfirmText("")
     setPhase({
       kind: "plan",
       summary: result.summary,
@@ -279,25 +292,15 @@ export function AIAgent() {
           )}
           {phase.kind === "plan" && (
             <DialogFooter>
-              <Button type="button" variant="ghost" onClick={closeDialog}>
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setPhase({ kind: "compose" })}
-              >
-                Refine prompt
-              </Button>
-              <Button
-                type="button"
-                onClick={applyPlan}
-                disabled={pending}
-              >
-                <Sparkles className="h-4 w-4" />
-                Apply {phase.mutations.length} change
-                {phase.mutations.length === 1 ? "" : "s"}
-              </Button>
+              <PlanFooter
+                mutations={phase.mutations}
+                confirmText={confirmText}
+                onConfirmTextChange={setConfirmText}
+                onCancel={closeDialog}
+                onRefine={() => setPhase({ kind: "compose" })}
+                onApply={applyPlan}
+                pending={pending}
+              />
             </DialogFooter>
           )}
         </DialogContent>
@@ -385,51 +388,274 @@ function PlanCard({ mutations }: { mutations: ProposedMutation[] }) {
 }
 
 function MutationRow({ mutation }: { mutation: ProposedMutation }) {
+  // Project crumb shared by every row.
+  const crumb = (parts: { project_name: string; project_number: string }) => (
+    <div className="text-xs text-muted mt-0.5">
+      {parts.project_name}{" "}
+      {parts.project_number && (
+        <span className="font-mono">#{parts.project_number}</span>
+      )}
+    </div>
+  )
+
   switch (mutation.kind) {
     case "add_checklist_item":
       return (
-        <div className="flex items-start gap-2">
-          <ListChecks className="h-3.5 w-3.5 mt-0.5 text-brand-500 shrink-0" />
-          <div className="flex-1 min-w-0">
-            <div className="font-medium">
-              Add checklist item: <span className="font-mono text-xs">&ldquo;{mutation.label}&rdquo;</span>
-            </div>
-            <div className="text-xs text-muted mt-0.5">
-              {mutation.context.item_title} · {mutation.context.project_name}{" "}
-              {mutation.context.project_number && (
-                <span className="font-mono">
-                  #{mutation.context.project_number}
-                </span>
-              )}
-            </div>
+        <RowFrame icon={<ListChecks className="h-3.5 w-3.5 text-brand-500" />}>
+          <div className="font-medium">
+            Add checklist item:{" "}
+            <span className="font-mono text-xs">&ldquo;{mutation.label}&rdquo;</span>
           </div>
-        </div>
+          <div className="text-xs text-muted mt-0.5">
+            {mutation.context.item_title} · {mutation.context.project_name}{" "}
+            {mutation.context.project_number && (
+              <span className="font-mono">
+                #{mutation.context.project_number}
+              </span>
+            )}
+          </div>
+        </RowFrame>
       )
     case "update_schedule_item_status":
       return (
-        <div className="flex items-start gap-2">
-          <Pencil className="h-3.5 w-3.5 mt-0.5 text-brand-500 shrink-0" />
-          <div className="flex-1 min-w-0">
-            <div className="font-medium">
-              Set status:{" "}
-              <span className="font-mono text-xs">
-                {mutation.context.previous_status}
-              </span>{" "}
-              →{" "}
-              <span className="font-mono text-xs">{mutation.status}</span>
-            </div>
-            <div className="text-xs text-muted mt-0.5">
-              {mutation.context.item_title} · {mutation.context.project_name}{" "}
-              {mutation.context.project_number && (
-                <span className="font-mono">
-                  #{mutation.context.project_number}
-                </span>
-              )}
-            </div>
+        <RowFrame
+          icon={<Pencil className="h-3.5 w-3.5 text-amber-600" />}
+          destructive
+        >
+          <div className="font-medium">
+            Set status:{" "}
+            <span className="font-mono text-xs">
+              {mutation.context.previous_status}
+            </span>{" "}
+            → <span className="font-mono text-xs">{mutation.status}</span>
           </div>
-        </div>
+          <div className="text-xs text-muted mt-0.5">
+            {mutation.context.item_title} · {mutation.context.project_name}{" "}
+            {mutation.context.project_number && (
+              <span className="font-mono">
+                #{mutation.context.project_number}
+              </span>
+            )}
+          </div>
+        </RowFrame>
+      )
+    case "update_schedule_item":
+      return (
+        <RowFrame
+          icon={<Pencil className="h-3.5 w-3.5 text-amber-600" />}
+          destructive
+        >
+          <div className="font-medium">
+            Update item: {mutation.context.item_title}
+          </div>
+          <ul className="text-xs mt-1 space-y-0.5">
+            {mutation.context.changes.map((c, i) => (
+              <li key={i} className="font-mono">
+                {c}
+              </li>
+            ))}
+          </ul>
+          {crumb(mutation.context)}
+        </RowFrame>
+      )
+    case "create_todo":
+      return (
+        <RowFrame icon={<Plus className="h-3.5 w-3.5 text-brand-500" />}>
+          <div className="font-medium">
+            New to-do: <span className="font-mono text-xs">{mutation.title}</span>
+          </div>
+          <div className="text-xs text-muted mt-0.5">
+            {mutation.context.parent_title
+              ? `under ${mutation.context.parent_title} · `
+              : ""}
+            {mutation.due_date && (
+              <span>
+                <Calendar className="inline h-3 w-3 mr-0.5" />
+                {mutation.due_date} ·{" "}
+              </span>
+            )}
+            {mutation.context.project_name}{" "}
+            {mutation.context.project_number && (
+              <span className="font-mono">
+                #{mutation.context.project_number}
+              </span>
+            )}
+          </div>
+        </RowFrame>
+      )
+    case "create_work_item":
+      return (
+        <RowFrame icon={<Plus className="h-3.5 w-3.5 text-brand-500" />}>
+          <div className="font-medium">
+            New work item:{" "}
+            <span className="font-mono text-xs">{mutation.title}</span>
+          </div>
+          <div className="text-xs text-muted mt-0.5">
+            <Calendar className="inline h-3 w-3 mr-0.5" />
+            {mutation.start_date} → {mutation.end_date} ·{" "}
+            {mutation.context.project_name}{" "}
+            {mutation.context.project_number && (
+              <span className="font-mono">
+                #{mutation.context.project_number}
+              </span>
+            )}
+          </div>
+        </RowFrame>
+      )
+    case "create_decision":
+      return (
+        <RowFrame
+          icon={
+            mutation.decision_kind === "change_order" ? (
+              <Scale className="h-3.5 w-3.5 text-brand-500" />
+            ) : (
+              <Palette className="h-3.5 w-3.5 text-brand-500" />
+            )
+          }
+        >
+          <div className="font-medium">
+            New{" "}
+            {mutation.decision_kind === "change_order"
+              ? "change order"
+              : "selection"}
+            : <span className="font-mono text-xs">{mutation.title}</span>
+          </div>
+          <div className="text-xs text-muted mt-0.5">
+            (starts as draft) · {mutation.context.project_name}{" "}
+            {mutation.context.project_number && (
+              <span className="font-mono">
+                #{mutation.context.project_number}
+              </span>
+            )}
+          </div>
+        </RowFrame>
+      )
+    case "update_decision_status":
+      return (
+        <RowFrame
+          icon={<SendIcon className="h-3.5 w-3.5 text-amber-600" />}
+          destructive
+        >
+          <div className="font-medium">
+            Decision #{mutation.context.decision_number}: status{" "}
+            <span className="font-mono text-xs">
+              {mutation.context.previous_status}
+            </span>{" "}
+            → <span className="font-mono text-xs">{mutation.status}</span>
+          </div>
+          <div className="text-xs text-muted mt-0.5">
+            {mutation.context.decision_title} · {mutation.context.project_name}{" "}
+            {mutation.context.project_number && (
+              <span className="font-mono">
+                #{mutation.context.project_number}
+              </span>
+            )}
+          </div>
+        </RowFrame>
+      )
+    case "add_decision_followup":
+      return (
+        <RowFrame icon={<UserPlus className="h-3.5 w-3.5 text-brand-500" />}>
+          <div className="font-medium">
+            Add follow-up:{" "}
+            <span className="font-mono text-xs">{mutation.title}</span>
+          </div>
+          <div className="text-xs text-muted mt-0.5">
+            on Decision #{mutation.context.decision_number} (
+            {mutation.context.decision_title}) · due{" "}
+            {mutation.due_offset_days}d after approval
+            {mutation.context.assignee_name &&
+              ` · assigned to ${mutation.context.assignee_name}`}
+          </div>
+          {crumb(mutation.context)}
+        </RowFrame>
       )
   }
+}
+
+function RowFrame({
+  icon,
+  children,
+  destructive,
+}: {
+  icon: React.ReactNode
+  children: React.ReactNode
+  destructive?: boolean
+}) {
+  return (
+    <div className="flex items-start gap-2">
+      <div
+        className={cn(
+          "h-5 w-5 rounded flex items-center justify-center mt-0.5 shrink-0",
+          destructive ? "bg-amber-100" : "bg-brand-100"
+        )}
+        title={destructive ? "Modifies existing data" : "Additive"}
+      >
+        {icon}
+      </div>
+      <div className="flex-1 min-w-0">{children}</div>
+    </div>
+  )
+}
+
+function PlanFooter({
+  mutations,
+  confirmText,
+  onConfirmTextChange,
+  onCancel,
+  onRefine,
+  onApply,
+  pending,
+}: {
+  mutations: ProposedMutation[]
+  confirmText: string
+  onConfirmTextChange: (v: string) => void
+  onCancel: () => void
+  onRefine: () => void
+  onApply: () => void
+  pending: boolean
+}) {
+  const hasDestructive = mutations.some(isDestructive)
+  const confirmed = !hasDestructive || confirmText.trim().toLowerCase() === "apply"
+  return (
+    <div className="flex w-full flex-col gap-2">
+      {hasDestructive && (
+        <div className="flex items-center gap-2 text-xs">
+          <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+          <span className="text-muted">
+            This plan modifies existing data. Type{" "}
+            <span className="font-mono font-medium">apply</span> to enable
+            the button.
+          </span>
+          <input
+            type="text"
+            value={confirmText}
+            onChange={(e) => onConfirmTextChange(e.target.value)}
+            placeholder="type apply"
+            aria-label="Type apply to confirm destructive changes"
+            className="h-7 w-28 rounded-md border border-border-strong bg-surface px-2 text-xs font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40"
+          />
+        </div>
+      )}
+      <div className="flex items-center justify-end gap-2">
+        <Button type="button" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="button" variant="secondary" onClick={onRefine}>
+          Refine prompt
+        </Button>
+        <Button
+          type="button"
+          onClick={onApply}
+          disabled={pending || !confirmed}
+        >
+          <Sparkles className="h-4 w-4" />
+          Apply {mutations.length} change
+          {mutations.length === 1 ? "" : "s"}
+        </Button>
+      </div>
+    </div>
+  )
 }
 
 function AppliedCard({ results }: { results: AppliedMutation[] }) {
