@@ -39,6 +39,11 @@ export async function sendQuoSms(opts: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ from, to: [to], content }),
+      // Quo's send endpoint returns 202 Accepted as soon as the message is
+      // queued, so a slow response means the upstream is stuck. Match the
+      // 5s outbound timeout used by the dashboard integration so a stalled
+      // Quo doesn't hold the server action open indefinitely.
+      signal: AbortSignal.timeout(5_000),
     })
     if (!res.ok) {
       const text = await res.text().catch(() => "")
@@ -47,6 +52,10 @@ export async function sendQuoSms(opts: {
     }
     return { sent: true }
   } catch (e) {
+    if (e instanceof DOMException && e.name === "TimeoutError") {
+      console.error("Quo send timed out after 5s")
+      return { sent: false, reason: "Quo API request timed out" }
+    }
     const msg = e instanceof Error ? e.message : String(e)
     console.error("Quo send exception:", msg)
     return { sent: false, reason: msg }
