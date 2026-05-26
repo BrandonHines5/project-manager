@@ -569,17 +569,28 @@ const SendSubTextInput = z.object({
   message: z.string().min(1).max(1600),
 })
 
+export type SendQuoTextResult =
+  | { ok: true; to: string; company_name: string }
+  | { ok: false; error: string }
+
 /**
  * Sends an SMS via Quo to a subcontractor company that's assigned to the
  * given schedule item. Verifies the assignment server-side (defense in
  * depth — the client picks the recipient, but we never trust that on its
  * own) and that the company actually has a phone number on file.
+ *
+ * Returns a typed result instead of throwing on user-facing failures
+ * (missing assignment, missing phone, Quo API error) — Next.js masks
+ * thrown error messages in production builds, so throwing would leave
+ * the user with the generic "Server Components render" toast instead of
+ * a useful reason. Genuine programming errors (e.g. an unexpected
+ * Supabase exception) still propagate.
  */
 export async function sendQuoTextToSub(input: {
   schedule_item_id: string
   company_id: string
   message: string
-}) {
+}): Promise<SendQuoTextResult> {
   await requireStaff()
   const parsed = SendSubTextInput.parse(input)
   const supabase = await createSupabaseServerClient()
@@ -591,9 +602,16 @@ export async function sendQuoTextToSub(input: {
     .eq("schedule_item_id", parsed.schedule_item_id)
     .eq("company_id", parsed.company_id)
     .maybeSingle()
-  if (aErr) throw new Error(aErr.message)
+  if (aErr) {
+    console.error("[sendQuoTextToSub] assignment lookup failed:", aErr)
+    return { ok: false, error: "Couldn't verify the assignment. Try again." }
+  }
   if (!assignment) {
-    throw new Error("That company is not assigned to this schedule item.")
+    return {
+      ok: false,
+      error:
+        "That sub isn't saved on this schedule item yet. Click Save first, then send.",
+    }
   }
 
   const { data: company, error: cErr } = await supabase
@@ -601,23 +619,27 @@ export async function sendQuoTextToSub(input: {
     .select("name, phone")
     .eq("id", parsed.company_id)
     .maybeSingle()
-  if (cErr) throw new Error(cErr.message)
-  if (!company) throw new Error("Company not found.")
+  if (cErr) {
+    console.error("[sendQuoTextToSub] company lookup failed:", cErr)
+    return { ok: false, error: "Couldn't load the company. Try again." }
+  }
+  if (!company) return { ok: false, error: "Company not found." }
   if (!company.phone) {
-    throw new Error(`${company.name} has no phone number on file.`)
+    return { ok: false, error: `${company.name} has no phone number on file.` }
   }
   const normalized = normalizeE164(company.phone)
   if (!normalized) {
-    throw new Error(
-      `${company.name}'s phone number (${company.phone}) isn't a valid US number.`
-    )
+    return {
+      ok: false,
+      error: `${company.name}'s phone number (${company.phone}) isn't a valid US number.`,
+    }
   }
 
   const result = await sendQuoSms({ to: normalized, content: parsed.message })
   if (!result.sent) {
-    throw new Error(result.reason ?? "Failed to send text")
+    return { ok: false, error: result.reason ?? "Failed to send text." }
   }
-  return { sent: true, to: normalized, company_name: company.name }
+  return { ok: true, to: normalized, company_name: company.name }
 }
 
 export async function toggleChecklistItem({

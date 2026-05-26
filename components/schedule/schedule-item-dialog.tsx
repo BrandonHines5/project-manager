@@ -480,13 +480,19 @@ export function ScheduleItemDialog({
             <RecurrenceEditor value={recurrence} onChange={setRecurrence} />
           )}
 
-          {/* Text a sub (edit only) */}
+          {/* Text a sub (edit only) — picker reads from data.assignments
+              (the persisted set) rather than the in-memory `assignments`
+              state, so the user can't try to text a sub they've added to
+              the form but not yet saved. The server-side assignment check
+              would reject that anyway with a confusing error. */}
           {mode === "edit" && item && (
             <SendTextToSubSection
               scheduleItemId={item.id}
               readyDate={item.start_date ?? item.due_date ?? ""}
               projectAddress={data.project_address}
-              assignments={assignments}
+              persistedAssignments={data.assignments.filter(
+                (a) => a.schedule_item_id === item.id
+              )}
               companies={data.companies}
             />
           )}
@@ -1085,16 +1091,16 @@ function SendTextToSubSection({
   scheduleItemId,
   readyDate,
   projectAddress,
-  assignments,
+  persistedAssignments,
   companies,
 }: {
   scheduleItemId: string
   readyDate: string
   projectAddress: string | null
-  assignments: Assignment[]
+  persistedAssignments: Tables<"schedule_assignments">[]
   companies: ScheduleData["companies"]
 }) {
-  const subAssignees = assignments
+  const subAssignees = persistedAssignments
     .map((a) => {
       if (!a.company_id) return null
       const c = companies.find((x) => x.id === a.company_id)
@@ -1157,10 +1163,19 @@ function SendTextToSubSection({
           company_id: selectedCompany.id,
           message: message.trim(),
         })
-        toast.success(`Text sent to ${res.company_name}`)
-        setOpen(false)
+        if (res.ok) {
+          toast.success(`Text sent to ${res.company_name}`)
+          setOpen(false)
+        } else {
+          toast.error(res.error)
+        }
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not send text")
+        // The action returns typed errors for user-facing failures, so a
+        // thrown exception here means something unexpected (network drop,
+        // auth redirect). Next.js masks the message in prod — give the
+        // user a clear-ish fallback.
+        console.error("sendQuoTextToSub threw:", e)
+        toast.error("Couldn't send text. Try again, or check the server logs.")
       }
     })
   }
