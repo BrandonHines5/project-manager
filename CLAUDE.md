@@ -44,6 +44,12 @@
 - Recurring to-dos store a `recurrence_rule` jsonb on a single template row. `lib/schedule/recurrence.ts:expandRecurrence` materialises virtual instances in a date range — we do not pre-create rows.
 - Assignments can target either a profile (internal staff) or a company (sub/vendor) — exactly one of the two must be non-null.
 
+## AI smart-update agent — model
+
+- Server action `runAgentTurnAction` in `app/actions/ai-agent.ts` wraps a manual Claude tool-use loop in `lib/ai/agent.ts`. Model is `claude-sonnet-4-6`. Requires `ANTHROPIC_API_KEY` env var (set in Vercel + `.env.local` for dev) — action returns a typed `error` result if the key is missing, never throws.
+- Plan-then-approve flow: the agent's `propose_*` tools record mutations into a per-turn array but DON'T execute anything. Only `applyPlanAction` actually writes to the DB, and it runs under the caller's session so RLS still gates writes.
+- Adding a new mutation kind takes four changes: extend `ProposedMutation` in `lib/ai/types.ts`, add the `propose_*` tool definition + handler in `lib/ai/agent.ts`, add the apply path in `lib/ai/apply.ts`, and add a case in the plan-row renderer `components/layout/ai-agent.tsx:MutationRow`.
+
 ## Workflow
 
 - `npm run dev` to develop; `npx tsc --noEmit` + `npx eslint .` for checks; `npx next build` to verify production build.

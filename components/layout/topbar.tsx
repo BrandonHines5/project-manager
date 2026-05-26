@@ -6,6 +6,7 @@ import { Bell, ChevronDown, LogOut } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
 import { GlobalSearch } from "@/components/layout/global-search"
+import { AIAgent } from "@/components/layout/ai-agent"
 
 export function Topbar({
   fullName,
@@ -29,6 +30,7 @@ export function Topbar({
       </div>
       <div className="ml-auto flex items-center gap-2">
         <GlobalSearch />
+        <AIAgent />
         <Link
           href="/notifications"
           className="relative inline-flex h-9 w-9 items-center justify-center rounded-md text-muted hover:bg-background hover:text-foreground"
