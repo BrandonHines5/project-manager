@@ -122,12 +122,12 @@ export function ScheduleItemDialog({
       setDuration(String(businessDaysBetween(startDate, v)))
     }
   }
-  // Called by PredecessorsEditor when a new predecessor is added — auto-fills
-  // the start date to the next business day after the predecessor's end
-  // (plus lag, for FS dependencies). Only fires if start date is currently
-  // unset, so manual edits aren't clobbered.
+  // Called by PredecessorsEditor whenever a predecessor is added or its
+  // type / lag is changed. Always re-anchors the start date so the form
+  // reflects the chosen relationship — earlier behaviour was to skip when
+  // a start date already existed, which made users wonder why the date
+  // didn't update after picking a different predecessor.
   function onPredecessorAdded(p: { predecessor_id: string; dep_type: string; lag_days: number }) {
-    if (startDate) return
     const pred = data.items.find((it) => it.id === p.predecessor_id)
     if (!pred) return
     let basis = ""
@@ -673,22 +673,37 @@ function PredecessorsEditor({
   items: Tables<"schedule_items">[]
   onAdd?: (p: PredEdit) => void
 }) {
-  const [sel, setSel] = useState("")
-  const [dep, setDep] = useState<Enums<"dependency_type">>("FS")
-  const [lag, setLag] = useState(0)
-  function add() {
-    if (!sel) return
-    if (value.some((p) => p.predecessor_id === sel)) return
-    const newPred: PredEdit = { predecessor_id: sel, dep_type: dep, lag_days: lag }
+  // Commit-on-select. The previous "fill three fields then click +" flow
+  // was easy to miss — users picked a predecessor, hit Save, and the row
+  // was never staged. Now picking a work item from the dropdown adds it
+  // immediately with sane defaults (FS / 0 lag); the type and lag can be
+  // tweaked inline on the staged row.
+  function add(predId: string) {
+    if (!predId) return
+    if (value.some((p) => p.predecessor_id === predId)) return
+    const newPred: PredEdit = {
+      predecessor_id: predId,
+      dep_type: "FS",
+      lag_days: 0,
+    }
     onChange([...value, newPred])
     onAdd?.(newPred)
-    setSel("")
-    setDep("FS")
-    setLag(0)
+  }
+  function update(idx: number, patch: Partial<PredEdit>) {
+    const next = value.map((p, i) => (i === idx ? { ...p, ...patch } : p))
+    onChange(next)
+    // Re-anchor the parent's start date whenever the relationship changes,
+    // so flipping FS→SS or tweaking the lag updates the date the same way
+    // adding the predecessor for the first time does.
+    onAdd?.(next[idx])
   }
   function remove(idx: number) {
     onChange(value.filter((_, i) => i !== idx))
   }
+
+  const available = items.filter(
+    (it) => !value.some((p) => p.predecessor_id === it.id)
+  )
 
   return (
     <div>
@@ -700,22 +715,40 @@ function PredecessorsEditor({
             return (
               <li
                 key={p.predecessor_id}
-                className="px-3 py-2 flex items-center justify-between gap-3"
+                className="px-3 py-2 grid grid-cols-1 sm:grid-cols-[1fr_90px_90px_auto] gap-2 items-center"
               >
                 <span>
-                  After <strong>{target?.title ?? "?"}</strong>{" "}
-                  <Badge tone="muted">{p.dep_type}</Badge>
-                  {p.lag_days !== 0 && (
-                    <span className="text-muted text-xs ml-1">
-                      ({p.lag_days > 0 ? "+" : ""}
-                      {p.lag_days}d lag)
-                    </span>
-                  )}
+                  After <strong>{target?.title ?? "?"}</strong>
                 </span>
+                <Select
+                  value={p.dep_type}
+                  onChange={(e) =>
+                    update(i, {
+                      dep_type: e.target.value as Enums<"dependency_type">,
+                    })
+                  }
+                  aria-label="Dependency type"
+                >
+                  <option value="FS">FS</option>
+                  <option value="SS">SS</option>
+                  <option value="FF">FF</option>
+                  <option value="SF">SF</option>
+                </Select>
+                <Input
+                  type="number"
+                  step={1}
+                  value={p.lag_days}
+                  onChange={(e) =>
+                    update(i, { lag_days: Math.trunc(Number(e.target.value) || 0) })
+                  }
+                  aria-label="Lag (days)"
+                  title="Lag (days)"
+                />
                 <button
                   type="button"
                   onClick={() => remove(i)}
-                  className="text-muted hover:text-danger cursor-pointer"
+                  className="text-muted hover:text-danger cursor-pointer p-1"
+                  aria-label="Remove predecessor"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
@@ -724,38 +757,30 @@ function PredecessorsEditor({
           })}
         </ul>
       )}
-      <div className="mt-2 grid grid-cols-1 sm:grid-cols-[1fr_100px_100px_auto] gap-2 items-end">
+      <div className="mt-2">
         <Field label="Add predecessor">
-          <Select value={sel} onChange={(e) => setSel(e.target.value)}>
-            <option value="">Choose work item…</option>
-            {items.map((i) => (
+          <Select
+            value=""
+            onChange={(e) => {
+              const v = e.target.value
+              if (v) add(v)
+              // The <select> is controlled with value="" so it always
+              // shows the placeholder after a pick — no manual reset.
+            }}
+            disabled={available.length === 0}
+          >
+            <option value="">
+              {available.length === 0
+                ? "No other work items"
+                : "Choose work item…"}
+            </option>
+            {available.map((i) => (
               <option key={i.id} value={i.id}>
                 {i.title}
               </option>
             ))}
           </Select>
         </Field>
-        <Field label="Type">
-          <Select
-            value={dep}
-            onChange={(e) => setDep(e.target.value as Enums<"dependency_type">)}
-          >
-            <option value="FS">FS</option>
-            <option value="SS">SS</option>
-            <option value="FF">FF</option>
-            <option value="SF">SF</option>
-          </Select>
-        </Field>
-        <Field label="Lag (days)">
-          <Input
-            type="number"
-            value={lag}
-            onChange={(e) => setLag(Number(e.target.value) || 0)}
-          />
-        </Field>
-        <Button type="button" variant="secondary" onClick={add}>
-          <Plus className="h-4 w-4" />
-        </Button>
       </div>
     </div>
   )
