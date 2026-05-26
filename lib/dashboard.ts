@@ -190,7 +190,8 @@ export interface DashboardProject {
   client_name: string | null
   client_email: string | null
   client_phone: string | null
-  // ISO date string or null. Optional: dashboards may not capture it.
+  // ISO date strings or null. Optional: dashboards may not capture them.
+  start_date?: string | null
   target_completion_date?: string | null
 }
 
@@ -314,6 +315,8 @@ function normalizeDashboardProject(json: unknown): DashboardProject | null {
     client_name: typeof r.client_name === "string" ? r.client_name : null,
     client_email: typeof r.client_email === "string" ? r.client_email : null,
     client_phone: typeof r.client_phone === "string" ? r.client_phone : null,
+    start_date:
+      typeof r.start_date === "string" ? r.start_date : null,
     target_completion_date:
       typeof r.target_completion_date === "string"
         ? r.target_completion_date

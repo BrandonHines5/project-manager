@@ -1,6 +1,9 @@
 import { requireStaff } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
-import { listAvailableDashboardProjects } from "@/lib/dashboard"
+import {
+  dashboardBaseUrl,
+  listAvailableDashboardProjects,
+} from "@/lib/dashboard"
 import { NewProjectForm } from "./new-project-form"
 
 export const metadata = { title: "New project — Hines Homes" }
@@ -43,7 +46,11 @@ export default async function NewProjectPage() {
         another project&apos;s schedule + selections, or use &ldquo;Create
         blank&rdquo; for a project that isn&apos;t on the dashboard yet.
       </p>
-      <NewProjectForm available={available} templates={templates} />
+      <NewProjectForm
+        available={available}
+        templates={templates}
+        dashboardBaseUrl={dashboardBaseUrl()}
+      />
     </div>
   )
 }
