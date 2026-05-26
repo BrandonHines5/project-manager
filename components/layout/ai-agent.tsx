@@ -1,0 +1,467 @@
+"use client"
+
+import { useCallback, useEffect, useRef, useState, useTransition } from "react"
+import { useRouter } from "next/navigation"
+import { toast } from "sonner"
+import {
+  Sparkles,
+  Send,
+  Loader2,
+  CheckCircle2,
+  XCircle,
+  HelpCircle,
+  Pencil,
+  ListChecks,
+  AlertTriangle,
+} from "lucide-react"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogBody,
+  DialogFooter,
+} from "@/components/ui/dialog"
+import { Button } from "@/components/ui/button"
+import { Textarea } from "@/components/ui/input"
+import { cn } from "@/lib/utils"
+import {
+  runAgentTurnAction,
+  applyPlanAction,
+} from "@/app/actions/ai-agent"
+import type {
+  ProposedMutation,
+  AgentTurnResult,
+  AppliedMutation,
+} from "@/lib/ai/types"
+
+type Message = { role: "user" | "assistant"; content: string }
+
+type Phase =
+  | { kind: "compose" }
+  | { kind: "thinking" }
+  | { kind: "question"; question: string }
+  | { kind: "plan"; summary: string; mutations: ProposedMutation[] }
+  | { kind: "applying" }
+  | { kind: "applied"; results: AppliedMutation[] }
+  | { kind: "error"; message: string }
+
+const STARTER_EXAMPLES = [
+  "Add 'Check that nails are picked up' to the framing to-do in every open project",
+  "Mark the rough-in framing item as complete on project HHC-104",
+  "Add 'Verify insulation R-value' to every insulation to-do",
+]
+
+export function AIAgent() {
+  const router = useRouter()
+  const [open, setOpen] = useState(false)
+  const [messages, setMessages] = useState<Message[]>([])
+  const [draft, setDraft] = useState("")
+  const [phase, setPhase] = useState<Phase>({ kind: "compose" })
+  const [pending, startTransition] = useTransition()
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Open with a clean slate. State changes happen in the event handler so
+  // we don't trip the set-state-in-effect rule.
+  const openDialog = useCallback(() => {
+    setMessages([])
+    setDraft("")
+    setPhase({ kind: "compose" })
+    setOpen(true)
+    requestAnimationFrame(() => textareaRef.current?.focus())
+  }, [])
+  const closeDialog = useCallback(() => setOpen(false), [])
+
+  // Auto-scroll the transcript to the bottom when new content lands.
+  useEffect(() => {
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: "smooth",
+    })
+  }, [messages, phase])
+
+  function sendMessage(text: string) {
+    const trimmed = text.trim()
+    if (!trimmed) return
+    const next: Message[] = [...messages, { role: "user", content: trimmed }]
+    setMessages(next)
+    setDraft("")
+    setPhase({ kind: "thinking" })
+    startTransition(async () => {
+      try {
+        const result = await runAgentTurnAction({ messages: next })
+        handleResult(result, next)
+      } catch (e) {
+        setPhase({
+          kind: "error",
+          message: e instanceof Error ? e.message : "Agent failed",
+        })
+      }
+    })
+  }
+
+  function handleResult(result: AgentTurnResult, currentMessages: Message[]) {
+    if (result.type === "error") {
+      setPhase({ kind: "error", message: result.message })
+      return
+    }
+    if (result.type === "question") {
+      // Record the assistant's question into the transcript so the user can
+      // see what they're answering, then move to the "question" phase.
+      setMessages([
+        ...currentMessages,
+        { role: "assistant", content: result.question },
+      ])
+      setPhase({ kind: "question", question: result.question })
+      requestAnimationFrame(() => textareaRef.current?.focus())
+      return
+    }
+    // type === "plan"
+    if (result.mutations.length === 0) {
+      // The agent finished but had nothing to change. Surface the summary
+      // as an assistant turn and let the user iterate.
+      setMessages([
+        ...currentMessages,
+        {
+          role: "assistant",
+          content:
+            result.summary || "I couldn't find anything to change for that request.",
+        },
+      ])
+      setPhase({ kind: "compose" })
+      return
+    }
+    setMessages([
+      ...currentMessages,
+      { role: "assistant", content: result.summary || "Plan ready." },
+    ])
+    setPhase({
+      kind: "plan",
+      summary: result.summary,
+      mutations: result.mutations,
+    })
+  }
+
+  function applyPlan() {
+    if (phase.kind !== "plan") return
+    const mutations = phase.mutations
+    setPhase({ kind: "applying" })
+    startTransition(async () => {
+      try {
+        const { results } = await applyPlanAction({ mutations })
+        setPhase({ kind: "applied", results })
+        const okCount = results.filter((r) => r.ok).length
+        const failCount = results.length - okCount
+        if (failCount === 0) {
+          toast.success(`Applied ${okCount} change${okCount === 1 ? "" : "s"}`)
+        } else {
+          toast.error(
+            `Applied ${okCount}, failed ${failCount}. Check the dialog for details.`
+          )
+        }
+        router.refresh()
+      } catch (e) {
+        setPhase({
+          kind: "error",
+          message: e instanceof Error ? e.message : "Apply failed",
+        })
+      }
+    })
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={openDialog}
+        className="inline-flex h-9 items-center gap-1.5 rounded-md border border-brand-500 bg-brand-500/10 px-2.5 text-sm font-medium text-brand-700 hover:bg-brand-500/20 transition-colors cursor-pointer"
+        aria-label="Open AI assistant"
+        title="AI smart updates"
+      >
+        <Sparkles className="h-4 w-4" />
+        <span className="hidden sm:inline">AI</span>
+      </button>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent size="lg" className="sm:max-h-[85vh]">
+          <DialogHeader>
+            <div>
+              <DialogTitle>
+                <span className="inline-flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-brand-500" />
+                  AI smart updates
+                </span>
+              </DialogTitle>
+              <DialogDescription>
+                Describe a bulk change in plain English. The assistant proposes
+                a plan; you review and apply.
+              </DialogDescription>
+            </div>
+          </DialogHeader>
+          <DialogBody className="p-0">
+            <div
+              ref={scrollRef}
+              className="px-6 py-4 max-h-[55vh] overflow-y-auto space-y-3"
+            >
+              {messages.length === 0 && phase.kind === "compose" && (
+                <Starter onPick={(s) => setDraft(s)} />
+              )}
+              {messages.map((m, i) => (
+                <Bubble key={i} role={m.role} text={m.content} />
+              ))}
+              {phase.kind === "thinking" && (
+                <div className="flex items-center gap-2 text-sm text-muted">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Thinking…
+                </div>
+              )}
+              {phase.kind === "plan" && (
+                <PlanCard mutations={phase.mutations} />
+              )}
+              {phase.kind === "applying" && (
+                <div className="flex items-center gap-2 text-sm text-muted">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Applying…
+                </div>
+              )}
+              {phase.kind === "applied" && (
+                <AppliedCard results={phase.results} />
+              )}
+              {phase.kind === "error" && (
+                <div className="rounded-md border border-danger/40 bg-red-50 px-3 py-2 text-sm text-danger">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                    <div>{phase.message}</div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </DialogBody>
+          {(phase.kind === "compose" ||
+            phase.kind === "question" ||
+            phase.kind === "applied" ||
+            phase.kind === "error") && (
+            <DialogFooter>
+              <div className="flex w-full items-end gap-2">
+                <div className="flex-1">
+                  <Textarea
+                    ref={textareaRef}
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                        e.preventDefault()
+                        sendMessage(draft)
+                      }
+                    }}
+                    rows={2}
+                    placeholder={
+                      phase.kind === "question"
+                        ? "Type your answer…"
+                        : "Describe a bulk change… (⌘+Enter to send)"
+                    }
+                    disabled={pending}
+                    className="min-h-[60px]"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  onClick={() => sendMessage(draft)}
+                  disabled={pending || !draft.trim()}
+                >
+                  <Send className="h-4 w-4" />
+                  Send
+                </Button>
+              </div>
+            </DialogFooter>
+          )}
+          {phase.kind === "plan" && (
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={closeDialog}>
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setPhase({ kind: "compose" })}
+              >
+                Refine prompt
+              </Button>
+              <Button
+                type="button"
+                onClick={applyPlan}
+                disabled={pending}
+              >
+                <Sparkles className="h-4 w-4" />
+                Apply {phase.mutations.length} change
+                {phase.mutations.length === 1 ? "" : "s"}
+              </Button>
+            </DialogFooter>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}
+
+function Bubble({ role, text }: { role: "user" | "assistant"; text: string }) {
+  const isUser = role === "user"
+  return (
+    <div
+      className={cn(
+        "flex",
+        isUser ? "justify-end" : "justify-start"
+      )}
+    >
+      <div
+        className={cn(
+          "max-w-[85%] rounded-md px-3 py-2 text-sm whitespace-pre-wrap",
+          isUser
+            ? "bg-brand-500 text-white"
+            : "bg-background border border-border text-foreground"
+        )}
+      >
+        {!isUser && (
+          <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted mb-1">
+            {text.toLowerCase().includes("?") ? (
+              <>
+                <HelpCircle className="h-3 w-3" />
+                Clarifying question
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-3 w-3" />
+                Assistant
+              </>
+            )}
+          </div>
+        )}
+        {text}
+      </div>
+    </div>
+  )
+}
+
+function Starter({ onPick }: { onPick: (s: string) => void }) {
+  return (
+    <div className="space-y-2 text-sm">
+      <div className="text-muted">Try one of these to start:</div>
+      <ul className="space-y-1.5">
+        {STARTER_EXAMPLES.map((s) => (
+          <li key={s}>
+            <button
+              type="button"
+              onClick={() => onPick(s)}
+              className="w-full text-left rounded-md border border-border bg-background/40 px-3 py-2 hover:bg-background hover:border-border-strong cursor-pointer"
+            >
+              <Sparkles className="inline h-3 w-3 mr-1.5 text-brand-500" />
+              {s}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function PlanCard({ mutations }: { mutations: ProposedMutation[] }) {
+  return (
+    <div className="rounded-md border border-border-strong bg-surface">
+      <div className="px-3 py-2 border-b border-border bg-background/60 text-xs uppercase tracking-wide text-muted flex items-center gap-1.5">
+        <ListChecks className="h-3.5 w-3.5" />
+        Plan — {mutations.length} change{mutations.length === 1 ? "" : "s"}
+      </div>
+      <ul className="divide-y divide-border max-h-72 overflow-y-auto">
+        {mutations.map((m, i) => (
+          <li key={i} className="px-3 py-2 text-sm">
+            <MutationRow mutation={m} />
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function MutationRow({ mutation }: { mutation: ProposedMutation }) {
+  switch (mutation.kind) {
+    case "add_checklist_item":
+      return (
+        <div className="flex items-start gap-2">
+          <ListChecks className="h-3.5 w-3.5 mt-0.5 text-brand-500 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="font-medium">
+              Add checklist item: <span className="font-mono text-xs">&ldquo;{mutation.label}&rdquo;</span>
+            </div>
+            <div className="text-xs text-muted mt-0.5">
+              {mutation.context.item_title} · {mutation.context.project_name}{" "}
+              {mutation.context.project_number && (
+                <span className="font-mono">
+                  #{mutation.context.project_number}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      )
+    case "update_schedule_item_status":
+      return (
+        <div className="flex items-start gap-2">
+          <Pencil className="h-3.5 w-3.5 mt-0.5 text-brand-500 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="font-medium">
+              Set status:{" "}
+              <span className="font-mono text-xs">
+                {mutation.context.previous_status}
+              </span>{" "}
+              →{" "}
+              <span className="font-mono text-xs">{mutation.status}</span>
+            </div>
+            <div className="text-xs text-muted mt-0.5">
+              {mutation.context.item_title} · {mutation.context.project_name}{" "}
+              {mutation.context.project_number && (
+                <span className="font-mono">
+                  #{mutation.context.project_number}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      )
+  }
+}
+
+function AppliedCard({ results }: { results: AppliedMutation[] }) {
+  const okCount = results.filter((r) => r.ok).length
+  const failed = results.filter((r) => !r.ok)
+  return (
+    <div className="space-y-2">
+      <div className="rounded-md border border-success/40 bg-green-50 px-3 py-2 text-sm flex items-center gap-2">
+        <CheckCircle2 className="h-4 w-4 text-success shrink-0" />
+        <span>
+          Applied {okCount} of {results.length} change
+          {results.length === 1 ? "" : "s"}.
+        </span>
+      </div>
+      {failed.length > 0 && (
+        <div className="rounded-md border border-danger/40 bg-red-50">
+          <div className="px-3 py-1.5 text-xs uppercase tracking-wide text-danger border-b border-danger/30 flex items-center gap-1.5">
+            <XCircle className="h-3.5 w-3.5" />
+            {failed.length} failure{failed.length === 1 ? "" : "s"}
+          </div>
+          <ul className="divide-y divide-danger/20 text-sm">
+            {failed.map((r, i) => (
+              <li key={i} className="px-3 py-2">
+                <MutationRow mutation={r.mutation} />
+                <div className="mt-1 text-xs text-danger font-mono">
+                  {r.error}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
