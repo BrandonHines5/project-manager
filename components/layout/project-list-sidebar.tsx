@@ -26,6 +26,14 @@ export type SidebarProject = {
 }
 
 type StatusFilter = "open" | "active" | "closed" | "all"
+type Mode = "jobs" | "templates"
+
+// Templates are projects whose project_number starts with "TEMPLATE" — staff
+// convention rather than a DB column. Keep the check case-insensitive so
+// "TEMPLATE-NHT" and "template-foo" both qualify.
+function isTemplate(p: SidebarProject) {
+  return p.project_number.toUpperCase().startsWith("TEMPLATE")
+}
 
 const OPEN_STATUSES: ReadonlyArray<Enums<"project_status">> = [
   "lead",
@@ -77,6 +85,7 @@ export function ProjectListSidebar({
   const [query, setQuery] = useState("")
   const [status, setStatus] = useState<StatusFilter>("open")
   const [statusOpen, setStatusOpen] = useState(false)
+  const [mode, setMode] = useState<Mode>("jobs")
   // Initialized empty; hydrated from localStorage on mount so SSR markup
   // stays deterministic (avoids hydration mismatch).
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
@@ -130,9 +139,16 @@ export function ProjectListSidebar({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return projects.filter((p) => {
-      if (status === "open" && !OPEN_STATUSES.includes(p.status)) return false
-      if (status === "active" && p.status !== "active") return false
-      if (status === "closed" && OPEN_STATUSES.includes(p.status)) return false
+      const tpl = isTemplate(p)
+      if (mode === "templates" && !tpl) return false
+      if (mode === "jobs" && tpl) return false
+      // Status filter applies to Jobs only — templates are few and the status
+      // (usually "lead") isn't a meaningful filter for them.
+      if (mode === "jobs") {
+        if (status === "open" && !OPEN_STATUSES.includes(p.status)) return false
+        if (status === "active" && p.status !== "active") return false
+        if (status === "closed" && OPEN_STATUSES.includes(p.status)) return false
+      }
       if (!q) return true
       return (
         p.name.toLowerCase().includes(q) ||
@@ -140,7 +156,7 @@ export function ProjectListSidebar({
         (p.address?.toLowerCase().includes(q) ?? false)
       )
     })
-  }, [projects, query, status])
+  }, [projects, query, status, mode])
 
   const visibleIds = useMemo(() => filtered.map((p) => p.id), [filtered])
   const allVisibleSelected =
@@ -199,16 +215,25 @@ export function ProjectListSidebar({
         <div className="flex-1 inline-flex rounded-md border border-border bg-background p-0.5">
           <button
             type="button"
-            className="flex-1 px-3 py-1 text-xs font-medium rounded bg-surface shadow-sm"
-            disabled
+            onClick={() => setMode("jobs")}
+            className={cn(
+              "flex-1 px-3 py-1 text-xs font-medium rounded cursor-pointer",
+              mode === "jobs"
+                ? "bg-surface shadow-sm"
+                : "text-muted hover:text-foreground"
+            )}
           >
             Jobs
           </button>
           <button
             type="button"
-            className="flex-1 px-3 py-1 text-xs font-medium text-muted disabled:opacity-50"
-            disabled
-            title="Templates — coming soon"
+            onClick={() => setMode("templates")}
+            className={cn(
+              "flex-1 px-3 py-1 text-xs font-medium rounded cursor-pointer",
+              mode === "templates"
+                ? "bg-surface shadow-sm"
+                : "text-muted hover:text-foreground"
+            )}
           >
             Templates
           </button>
@@ -233,7 +258,7 @@ export function ProjectListSidebar({
             className="w-full h-8 pl-7 pr-2 text-sm rounded-md border border-border bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40"
           />
         </div>
-        <div className="relative">
+        <div className={cn("relative", mode === "templates" && "hidden")}>
           <button
             type="button"
             onClick={() => setStatusOpen((s) => !s)}
@@ -283,7 +308,9 @@ export function ProjectListSidebar({
             onChange={toggleAllVisible}
             className="h-3.5 w-3.5 rounded border-border accent-brand-500"
           />
-          All {filterLabel} jobs ({filtered.length})
+          {mode === "templates"
+            ? `All templates (${filtered.length})`
+            : `All ${filterLabel} jobs (${filtered.length})`}
         </label>
       </div>
 
