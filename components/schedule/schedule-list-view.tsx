@@ -169,6 +169,12 @@ function CompleteCheckbox({
 }) {
   const [pending, startTransition] = useTransition()
   const isComplete = item.status === "complete"
+  // Only safe to round-trip via this control when the item is already in one
+  // of the two binary states. For `in_progress` / `delayed`, toggling would
+  // irreversibly collapse the status to `not_started` — instead we render
+  // the icon read-only and the user opens the item to change status.
+  const canBinaryToggle =
+    item.status === "complete" || item.status === "not_started"
   const dim = size === "sm" ? "h-4 w-4" : "h-5 w-5"
 
   return (
@@ -177,9 +183,10 @@ function CompleteCheckbox({
       role="checkbox"
       aria-checked={isComplete}
       aria-label={isComplete ? "Mark not complete" : "Mark complete"}
-      disabled={pending}
+      disabled={pending || !canBinaryToggle}
       onClick={(e) => {
         e.stopPropagation()
+        if (!canBinaryToggle) return
         startTransition(async () => {
           await setItemStatus({
             id: item.id,
@@ -190,8 +197,14 @@ function CompleteCheckbox({
       }}
       className={cn(
         "shrink-0 cursor-pointer transition-opacity",
-        pending && "opacity-50"
+        pending && "opacity-50",
+        !canBinaryToggle && "cursor-default opacity-60"
       )}
+      title={
+        canBinaryToggle
+          ? undefined
+          : `Status is "${item.status.replace("_", " ")}" — open the item to change`
+      }
     >
       {isComplete ? (
         <CheckCircle2 className={cn(dim, "text-success")} />

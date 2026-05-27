@@ -82,9 +82,10 @@ export default async function SchedulePage({
   const attachmentPaths = cleanedAttachments.map((a) => a.storage_path)
   const signedUrls: Record<string, string> = {}
   if (attachmentPaths.length > 0) {
-    const { data: signed } = await supabase.storage
+    const { data: signed, error: signedErr } = await supabase.storage
       .from("project-files")
       .createSignedUrls(attachmentPaths, 3600)
+    if (signedErr) throw new Error(signedErr.message)
     for (const s of signed ?? []) {
       if (s.path && s.signedUrl) signedUrls[s.path] = s.signedUrl
     }

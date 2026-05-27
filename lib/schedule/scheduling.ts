@@ -245,8 +245,6 @@ export function computeCriticalPath(
     if (outs.length > 0) {
       latest = Infinity
       for (const p of outs) {
-        const succES = es.get(p.item_id)!
-        const succEF = ef.get(p.item_id)!
         const succLS = ls.get(p.item_id)!
         const succLF = lf.get(p.item_id)!
         let candidate: number
@@ -263,11 +261,11 @@ export function computeCriticalPath(
             candidate = succLF - p.lag_days
             break
           case "SF":
-            // pred LS + dur - 1 = succ LF + lag - 1, so pred LF = succ LF + lag
-            candidate = succEF + p.lag_days - 1 + dur - duration.get(p.item_id)!
-            // Fallback: simple form
-            void succES
-            candidate = succLF + p.lag_days
+            // Forward SF (above): succ.EF = pred.ES + lag.
+            // Inverse: pred.ES_max = succ.LF - lag.
+            // Then pred.LF = pred.LS_max + dur - 1
+            //              = (succ.LF - lag) + dur - 1.
+            candidate = succLF - p.lag_days + dur - 1
             break
           default:
             candidate = succLS - p.lag_days - 1

@@ -832,15 +832,23 @@ export async function deleteScheduleItemAttachment(input: {
   const parsed = z.object({ id: z.string(), project_id: z.string() }).parse(input)
   const supabase = await createSupabaseServerClient()
 
-  // Look up the storage_path so we can purge the file from the bucket too.
-  // RLS already prevents this row from being read by anyone other than staff
-  // / the assigned trade, but failed lookups shouldn't kill the deletion of
-  // the file from storage — we just skip the storage cleanup.
-  const { data: existing } = await supabase
+  // Look up the storage_path AND verify the attachment belongs to the named
+  // project. Without the project check, a forged (or simply wrong) id could
+  // delete an attachment from a different project. The inner join also gives
+  // us the storage_path needed to purge the file from the bucket.
+  const { data: existing, error: existingErr } = await supabase
     .from("schedule_item_attachments")
-    .select("storage_path")
+    .select("storage_path, schedule_items!inner(project_id)")
     .eq("id", parsed.id)
     .maybeSingle()
+  if (existingErr) throw new Error(existingErr.message)
+  if (!existing) throw new Error("Attachment not found.")
+  const owningProject = (
+    existing as unknown as { schedule_items: { project_id: string } }
+  ).schedule_items.project_id
+  if (owningProject !== parsed.project_id) {
+    throw new Error("Attachment does not belong to this project.")
+  }
   const { error } = await supabase
     .from("schedule_item_attachments")
     .delete()

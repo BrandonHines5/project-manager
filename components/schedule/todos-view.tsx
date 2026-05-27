@@ -1,11 +1,14 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo, useState, useTransition } from "react"
+import { toast } from "sonner"
 import {
   CalendarDays,
   Plus,
   Paperclip,
   Repeat,
+  CheckCircle2,
+  Circle,
 } from "lucide-react"
 import { cn, formatDate } from "@/lib/utils"
 import { AvatarStack } from "@/components/ui/avatar"
@@ -18,8 +21,6 @@ import { assigneeNamesFor, checklistFor } from "./helpers"
 import type { ScheduleData } from "@/app/(app)/projects/[id]/schedule/schedule-client"
 import type { Tables, Enums } from "@/lib/db/types"
 import { setItemStatus } from "@/app/actions/schedule"
-import { useTransition } from "react"
-import { CheckCircle2, Circle } from "lucide-react"
 
 type Sort = "due_asc" | "due_desc" | "priority" | "created"
 type StatusFilter = "all" | "open" | "complete" | "delayed"
@@ -233,29 +234,54 @@ function TodoRow({
 
   const [pending, startTransition] = useTransition()
   const isComplete = item.status === "complete"
+  // Same constraint as the schedule list view: only round-trip via this
+  // control when the current status is one of the two binary states.
+  // Otherwise toggling would erase `in_progress` / `delayed`.
+  const canBinaryToggle =
+    item.status === "complete" || item.status === "not_started"
 
   function toggleComplete(e: React.MouseEvent) {
     e.stopPropagation()
+    if (!canBinaryToggle) return
     startTransition(async () => {
-      await setItemStatus({
-        id: item.id,
-        project_id: item.project_id,
-        status: isComplete ? "not_started" : "complete",
-      })
+      try {
+        await setItemStatus({
+          id: item.id,
+          project_id: item.project_id,
+          status: isComplete ? "not_started" : "complete",
+        })
+      } catch (err) {
+        toast.error(
+          err instanceof Error ? err.message : "Could not update status"
+        )
+      }
     })
   }
 
   return (
     <li
       className="px-4 py-3 hover:bg-background/60 cursor-pointer transition-colors flex items-start gap-3"
+      role="button"
+      tabIndex={0}
       onClick={() => onEdit(item.id)}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault()
+          onEdit(item.id)
+        }
+      }}
     >
       <button
         type="button"
         onClick={toggleComplete}
-        disabled={pending}
+        disabled={pending || !canBinaryToggle}
         aria-label={isComplete ? "Mark not complete" : "Mark complete"}
-        className={cn("mt-0.5 cursor-pointer", pending && "opacity-50")}
+        className={cn(
+          "mt-0.5 cursor-pointer",
+          pending && "opacity-50",
+          !canBinaryToggle && "cursor-default opacity-60"
+        )}
       >
         {isComplete ? (
           <CheckCircle2 className="h-4 w-4 text-success" />
