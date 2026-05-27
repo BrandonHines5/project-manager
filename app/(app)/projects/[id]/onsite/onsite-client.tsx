@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useTransition } from "react"
+import { useRouter } from "next/navigation"
 import { CheckCircle2, MapPin, MapPinOff, Loader2 } from "lucide-react"
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -206,6 +207,7 @@ function PromptCard({
   projectId: string
   onResolved: () => void
 }) {
+  const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
   const [picking, setPicking] = useState<null | "already_done" | "new_end_date" | "new_start_date">(null)
@@ -214,9 +216,20 @@ function PromptCard({
   function run(action: () => Promise<OnsiteAnswerResult>) {
     setError(null)
     startTransition(async () => {
-      const res = await action()
-      if (!res.ok) setError(res.error)
-      else onResolved()
+      try {
+        const res = await action()
+        if (!res.ok) {
+          setError(res.error)
+          return
+        }
+        onResolved()
+        // A cascade can change sibling prompts' question text (e.g. a
+        // past_due item's quoted end_date). router.refresh pulls fresh
+        // server data so neighbouring cards aren't stale.
+        router.refresh()
+      } catch {
+        setError("Couldn't save your update. Please try again.")
+      }
     })
   }
 
@@ -415,13 +428,17 @@ function CoordinatesSetup({ projectId }: { projectId: string }) {
   function save() {
     setError(null)
     startTransition(async () => {
-      const res = await setProjectCoordinates({
-        project_id: projectId,
-        latitude: lat,
-        longitude: lng,
-      } as Parameters<typeof setProjectCoordinates>[0])
-      if (!res.ok) setError(res.error)
-      else setDone(true)
+      try {
+        const res = await setProjectCoordinates({
+          project_id: projectId,
+          latitude: lat,
+          longitude: lng,
+        } as Parameters<typeof setProjectCoordinates>[0])
+        if (!res.ok) setError(res.error)
+        else setDone(true)
+      } catch {
+        setError("Couldn't save coordinates. Please try again.")
+      }
     })
   }
 

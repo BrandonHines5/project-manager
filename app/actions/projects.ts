@@ -70,6 +70,18 @@ const ProjectInput = z.object({
   // If present, the new project is created by duplicating this source
   // project (template) and then layering the form's identity fields on top.
   source_template_id: z.string().optional().or(z.literal("")),
+}).superRefine((val, ctx) => {
+  // Coordinates are useless solo — the geofence needs both. Reject a
+  // partial pair so we never persist an unusable record.
+  const hasLat = val.latitude !== undefined
+  const hasLng = val.longitude !== undefined
+  if (hasLat !== hasLng) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: [hasLat ? "longitude" : "latitude"],
+      message: "Provide both latitude and longitude, or leave both blank",
+    })
+  }
 })
 
 export type ProjectFormState = {
@@ -224,14 +236,19 @@ export async function setProjectCoordinates(
     }
   }
   const supabase = await createSupabaseServerClient()
-  const { error } = await supabase
+  // .select() forces the update to return the matched row so we can tell a
+  // silent zero-rows case (wrong id, or RLS hid it) apart from a real save.
+  const { data, error } = await supabase
     .from("projects")
     .update({
       latitude: parsed.data.latitude,
       longitude: parsed.data.longitude,
     })
     .eq("id", parsed.data.project_id)
+    .select("id")
+    .maybeSingle()
   if (error) return { ok: false, error: error.message }
+  if (!data) return { ok: false, error: "Project not found." }
   revalidatePath(`/projects/${parsed.data.project_id}/onsite`)
   return { ok: true }
 }

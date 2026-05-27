@@ -13,11 +13,12 @@ export default async function OnsitePage({
   await requireStaff()
   const { id } = await params
   const supabase = await createSupabaseServerClient()
-  const { data: project } = await supabase
+  const { data: project, error } = await supabase
     .from("projects")
     .select("id, name, address, latitude, longitude")
     .eq("id", id)
     .maybeSingle()
+  if (error) throw new Error(`Failed to load project: ${error.message}`)
   if (!project) notFound()
 
   const hasCoords = project.latitude != null && project.longitude != null

@@ -78,10 +78,15 @@ export async function answerCompletion(
   const data = parsed.data
   const supabase = await createSupabaseServerClient()
 
+  // Constrain to BOTH item id and the caller-supplied project id so a
+  // mismatched pair can never silently mutate one project while we
+  // cascade/revalidate the other. RLS would catch most of this, but
+  // defense in depth is cheap.
   const { data: item, error: readErr } = await supabase
     .from("schedule_items")
     .select("id, start_date, end_date, status")
     .eq("id", data.schedule_item_id)
+    .eq("project_id", data.project_id)
     .maybeSingle()
   if (readErr) return { ok: false, error: readErr.message }
   if (!item) return { ok: false, error: "Schedule item not found." }
@@ -104,6 +109,7 @@ export async function answerCompletion(
     .from("schedule_items")
     .update({ status: newStatus, end_date: newEndDate })
     .eq("id", data.schedule_item_id)
+    .eq("project_id", data.project_id)
   if (updErr) return { ok: false, error: updErr.message }
 
   if (dateChanged) {
@@ -140,6 +146,7 @@ export async function answerStart(
       .from("schedule_items")
       .update({ status: "in_progress" })
       .eq("id", data.schedule_item_id)
+      .eq("project_id", data.project_id)
     if (error) return { ok: false, error: error.message }
     revalidatePath(`/projects/${data.project_id}/onsite`)
     revalidatePath(`/projects/${data.project_id}/schedule`)
@@ -150,6 +157,7 @@ export async function answerStart(
     .from("schedule_items")
     .select("id, start_date, end_date")
     .eq("id", data.schedule_item_id)
+    .eq("project_id", data.project_id)
     .maybeSingle()
   if (readErr) return { ok: false, error: readErr.message }
   if (!item) return { ok: false, error: "Schedule item not found." }
@@ -170,6 +178,7 @@ export async function answerStart(
     .from("schedule_items")
     .update({ start_date: data.new_start_date, end_date: newEnd })
     .eq("id", data.schedule_item_id)
+    .eq("project_id", data.project_id)
   if (updErr) return { ok: false, error: updErr.message }
 
   const cascadeErr = await runCascade(data.project_id, data.schedule_item_id)

@@ -43,10 +43,20 @@ function haversineMeters(
   return 2 * EARTH_RADIUS_M * Math.asin(Math.sqrt(a))
 }
 
-function readCache(projectId: string): CachedFix | null {
+// 6-decimal precision (~11cm) makes the cache key stable across float
+// round-trips while still invalidating any meaningful coordinate change.
+function cacheKey(projectId: string, lat: number, lng: number) {
+  return `onsite:${projectId}:${lat.toFixed(6)}:${lng.toFixed(6)}`
+}
+
+function readCache(
+  projectId: string,
+  lat: number,
+  lng: number
+): CachedFix | null {
   if (typeof window === "undefined") return null
   try {
-    const raw = window.sessionStorage.getItem(`onsite:${projectId}`)
+    const raw = window.sessionStorage.getItem(cacheKey(projectId, lat, lng))
     if (!raw) return null
     const parsed = JSON.parse(raw) as CachedFix
     if (Date.now() - parsed.capturedAt > CACHE_TTL_MS) return null
@@ -56,10 +66,18 @@ function readCache(projectId: string): CachedFix | null {
   }
 }
 
-function writeCache(projectId: string, fix: CachedFix) {
+function writeCache(
+  projectId: string,
+  lat: number,
+  lng: number,
+  fix: CachedFix
+) {
   if (typeof window === "undefined") return
   try {
-    window.sessionStorage.setItem(`onsite:${projectId}`, JSON.stringify(fix))
+    window.sessionStorage.setItem(
+      cacheKey(projectId, lat, lng),
+      JSON.stringify(fix)
+    )
   } catch {
     // Quota errors etc. — caching is best-effort, never fatal.
   }
@@ -88,13 +106,13 @@ export function useOnsite({
 
   const retry = useCallback(() => {
     if (typeof window !== "undefined") {
-      window.sessionStorage.removeItem(`onsite:${projectId}`)
+      window.sessionStorage.removeItem(cacheKey(projectId, lat, lng))
     }
     setErrorMessage(null)
     setDistanceMeters(null)
     setState("idle")
     setTick((t) => t + 1)
-  }, [projectId])
+  }, [projectId, lat, lng])
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -109,7 +127,7 @@ export function useOnsite({
       return () => window.clearTimeout(id)
     }
 
-    const cached = readCache(projectId)
+    const cached = readCache(projectId, lat, lng)
     if (cached) {
       const id = window.setTimeout(() => {
         setDistanceMeters(cached.distanceMeters)
@@ -132,7 +150,7 @@ export function useOnsite({
         const next: "onsite" | "offsite" = d <= radiusMeters ? "onsite" : "offsite"
         setDistanceMeters(d)
         setState(next)
-        writeCache(projectId, {
+        writeCache(projectId, lat, lng, {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
           distanceMeters: d,
