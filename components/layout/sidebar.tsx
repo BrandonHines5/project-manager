@@ -8,6 +8,7 @@ import {
   Building2,
   BarChart3,
   Users,
+  Hammer,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { UserRole } from "@/lib/auth"
@@ -20,6 +21,7 @@ type Item = {
 }
 
 const ITEMS: Item[] = [
+  { href: "/my-assignments", label: "My assignments", icon: Hammer, roles: ["trade"] },
   { href: "/projects", label: "Projects", icon: LayoutGrid },
   { href: "/notifications", label: "Notifications", icon: Bell },
   { href: "/companies", label: "Companies", icon: Building2, roles: ["staff"] },

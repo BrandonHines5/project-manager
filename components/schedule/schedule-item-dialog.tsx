@@ -35,10 +35,17 @@ import {
 import {
   saveScheduleItem,
   deleteScheduleItem,
+  getPredecessorDependents,
   logDelay,
   sendQuoTextToSub,
   type ScheduleItemInputT,
+  type SchedulePredecessorDependent,
 } from "@/app/actions/schedule"
+import { DeleteWithDependentsDialog } from "./delete-with-dependents-dialog"
+import {
+  AttachmentsEditor,
+  AttachmentsCreatePlaceholder,
+} from "./attachments-editor"
 import type {
   RecurrenceRule,
   RecurrenceFreq,
@@ -152,6 +159,9 @@ export function ScheduleItemDialog({
   const [status, setStatus] = useState<Enums<"schedule_item_status">>(
     item?.status ?? "not_started"
   )
+  const [priority, setPriority] = useState<Enums<"todo_priority"> | "">(
+    item?.priority ?? ""
+  )
   const [parentId, setParentId] = useState<string | "">(
     item?.parent_id ?? defaultParentId ?? ""
   )
@@ -184,6 +194,23 @@ export function ScheduleItemDialog({
     }))
   })
   const [showDelay, setShowDelay] = useState(false)
+  const [dependents, setDependents] = useState<
+    SchedulePredecessorDependent[] | null
+  >(null)
+  type AttachmentWithUrl = Tables<"schedule_item_attachments"> & {
+    signed_url?: string | null
+  }
+  const [attachmentsState, setAttachmentsState] = useState<AttachmentWithUrl[]>(
+    () => {
+      if (!item) return []
+      return data.attachments
+        .filter((a) => a.schedule_item_id === item.id)
+        .map((a) => ({
+          ...a,
+          signed_url: data.signed_urls[a.storage_path] ?? null,
+        }))
+    }
+  )
 
   const workItemOptions = data.items.filter(
     (i) => i.kind === "work" && i.id !== item?.id
@@ -221,6 +248,7 @@ export function ScheduleItemDialog({
         ? Math.trunc(Number(anchorOffset) || 0)
         : null,
       status,
+      priority: kind === "todo" ? (priority || null) : null,
       recurrence_rule: kind === "todo" ? recurrence : null,
       assignments,
       checklist: kind === "todo" ? checklist : [],
@@ -240,6 +268,26 @@ export function ScheduleItemDialog({
 
   async function handleDelete() {
     if (!item) return
+    // For work items, check whether any other items depend on this one as a
+    // predecessor. If so, force the reassign-or-remove dialog before
+    // touching the row.
+    if (item.kind === "work") {
+      try {
+        const deps = await getPredecessorDependents({
+          id: item.id,
+          project_id: data.project_id,
+        })
+        if (deps.length > 0) {
+          setDependents(deps)
+          return
+        }
+      } catch (e) {
+        toast.error(
+          e instanceof Error ? e.message : "Could not check for dependents"
+        )
+        return
+      }
+    }
     if (!confirm("Delete this item? Sub-items will also be removed.")) return
     startTransition(async () => {
       try {
@@ -365,6 +413,21 @@ export function ScheduleItemDialog({
               </>
             ) : (
               <>
+                <Field label="Priority">
+                  <Select
+                    value={priority}
+                    onChange={(e) =>
+                      setPriority(
+                        e.target.value as Enums<"todo_priority"> | ""
+                      )
+                    }
+                  >
+                    <option value="">— (none)</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </Select>
+                </Field>
                 <Field label="Parent work item">
                   <Select
                     value={parentId}
@@ -475,6 +538,21 @@ export function ScheduleItemDialog({
             <ChecklistEditor value={checklist} onChange={setChecklist} />
           )}
 
+          {/* Attachments (todos only) — needs a persisted id so the upload
+              can write a server-side join row; create mode just nudges
+              the user to save first. */}
+          {kind === "todo" &&
+            (mode === "edit" && item ? (
+              <AttachmentsEditor
+                scheduleItemId={item.id}
+                projectId={data.project_id}
+                attachments={attachmentsState}
+                onChange={setAttachmentsState}
+              />
+            ) : (
+              <AttachmentsCreatePlaceholder />
+            ))}
+
           {/* Recurrence (todos only) */}
           {kind === "todo" && (
             <RecurrenceEditor value={recurrence} onChange={setRecurrence} />
@@ -567,6 +645,24 @@ export function ScheduleItemDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
+      {dependents && item && (
+        <DeleteWithDependentsDialog
+          open={true}
+          onClose={() => setDependents(null)}
+          onDeleted={() => {
+            setDependents(null)
+            router.refresh()
+            onClose()
+          }}
+          itemId={item.id}
+          itemTitle={item.title}
+          projectId={data.project_id}
+          dependents={dependents}
+          candidatePredecessors={data.items.filter(
+            (i) => i.kind === "work" && i.id !== item.id
+          )}
+        />
+      )}
     </Dialog>
   )
 }

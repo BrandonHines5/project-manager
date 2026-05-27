@@ -28,6 +28,7 @@ export default async function SchedulePage({
     { data: predecessors },
     { data: checklist },
     { data: delays },
+    { data: attachments },
     { data: profiles },
     { data: companies },
   ] = await Promise.all([
@@ -56,6 +57,11 @@ export default async function SchedulePage({
       .eq("schedule_items.project_id", projectId)
       .order("logged_at", { ascending: false }),
     supabase
+      .from("schedule_item_attachments")
+      .select("*, schedule_items!inner(project_id)")
+      .eq("schedule_items.project_id", projectId)
+      .order("position", { ascending: true }),
+    supabase
       .from("profiles")
       .select("id, full_name, email, role, company_id")
       .order("full_name"),
@@ -72,6 +78,18 @@ export default async function SchedulePage({
       return rest
     })
 
+  const cleanedAttachments = strip(attachments) as ScheduleData["attachments"]
+  const attachmentPaths = cleanedAttachments.map((a) => a.storage_path)
+  const signedUrls: Record<string, string> = {}
+  if (attachmentPaths.length > 0) {
+    const { data: signed } = await supabase.storage
+      .from("project-files")
+      .createSignedUrls(attachmentPaths, 3600)
+    for (const s of signed ?? []) {
+      if (s.path && s.signedUrl) signedUrls[s.path] = s.signedUrl
+    }
+  }
+
   const data: ScheduleData = {
     project_id: projectId,
     project_address: project.address,
@@ -80,6 +98,8 @@ export default async function SchedulePage({
     predecessors: strip(predecessors) as ScheduleData["predecessors"],
     checklist: strip(checklist) as ScheduleData["checklist"],
     delays: strip(delays) as ScheduleData["delays"],
+    attachments: cleanedAttachments,
+    signed_urls: signedUrls,
     profiles: profiles ?? [],
     companies: companies ?? [],
   }

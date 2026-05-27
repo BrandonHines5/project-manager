@@ -11,12 +11,14 @@ import {
   AlertTriangle,
   ChevronsDownUp,
   ChevronsUpDown,
+  Paperclip,
 } from "lucide-react"
 import { cn, formatDateRange, formatDate } from "@/lib/utils"
 import { AvatarStack } from "@/components/ui/avatar"
 import { EmptyState } from "@/components/ui/empty"
 import { Button } from "@/components/ui/button"
 import { StatusBadge } from "./status-badge"
+import { PriorityBadge } from "./priority-badge"
 import {
   assigneeNamesFor,
   checklistFor,
@@ -326,6 +328,9 @@ function TodoRow({
   const checklist = checklistFor(item.id, data.checklist)
   const done = checklist.filter((c) => c.is_done).length
   const isRecurring = !!item.recurrence_rule
+  const attachmentCount = data.attachments.filter(
+    (a) => a.schedule_item_id === item.id
+  ).length
 
   return (
     <li
@@ -353,6 +358,7 @@ function TodoRow({
               <Repeat className="h-2.5 w-2.5" /> recurring
             </span>
           )}
+          {item.priority && <PriorityBadge priority={item.priority} />}
           {item.status === "delayed" && <StatusBadge status="delayed" />}
         </div>
         <div className="flex items-center gap-3 mt-0.5 text-xs text-muted">
@@ -364,6 +370,11 @@ function TodoRow({
           {checklist.length > 0 && (
             <span>
               {done}/{checklist.length} checked
+            </span>
+          )}
+          {attachmentCount > 0 && (
+            <span className="inline-flex items-center gap-0.5">
+              <Paperclip className="h-3 w-3" /> {attachmentCount}
             </span>
           )}
         </div>
