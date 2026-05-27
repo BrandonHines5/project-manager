@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import {
   ChevronRight,
   CheckCircle2,
@@ -9,6 +9,8 @@ import {
   CalendarDays,
   Repeat,
   AlertTriangle,
+  ChevronsDownUp,
+  ChevronsUpDown,
 } from "lucide-react"
 import { cn, formatDateRange, formatDate } from "@/lib/utils"
 import { AvatarStack } from "@/components/ui/avatar"
@@ -33,17 +35,45 @@ export function ScheduleListView({
   onEdit: (id: string) => void
   onAddTodo: (parentId?: string) => void
 }) {
-  const workItems = data.items
-    .filter((i) => i.kind === "work" && !i.recurrence_parent_id)
-    .sort((a, b) => {
-      const aDate = a.start_date ?? "9999"
-      const bDate = b.start_date ?? "9999"
-      return aDate.localeCompare(bDate)
-    })
+  const workItems = useMemo(
+    () =>
+      data.items
+        .filter((i) => i.kind === "work" && !i.recurrence_parent_id)
+        .sort((a, b) => {
+          const aDate = a.start_date ?? "9999"
+          const bDate = b.start_date ?? "9999"
+          return aDate.localeCompare(bDate)
+        }),
+    [data.items]
+  )
 
   const unlinkedTodos = data.items.filter(
     (i) => i.kind === "todo" && !i.parent_id && !i.recurrence_parent_id
   )
+
+  // Expansion state lifted out of WorkItemRow so the Expand/Collapse all
+  // buttons can drive every row in one click. Default: every work item is
+  // expanded (matches the previous per-row default).
+  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set())
+  const allCollapsed =
+    workItems.length > 0 && workItems.every((w) => collapsedIds.has(w.id))
+
+  function setExpandedFor(id: string, expanded: boolean) {
+    setCollapsedIds((prev) => {
+      const next = new Set(prev)
+      if (expanded) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function expandAll() {
+    setCollapsedIds(new Set())
+  }
+
+  function collapseAll() {
+    setCollapsedIds(new Set(workItems.map((w) => w.id)))
+  }
 
   if (workItems.length === 0 && unlinkedTodos.length === 0) {
     return (
@@ -64,8 +94,24 @@ export function ScheduleListView({
     <div className="space-y-4">
       {workItems.length > 0 && (
         <div className="bg-surface border border-border rounded-lg overflow-hidden">
-          <div className="px-4 py-2.5 bg-background/60 border-b border-border text-xs uppercase tracking-wide text-muted font-medium">
-            Work items
+          <div className="px-4 py-2.5 bg-background/60 border-b border-border text-xs uppercase tracking-wide text-muted font-medium flex items-center justify-between">
+            <span>Work items</span>
+            <button
+              type="button"
+              onClick={allCollapsed ? expandAll : collapseAll}
+              className="inline-flex items-center gap-1 text-[11px] font-medium normal-case tracking-normal text-muted hover:text-foreground cursor-pointer"
+              title={allCollapsed ? "Expand all work items" : "Collapse all work items"}
+            >
+              {allCollapsed ? (
+                <>
+                  <ChevronsUpDown className="h-3.5 w-3.5" /> Expand all
+                </>
+              ) : (
+                <>
+                  <ChevronsDownUp className="h-3.5 w-3.5" /> Collapse all
+                </>
+              )}
+            </button>
           </div>
           <ul className="divide-y divide-border">
             {workItems.map((item) => (
@@ -75,6 +121,8 @@ export function ScheduleListView({
                 data={data}
                 onEdit={onEdit}
                 onAddTodo={onAddTodo}
+                expanded={!collapsedIds.has(item.id)}
+                onToggleExpanded={(next) => setExpandedFor(item.id, next)}
               />
             ))}
           </ul>
@@ -114,13 +162,16 @@ function WorkItemRow({
   data,
   onEdit,
   onAddTodo,
+  expanded,
+  onToggleExpanded,
 }: {
   item: Tables<"schedule_items">
   data: ScheduleData
   onEdit: (id: string) => void
   onAddTodo: (parentId?: string) => void
+  expanded: boolean
+  onToggleExpanded: (next: boolean) => void
 }) {
-  const [expanded, setExpanded] = useState(true)
   const children = childItemsOf(item.id, data.items)
   const assignees = assigneeNamesFor(item.id, data)
   const delays = delaysFor(item.id, data.delays)
@@ -136,7 +187,7 @@ function WorkItemRow({
             type="button"
             onClick={(e) => {
               e.stopPropagation()
-              setExpanded((v) => !v)
+              onToggleExpanded(!expanded)
             }}
             className="mt-1 text-muted hover:text-foreground p-0.5 cursor-pointer"
             aria-label="Toggle"
