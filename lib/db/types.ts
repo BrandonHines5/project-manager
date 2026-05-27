@@ -776,6 +776,8 @@ export type Database = {
           dashboard_pulled_at: string | null
           dashboard_url: string | null
           id: string
+          latitude: number | null
+          longitude: number | null
           name: string
           notes: string | null
           project_number: string
@@ -795,6 +797,8 @@ export type Database = {
           dashboard_pulled_at?: string | null
           dashboard_url?: string | null
           id?: string
+          latitude?: number | null
+          longitude?: number | null
           name: string
           notes?: string | null
           project_number: string
@@ -814,6 +818,8 @@ export type Database = {
           dashboard_pulled_at?: string | null
           dashboard_url?: string | null
           id?: string
+          latitude?: number | null
+          longitude?: number | null
           name?: string
           notes?: string | null
           project_number?: string

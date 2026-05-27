@@ -50,6 +50,20 @@ const ProjectInput = z.object({
     .regex(/^[+\d\s().\-x]*$/, "Phone may only contain digits, spaces, +, -, (), ., or x")
     .optional()
     .or(z.literal("")),
+  // Jobsite coordinates for the onsite check-in geofence. Pasted from
+  // Google Maps by staff; both must be present to count as set.
+  latitude: z.coerce
+    .number()
+    .min(-90)
+    .max(90)
+    .optional()
+    .or(z.literal("").transform(() => undefined)),
+  longitude: z.coerce
+    .number()
+    .min(-180)
+    .max(180)
+    .optional()
+    .or(z.literal("").transform(() => undefined)),
   // "1" if this came from the dashboard picker. Used to set dashboard_pulled_at
   // server-side so we don't trust a client-supplied timestamp.
   dashboard_pulled: z.string().optional().or(z.literal("")),
@@ -154,6 +168,8 @@ export async function createProject(
       client_name: emptyToNull(input.client_name),
       client_email: emptyToNull(input.client_email),
       client_phone: emptyToNull(input.client_phone),
+      latitude: input.latitude ?? null,
+      longitude: input.longitude ?? null,
       // Set server-side after re-fetching the dashboard to confirm the
       // pull. See the dashboardPulledAt computation above.
       dashboard_pulled_at: dashboardPulledAt,
@@ -177,6 +193,47 @@ export async function createProject(
 
   revalidatePath("/projects")
   redirect(`/projects/${data.id}/schedule`)
+}
+
+// ---------------------------------------------------------------------------
+// Set jobsite coordinates (onsite check-in)
+// ---------------------------------------------------------------------------
+
+const CoordinatesInput = z.object({
+  project_id: z.string().uuid(),
+  // Coerce strings so the inline form on /onsite can post raw FormData values.
+  latitude: z.coerce.number().min(-90).max(90),
+  longitude: z.coerce.number().min(-180).max(180),
+})
+
+export type SetProjectCoordinatesResult =
+  | { ok: true }
+  | { ok: false; error: string }
+
+export async function setProjectCoordinates(
+  input: z.input<typeof CoordinatesInput>
+): Promise<SetProjectCoordinatesResult> {
+  await requireStaff()
+  const parsed = CoordinatesInput.safeParse(input)
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error:
+        parsed.error.issues[0]?.message ??
+        "Latitude and longitude must be valid numbers",
+    }
+  }
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase
+    .from("projects")
+    .update({
+      latitude: parsed.data.latitude,
+      longitude: parsed.data.longitude,
+    })
+    .eq("id", parsed.data.project_id)
+  if (error) return { ok: false, error: error.message }
+  revalidatePath(`/projects/${parsed.data.project_id}/onsite`)
+  return { ok: true }
 }
 
 // ---------------------------------------------------------------------------
