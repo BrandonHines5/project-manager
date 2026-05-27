@@ -195,38 +195,47 @@ export function computeCriticalPath(
   }
   if (order.length !== workItems.length) return new Set() // cycle
 
-  // Forward pass — propagate from each item's existing start to compute the
-  // earliest its successors could start. When an item has no predecessors,
-  // ES is taken straight from start_date so the algorithm anchors to the
-  // user's calendar rather than re-baselining everything to day 0.
+  // Forward pass. For items with no predecessors, ES is anchored to the
+  // user's scheduled start (so the chart's calendar isn't re-baselined).
+  // For items WITH predecessors, ES is derived purely from those edges —
+  // anchoring to the actual start would let any user-scheduled slack
+  // collapse the calculated ES onto LS and falsely report slack = 0 only
+  // for the last item. With pure predecessor-driven ES, every item on the
+  // longest chain correctly shows zero slack.
   const es = new Map<string, number>()
   const ef = new Map<string, number>()
   for (const id of order) {
     const it = byId.get(id)!
     const dur = duration.get(id)!
-    let earliest = toEpochDay(it.start_date!)
-    for (const p of incoming.get(id) ?? []) {
-      const pred = byId.get(p.predecessor_id)!
-      const predES = es.get(pred.id)!
-      const predEF = ef.get(pred.id)!
-      let candidate: number
-      switch (p.dep_type) {
-        case "FS":
-          candidate = predEF + p.lag_days + 1
-          break
-        case "SS":
-          candidate = predES + p.lag_days
-          break
-        case "FF":
-          candidate = predEF + p.lag_days - dur + 1
-          break
-        case "SF":
-          candidate = predES + p.lag_days - dur + 1
-          break
-        default:
-          candidate = predEF + p.lag_days + 1
+    const incomingEdges = incoming.get(id) ?? []
+    let earliest: number
+    if (incomingEdges.length === 0) {
+      earliest = toEpochDay(it.start_date!)
+    } else {
+      earliest = Number.NEGATIVE_INFINITY
+      for (const p of incomingEdges) {
+        const pred = byId.get(p.predecessor_id)!
+        const predES = es.get(pred.id)!
+        const predEF = ef.get(pred.id)!
+        let candidate: number
+        switch (p.dep_type) {
+          case "FS":
+            candidate = predEF + p.lag_days + 1
+            break
+          case "SS":
+            candidate = predES + p.lag_days
+            break
+          case "FF":
+            candidate = predEF + p.lag_days - dur + 1
+            break
+          case "SF":
+            candidate = predES + p.lag_days - dur + 1
+            break
+          default:
+            candidate = predEF + p.lag_days + 1
+        }
+        if (candidate > earliest) earliest = candidate
       }
-      if (candidate > earliest) earliest = candidate
     }
     es.set(id, earliest)
     ef.set(id, earliest + dur - 1)
