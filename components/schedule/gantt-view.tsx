@@ -4,10 +4,11 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { addDays as fnsAddDays, differenceInCalendarDays, parseISO, format, isWeekend, startOfDay } from "date-fns"
-import { CalendarDays } from "lucide-react"
+import { CalendarDays, Zap } from "lucide-react"
 import { EmptyState } from "@/components/ui/empty"
 import { cn, todayISO, addDays } from "@/lib/utils"
 import { moveScheduleItem } from "@/app/actions/schedule"
+import { computeCriticalPath } from "@/lib/schedule/scheduling"
 import type { ScheduleData } from "@/app/(app)/projects/[id]/schedule/schedule-client"
 
 const DAY_PX = 28
@@ -24,6 +25,12 @@ export function GanttView({
 }) {
   const items = data.items.filter(
     (i) => i.kind === "work" && i.start_date && i.end_date && !i.recurrence_parent_id
+  )
+
+  const [showCritical, setShowCritical] = useState(true)
+  const criticalIds = useMemo(
+    () => computeCriticalPath(data.items, data.predecessors),
+    [data.items, data.predecessors]
   )
 
   const { minDate, days } = useMemo(() => {
@@ -164,10 +171,26 @@ export function GanttView({
   )
 
   return (
+    <div className="space-y-2">
+    <div className="flex items-center justify-end gap-2 text-xs">
+      <label className="inline-flex items-center gap-1.5 cursor-pointer select-none text-muted hover:text-foreground">
+        <input
+          type="checkbox"
+          checked={showCritical}
+          onChange={(e) => setShowCritical(e.target.checked)}
+          className="h-3.5 w-3.5"
+        />
+        <Zap className="h-3.5 w-3.5 text-red-500" />
+        Highlight critical path
+        {criticalIds.size > 0 && (
+          <span className="text-muted">({criticalIds.size})</span>
+        )}
+      </label>
+    </div>
     <div
       ref={containerRef}
       className="bg-surface border border-border rounded-lg overflow-auto"
-      style={{ maxHeight: "calc(100vh - 240px)" }}
+      style={{ maxHeight: "calc(100vh - 280px)" }}
     >
       <div
         className="relative"
@@ -257,6 +280,7 @@ export function GanttView({
               : item.status === "in_progress"
               ? "bg-brand-500"
               : "bg-zinc-400"
+          const isCritical = showCritical && criticalIds.has(item.id)
 
           return (
             <div key={item.id}>
@@ -318,8 +342,9 @@ export function GanttView({
                 }
                 disabled={pending}
                 className={cn(
-                  "absolute rounded-md text-white text-xs font-medium px-2 truncate shadow-sm hover:opacity-90 active:opacity-80 text-left",
+                  "absolute rounded-md text-white text-xs font-medium px-2 truncate shadow-sm hover:opacity-90 active:opacity-80 text-left inline-flex items-center gap-1",
                   barColor,
+                  isCritical && "ring-2 ring-red-500 ring-offset-1",
                   dragOffsets[item.id] ? "cursor-grabbing" : "cursor-grab"
                 )}
                 style={{
@@ -328,9 +353,10 @@ export function GanttView({
                   width: w,
                   height: ROW_PX - 12,
                 }}
-                title={`${item.title} · ${dur}d · drag to reschedule`}
+                title={`${item.title} · ${dur}d${isCritical ? " · critical path" : ""} · drag to reschedule`}
               >
-                {item.title}
+                {isCritical && <Zap className="h-3 w-3 shrink-0" />}
+                <span className="truncate">{item.title}</span>
               </button>
             </div>
           )
@@ -357,6 +383,16 @@ export function GanttView({
             >
               <polygon points="0 0, 6 3, 0 6" fill="#94a3b8" />
             </marker>
+            <marker
+              id="arrowhead-critical"
+              markerWidth="6"
+              markerHeight="6"
+              refX="5"
+              refY="3"
+              orient="auto"
+            >
+              <polygon points="0 0, 6 3, 0 6" fill="#ef4444" />
+            </marker>
           </defs>
           {arrows.map((a) => {
             const succ = sortedItems.find((i) => i.id === a.item_id)
@@ -373,19 +409,24 @@ export function GanttView({
               LABEL_PX + differenceInCalendarDays(succStart, minDate) * DAY_PX + 2
             const y2 = HEADER_PX + sIdx * ROW_PX + ROW_PX / 2
             const midX = (x1 + x2) / 2
+            const edgeCritical =
+              showCritical && criticalIds.has(succ.id) && criticalIds.has(pred.id)
             return (
               <path
                 key={a.id}
                 d={`M ${x1} ${y1} L ${midX} ${y1} L ${midX} ${y2} L ${x2} ${y2}`}
-                stroke="#94a3b8"
-                strokeWidth="1.5"
+                stroke={edgeCritical ? "#ef4444" : "#94a3b8"}
+                strokeWidth={edgeCritical ? "2" : "1.5"}
                 fill="none"
-                markerEnd="url(#arrowhead)"
+                markerEnd={
+                  edgeCritical ? "url(#arrowhead-critical)" : "url(#arrowhead)"
+                }
               />
             )
           })}
         </svg>
       </div>
+    </div>
     </div>
   )
 }

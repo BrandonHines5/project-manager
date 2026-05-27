@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
-import { requireStaff } from "@/lib/auth"
+import { requireStaff, requireSession } from "@/lib/auth"
 import {
   wouldCreateCycle,
   cascadeFromPredecessors,
@@ -65,6 +65,7 @@ const ScheduleItemInput = z
     status: z
       .enum(["not_started", "in_progress", "complete", "delayed"])
       .default("not_started"),
+    priority: z.enum(["low", "medium", "high"]).nullish(),
     recurrence_rule: Recurrence,
     assignments: z.array(Assignment).default([]),
     checklist: z.array(ChecklistItem).default([]),
@@ -173,6 +174,7 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     due_date: computedDueDate,
     duration_days: duration,
     status: parsed.status,
+    priority: parsed.priority ?? null,
     recurrence_rule: (parsed.recurrence_rule ?? null) as RecurrenceRule | null,
     parent_anchor: anchorFinal,
     parent_offset_days: offsetFinal,
@@ -456,10 +458,130 @@ async function applyAnchoredChildrenCascade(parentIds: string[]) {
 
 const IdProjectInput = z.object({ id: z.string(), project_id: z.string() })
 
-export async function deleteScheduleItem(input: { id: string; project_id: string }) {
+const ReassignInput = z.object({
+  id: z.string(),
+  project_id: z.string(),
+  // For each successor that currently depends on the to-be-deleted item:
+  // either point it at a different predecessor (replace) or drop the
+  // dependency (remove). Successors not listed default to "remove" — the
+  // foreign key would cascade anyway, but listing them gives the UI a
+  // chance to surface the change.
+  reassignments: z
+    .array(
+      z.object({
+        successor_id: z.string(),
+        new_predecessor_id: z.string().nullable(),
+        dep_type: z.enum(["FS", "SS", "FF", "SF"]).default("FS"),
+        lag_days: z.coerce.number().int().default(0),
+      })
+    )
+    .default([]),
+})
+
+export type SchedulePredecessorDependent = {
+  successor_id: string
+  successor_title: string
+  dep_type: "FS" | "SS" | "FF" | "SF"
+  lag_days: number
+}
+
+/**
+ * Lists schedule items that depend on `id` via a schedule_predecessors row.
+ * The UI uses this to drive the reassign-or-remove dialog before deleting
+ * a work item that's a predecessor.
+ */
+export async function getPredecessorDependents(input: {
+  id: string
+  project_id: string
+}): Promise<SchedulePredecessorDependent[]> {
   await requireStaff()
   const parsed = IdProjectInput.parse(input)
   const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase
+    .from("schedule_predecessors")
+    .select(
+      "item_id, dep_type, lag_days, schedule_items!schedule_predecessors_item_id_fkey(id, title, project_id)"
+    )
+    .eq("predecessor_id", parsed.id)
+  if (error) throw new Error(error.message)
+  const rows = (data ?? []) as unknown as Array<{
+    item_id: string
+    dep_type: "FS" | "SS" | "FF" | "SF"
+    lag_days: number
+    schedule_items: { id: string; title: string; project_id: string } | null
+  }>
+  return rows
+    .filter((r) => r.schedule_items && r.schedule_items.project_id === parsed.project_id)
+    .map((r) => ({
+      successor_id: r.item_id,
+      successor_title: r.schedule_items!.title,
+      dep_type: r.dep_type,
+      lag_days: r.lag_days,
+    }))
+}
+
+export async function deleteScheduleItem(input: {
+  id: string
+  project_id: string
+  reassignments?: Array<{
+    successor_id: string
+    new_predecessor_id: string | null
+    dep_type?: "FS" | "SS" | "FF" | "SF"
+    lag_days?: number
+  }>
+}) {
+  await requireStaff()
+  const parsed = ReassignInput.parse(input)
+  const supabase = await createSupabaseServerClient()
+
+  // Apply reassignments before the delete so we can validate the new
+  // predecessor exists and doesn't introduce a cycle. Each reassignment
+  // first removes the existing edge that pointed at the doomed item, then
+  // inserts a fresh edge (when new_predecessor_id is non-null).
+  for (const r of parsed.reassignments) {
+    const { error: delEdgeErr } = await supabase
+      .from("schedule_predecessors")
+      .delete()
+      .eq("item_id", r.successor_id)
+      .eq("predecessor_id", parsed.id)
+    if (delEdgeErr) throw new Error(delEdgeErr.message)
+
+    if (r.new_predecessor_id) {
+      // Cycle check against the current graph.
+      const { data: existing, error: pErr } = await supabase
+        .from("schedule_predecessors")
+        .select("id, item_id, predecessor_id, dep_type, lag_days, created_at")
+      if (pErr) throw new Error(pErr.message)
+      const proposed = [
+        ...(existing ?? []),
+        {
+          id: "new",
+          item_id: r.successor_id,
+          predecessor_id: r.new_predecessor_id,
+          dep_type: r.dep_type,
+          lag_days: r.lag_days,
+          created_at: "",
+        },
+      ]
+      if (
+        wouldCreateCycle(proposed, r.successor_id, r.new_predecessor_id)
+      ) {
+        throw new Error(
+          `New predecessor for "${r.successor_id}" would create a cycle.`
+        )
+      }
+      const { error: insErr } = await supabase
+        .from("schedule_predecessors")
+        .insert({
+          item_id: r.successor_id,
+          predecessor_id: r.new_predecessor_id,
+          dep_type: r.dep_type,
+          lag_days: r.lag_days,
+        })
+      if (insErr) throw new Error(insErr.message)
+    }
+  }
+
   const { error } = await supabase
     .from("schedule_items")
     .delete()
@@ -640,6 +762,125 @@ export async function sendQuoTextToSub(input: {
     return { ok: false, error: result.reason ?? "Failed to send text." }
   }
   return { ok: true, to: normalized, company_name: company.name }
+}
+
+const AttachmentInput = z.object({
+  schedule_item_id: z.string(),
+  project_id: z.string(),
+  storage_path: z.string().min(1),
+  file_name: z.string().min(1).max(500),
+  file_type: z.string().max(200).nullish(),
+  file_size: z.coerce.number().int().nullish(),
+  caption: z.string().max(500).nullish(),
+})
+
+/**
+ * Records an upload that already landed in Storage. The browser performs the
+ * actual PUT against `project-files` using its own session JWT (RLS gate),
+ * then calls this action with the resulting storage_path so we can attach it
+ * to the schedule item.
+ */
+export async function addScheduleItemAttachment(input: {
+  schedule_item_id: string
+  project_id: string
+  storage_path: string
+  file_name: string
+  file_type?: string | null
+  file_size?: number | null
+  caption?: string | null
+}) {
+  const profile = await requireStaff()
+  const parsed = AttachmentInput.parse(input)
+  const supabase = await createSupabaseServerClient()
+
+  // Defence in depth: confirm the schedule item exists in the named project.
+  // A malicious client could otherwise attach a file to an item in a
+  // different project they happen to own.
+  const { data: item, error: itemErr } = await supabase
+    .from("schedule_items")
+    .select("id, project_id")
+    .eq("id", parsed.schedule_item_id)
+    .maybeSingle()
+  if (itemErr) throw new Error(itemErr.message)
+  if (!item || item.project_id !== parsed.project_id) {
+    throw new Error("Schedule item not found in this project.")
+  }
+
+  const { data, error } = await supabase
+    .from("schedule_item_attachments")
+    .insert({
+      schedule_item_id: parsed.schedule_item_id,
+      storage_path: parsed.storage_path,
+      file_name: parsed.file_name,
+      file_type: nz(parsed.file_type ?? null),
+      file_size: parsed.file_size ?? null,
+      caption: nz(parsed.caption ?? null),
+      uploaded_by: profile.id,
+    })
+    .select("id")
+    .single()
+  if (error) throw new Error(error.message)
+  revalidatePath(`/projects/${parsed.project_id}/schedule`)
+  return { id: data.id }
+}
+
+export async function deleteScheduleItemAttachment(input: {
+  id: string
+  project_id: string
+}) {
+  await requireStaff()
+  const parsed = z.object({ id: z.string(), project_id: z.string() }).parse(input)
+  const supabase = await createSupabaseServerClient()
+
+  // Look up the storage_path AND verify the attachment belongs to the named
+  // project. Without the project check, a forged (or simply wrong) id could
+  // delete an attachment from a different project. The inner join also gives
+  // us the storage_path needed to purge the file from the bucket.
+  const { data: existing, error: existingErr } = await supabase
+    .from("schedule_item_attachments")
+    .select("storage_path, schedule_items!inner(project_id)")
+    .eq("id", parsed.id)
+    .maybeSingle()
+  if (existingErr) throw new Error(existingErr.message)
+  if (!existing) throw new Error("Attachment not found.")
+  const owningProject = (
+    existing as unknown as { schedule_items: { project_id: string } }
+  ).schedule_items.project_id
+  if (owningProject !== parsed.project_id) {
+    throw new Error("Attachment does not belong to this project.")
+  }
+  const { error } = await supabase
+    .from("schedule_item_attachments")
+    .delete()
+    .eq("id", parsed.id)
+  if (error) throw new Error(error.message)
+  if (existing?.storage_path) {
+    const { error: storageErr } = await supabase.storage
+      .from("project-files")
+      .remove([existing.storage_path])
+    if (storageErr) {
+      console.warn(
+        "[deleteScheduleItemAttachment] storage cleanup failed:",
+        storageErr.message
+      )
+    }
+  }
+  revalidatePath(`/projects/${parsed.project_id}/schedule`)
+}
+
+export async function getScheduleAttachmentSignedUrls(paths: string[]) {
+  if (paths.length === 0) return {}
+  await requireSession()
+  const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase.storage
+    .from("project-files")
+    .createSignedUrls(paths, 3600)
+  if (error) throw new Error(error.message)
+  const out: Record<string, string> = {}
+  for (const d of data ?? []) {
+    if (d.path && d.signedUrl) out[d.path] = d.signedUrl
+  }
+  return out
 }
 
 export async function toggleChecklistItem({

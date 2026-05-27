@@ -1,12 +1,13 @@
 "use client"
 
 import { useState, useMemo } from "react"
-import { Plus, List, BarChart3 } from "lucide-react"
+import { Plus, List, BarChart3, CheckSquare } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { Tables } from "@/lib/db/types"
 import { ScheduleListView } from "@/components/schedule/schedule-list-view"
 import { GanttView } from "@/components/schedule/gantt-view"
+import { TodosView } from "@/components/schedule/todos-view"
 import { ScheduleItemDialog } from "@/components/schedule/schedule-item-dialog"
 
 export type ScheduleData = {
@@ -17,11 +18,13 @@ export type ScheduleData = {
   predecessors: Tables<"schedule_predecessors">[]
   checklist: Tables<"todo_checklist_items">[]
   delays: Tables<"schedule_delays">[]
+  attachments: Tables<"schedule_item_attachments">[]
+  signed_urls: Record<string, string>
   profiles: Pick<Tables<"profiles">, "id" | "full_name" | "email" | "role" | "company_id">[]
   companies: Pick<Tables<"companies">, "id" | "name" | "type" | "trade_category" | "phone">[]
 }
 
-type View = "list" | "gantt"
+type View = "list" | "gantt" | "todos"
 
 export function ScheduleClient({ data }: { data: ScheduleData }) {
   const [view, setView] = useState<View>("list")
@@ -72,6 +75,17 @@ export function ScheduleClient({ data }: { data: ScheduleData }) {
               <List className="h-3.5 w-3.5" /> List
             </button>
             <button
+              onClick={() => setView("todos")}
+              className={cn(
+                "px-3 py-1.5 text-xs font-medium rounded inline-flex items-center gap-1.5 cursor-pointer",
+                view === "todos"
+                  ? "bg-brand-500 text-white"
+                  : "text-muted hover:text-foreground"
+              )}
+            >
+              <CheckSquare className="h-3.5 w-3.5" /> To-dos
+            </button>
+            <button
               onClick={() => setView("gantt")}
               className={cn(
                 "px-3 py-1.5 text-xs font-medium rounded inline-flex items-center gap-1.5 cursor-pointer",
@@ -103,7 +117,7 @@ export function ScheduleClient({ data }: { data: ScheduleData }) {
         </div>
       </div>
 
-      {view === "list" ? (
+      {view === "list" && (
         <ScheduleListView
           data={data}
           onEdit={(id) => setDialogState({ mode: "edit", itemId: id })}
@@ -111,7 +125,15 @@ export function ScheduleClient({ data }: { data: ScheduleData }) {
             setDialogState({ mode: "create", kind: "todo", parentId })
           }
         />
-      ) : (
+      )}
+      {view === "todos" && (
+        <TodosView
+          data={data}
+          onEdit={(id) => setDialogState({ mode: "edit", itemId: id })}
+          onAddTodo={() => setDialogState({ mode: "create", kind: "todo" })}
+        />
+      )}
+      {view === "gantt" && (
         <GanttView
           data={data}
           onEdit={(id) => setDialogState({ mode: "edit", itemId: id })}

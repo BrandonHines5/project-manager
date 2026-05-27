@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo, useState, useTransition } from "react"
 import {
   ChevronRight,
   CheckCircle2,
@@ -11,18 +11,21 @@ import {
   AlertTriangle,
   ChevronsDownUp,
   ChevronsUpDown,
+  Paperclip,
 } from "lucide-react"
 import { cn, formatDateRange, formatDate } from "@/lib/utils"
 import { AvatarStack } from "@/components/ui/avatar"
 import { EmptyState } from "@/components/ui/empty"
 import { Button } from "@/components/ui/button"
 import { StatusBadge } from "./status-badge"
+import { PriorityBadge } from "./priority-badge"
 import {
   assigneeNamesFor,
   checklistFor,
   childItemsOf,
   delaysFor,
 } from "./helpers"
+import { setItemStatus } from "@/app/actions/schedule"
 import type { ScheduleData } from "@/app/(app)/projects/[id]/schedule/schedule-client"
 import type { Tables } from "@/lib/db/types"
 
@@ -157,6 +160,61 @@ export function ScheduleListView({
   )
 }
 
+function CompleteCheckbox({
+  item,
+  size = "md",
+}: {
+  item: Tables<"schedule_items">
+  size?: "sm" | "md"
+}) {
+  const [pending, startTransition] = useTransition()
+  const isComplete = item.status === "complete"
+  // Only safe to round-trip via this control when the item is already in one
+  // of the two binary states. For `in_progress` / `delayed`, toggling would
+  // irreversibly collapse the status to `not_started` — instead we render
+  // the icon read-only and the user opens the item to change status.
+  const canBinaryToggle =
+    item.status === "complete" || item.status === "not_started"
+  const dim = size === "sm" ? "h-4 w-4" : "h-5 w-5"
+
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={isComplete}
+      aria-label={isComplete ? "Mark not complete" : "Mark complete"}
+      disabled={pending || !canBinaryToggle}
+      onClick={(e) => {
+        e.stopPropagation()
+        if (!canBinaryToggle) return
+        startTransition(async () => {
+          await setItemStatus({
+            id: item.id,
+            project_id: item.project_id,
+            status: isComplete ? "not_started" : "complete",
+          })
+        })
+      }}
+      className={cn(
+        "shrink-0 cursor-pointer transition-opacity",
+        pending && "opacity-50",
+        !canBinaryToggle && "cursor-default opacity-60"
+      )}
+      title={
+        canBinaryToggle
+          ? undefined
+          : `Status is "${item.status.replace("_", " ")}" — open the item to change`
+      }
+    >
+      {isComplete ? (
+        <CheckCircle2 className={cn(dim, "text-success")} />
+      ) : (
+        <Circle className={cn(dim, "text-muted hover:text-foreground")} />
+      )}
+    </button>
+  )
+}
+
 function WorkItemRow({
   item,
   data,
@@ -199,9 +257,17 @@ function WorkItemRow({
               )}
             />
           </button>
+          <div className="mt-0.5">
+            <CompleteCheckbox item={item} />
+          </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="text-sm font-semibold text-foreground">
+              <h3
+                className={cn(
+                  "text-sm font-semibold text-foreground",
+                  item.status === "complete" && "line-through text-muted"
+                )}
+              >
                 {item.title}
               </h3>
               <StatusBadge status={item.status} />
@@ -275,6 +341,9 @@ function TodoRow({
   const checklist = checklistFor(item.id, data.checklist)
   const done = checklist.filter((c) => c.is_done).length
   const isRecurring = !!item.recurrence_rule
+  const attachmentCount = data.attachments.filter(
+    (a) => a.schedule_item_id === item.id
+  ).length
 
   return (
     <li
@@ -285,11 +354,7 @@ function TodoRow({
       onClick={() => onEdit(item.id)}
     >
       <div className="mt-0.5">
-        {item.status === "complete" ? (
-          <CheckCircle2 className="h-4 w-4 text-success" />
-        ) : (
-          <Circle className="h-4 w-4 text-muted" />
-        )}
+        <CompleteCheckbox item={item} size="sm" />
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
@@ -306,6 +371,7 @@ function TodoRow({
               <Repeat className="h-2.5 w-2.5" /> recurring
             </span>
           )}
+          {item.priority && <PriorityBadge priority={item.priority} />}
           {item.status === "delayed" && <StatusBadge status="delayed" />}
         </div>
         <div className="flex items-center gap-3 mt-0.5 text-xs text-muted">
@@ -317,6 +383,11 @@ function TodoRow({
           {checklist.length > 0 && (
             <span>
               {done}/{checklist.length} checked
+            </span>
+          )}
+          {attachmentCount > 0 && (
+            <span className="inline-flex items-center gap-0.5">
+              <Paperclip className="h-3 w-3" /> {attachmentCount}
             </span>
           )}
         </div>

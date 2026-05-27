@@ -932,6 +932,63 @@ export type Database = {
           },
         ]
       }
+      schedule_item_attachments: {
+        Row: {
+          caption: string | null
+          created_at: string
+          file_name: string
+          file_size: number | null
+          file_type: string | null
+          id: string
+          position: number
+          schedule_item_id: string
+          storage_bucket: string
+          storage_path: string
+          uploaded_by: string | null
+        }
+        Insert: {
+          caption?: string | null
+          created_at?: string
+          file_name: string
+          file_size?: number | null
+          file_type?: string | null
+          id?: string
+          position?: number
+          schedule_item_id: string
+          storage_bucket?: string
+          storage_path: string
+          uploaded_by?: string | null
+        }
+        Update: {
+          caption?: string | null
+          created_at?: string
+          file_name?: string
+          file_size?: number | null
+          file_type?: string | null
+          id?: string
+          position?: number
+          schedule_item_id?: string
+          storage_bucket?: string
+          storage_path?: string
+          uploaded_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "schedule_item_attachments_schedule_item_id_fkey"
+            columns: ["schedule_item_id"]
+            isOneToOne: false
+            referencedRelation: "schedule_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "schedule_item_attachments_uploaded_by_fkey"
+            columns: ["uploaded_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       schedule_items: {
         Row: {
           baseline_end_date: string | null
@@ -950,6 +1007,7 @@ export type Database = {
           parent_id: string | null
           parent_offset_days: number | null
           position: number
+          priority: Database["public"]["Enums"]["todo_priority"] | null
           project_id: string
           recurrence_parent_id: string | null
           recurrence_rule: Json | null
@@ -976,6 +1034,7 @@ export type Database = {
           parent_id?: string | null
           parent_offset_days?: number | null
           position?: number
+          priority?: Database["public"]["Enums"]["todo_priority"] | null
           project_id: string
           recurrence_parent_id?: string | null
           recurrence_rule?: Json | null
@@ -1002,6 +1061,7 @@ export type Database = {
           parent_id?: string | null
           parent_offset_days?: number | null
           position?: number
+          priority?: Database["public"]["Enums"]["todo_priority"] | null
           project_id?: string
           recurrence_parent_id?: string | null
           recurrence_rule?: Json | null
@@ -1177,6 +1237,7 @@ export type Database = {
         | "complete"
         | "delayed"
       schedule_parent_anchor: "start" | "end"
+      todo_priority: "low" | "medium" | "high"
       user_role: "staff" | "trade" | "client"
     }
     CompositeTypes: {
@@ -1342,6 +1403,7 @@ export const Constants = {
         "delayed",
       ],
       schedule_parent_anchor: ["start", "end"],
+      todo_priority: ["low", "medium", "high"],
       user_role: ["staff", "trade", "client"],
     },
   },
