@@ -13,6 +13,7 @@ type Tab = {
 
 const TABS: Tab[] = [
   { label: "Schedule", slug: "schedule", hideForRoles: ["client"] },
+  { label: "Onsite", slug: "onsite", hideForRoles: ["client", "trade"] },
   { label: "Daily Logs", slug: "daily-logs" },
   { label: "Decisions", slug: "decisions" },
   { label: "Files", slug: "files" },
