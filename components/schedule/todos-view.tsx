@@ -221,7 +221,7 @@ function TodoRow({
   data: ScheduleData
   onEdit: (id: string) => void
 }) {
-  const assignees = assigneeNamesFor(item.id, data)
+  const directAssignees = assigneeNamesFor(item.id, data)
   const checklist = checklistFor(item.id, data.checklist)
   const done = checklist.filter((c) => c.is_done).length
   const isRecurring = !!item.recurrence_rule
@@ -231,6 +231,17 @@ function TodoRow({
   const parent = item.parent_id
     ? data.items.find((i) => i.id === item.parent_id)
     : null
+  // Fall back to the parent work item's assignees when the to-do itself
+  // has none — for a to-do under a work item, the responsible party is
+  // usually whoever's doing the work. The fallback set is rendered
+  // dimmed so it's distinguishable from a direct assignment.
+  const parentAssignees =
+    directAssignees.length === 0 && parent
+      ? assigneeNamesFor(parent.id, data)
+      : []
+  const assignees =
+    directAssignees.length > 0 ? directAssignees : parentAssignees
+  const inheritedAssignees = directAssignees.length === 0
 
   const [pending, startTransition] = useTransition()
   const isComplete = item.status === "complete"
@@ -328,7 +339,18 @@ function TodoRow({
           )}
         </div>
       </div>
-      {assignees.length > 0 && <AvatarStack names={assignees} size="xs" />}
+      {assignees.length > 0 && (
+        <div
+          className={cn(inheritedAssignees && "opacity-60")}
+          title={
+            inheritedAssignees
+              ? `Inherited from parent: ${parent?.title ?? ""}`
+              : undefined
+          }
+        >
+          <AvatarStack names={assignees} size="xs" />
+        </div>
+      )}
     </li>
   )
 }

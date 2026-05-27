@@ -4,7 +4,6 @@ import { ArrowLeft, ExternalLink } from "lucide-react"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireSession } from "@/lib/auth"
 import { Badge } from "@/components/ui/badge"
-import { formatCurrency } from "@/lib/utils"
 import { ProjectTabs } from "./project-tabs"
 import { MembersButton } from "@/components/projects/members-dialog"
 import { DuplicateProjectButton } from "@/components/projects/duplicate-button"
@@ -32,7 +31,7 @@ export default async function ProjectDetailLayout({
   const { data: project } = await supabase
     .from("projects")
     .select(
-      "id, project_number, name, address, status, contract_price, dashboard_url, client_name, client_email, client_phone"
+      "id, project_number, name, address, status, dashboard_url, client_name, client_email, client_phone"
     )
     .eq("id", id)
     .maybeSingle()
@@ -111,16 +110,6 @@ export default async function ProjectDetailLayout({
               )}
             </div>
             <div className="flex items-center gap-4 text-sm">
-              {project.contract_price != null && (
-                <div>
-                  <div className="text-[11px] uppercase tracking-wide text-muted">
-                    Contract
-                  </div>
-                  <div className="font-semibold tabular-nums">
-                    {formatCurrency(project.contract_price)}
-                  </div>
-                </div>
-              )}
               {isStaff && (
                 <MembersButton
                   projectId={project.id}
