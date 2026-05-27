@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo, useState, useTransition } from "react"
 import {
   ChevronRight,
   CheckCircle2,
@@ -23,6 +23,7 @@ import {
   childItemsOf,
   delaysFor,
 } from "./helpers"
+import { setItemStatus } from "@/app/actions/schedule"
 import type { ScheduleData } from "@/app/(app)/projects/[id]/schedule/schedule-client"
 import type { Tables } from "@/lib/db/types"
 
@@ -157,6 +158,48 @@ export function ScheduleListView({
   )
 }
 
+function CompleteCheckbox({
+  item,
+  size = "md",
+}: {
+  item: Tables<"schedule_items">
+  size?: "sm" | "md"
+}) {
+  const [pending, startTransition] = useTransition()
+  const isComplete = item.status === "complete"
+  const dim = size === "sm" ? "h-4 w-4" : "h-5 w-5"
+
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={isComplete}
+      aria-label={isComplete ? "Mark not complete" : "Mark complete"}
+      disabled={pending}
+      onClick={(e) => {
+        e.stopPropagation()
+        startTransition(async () => {
+          await setItemStatus({
+            id: item.id,
+            project_id: item.project_id,
+            status: isComplete ? "not_started" : "complete",
+          })
+        })
+      }}
+      className={cn(
+        "shrink-0 cursor-pointer transition-opacity",
+        pending && "opacity-50"
+      )}
+    >
+      {isComplete ? (
+        <CheckCircle2 className={cn(dim, "text-success")} />
+      ) : (
+        <Circle className={cn(dim, "text-muted hover:text-foreground")} />
+      )}
+    </button>
+  )
+}
+
 function WorkItemRow({
   item,
   data,
@@ -199,9 +242,17 @@ function WorkItemRow({
               )}
             />
           </button>
+          <div className="mt-0.5">
+            <CompleteCheckbox item={item} />
+          </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="text-sm font-semibold text-foreground">
+              <h3
+                className={cn(
+                  "text-sm font-semibold text-foreground",
+                  item.status === "complete" && "line-through text-muted"
+                )}
+              >
                 {item.title}
               </h3>
               <StatusBadge status={item.status} />
@@ -285,11 +336,7 @@ function TodoRow({
       onClick={() => onEdit(item.id)}
     >
       <div className="mt-0.5">
-        {item.status === "complete" ? (
-          <CheckCircle2 className="h-4 w-4 text-success" />
-        ) : (
-          <Circle className="h-4 w-4 text-muted" />
-        )}
+        <CompleteCheckbox item={item} size="sm" />
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
