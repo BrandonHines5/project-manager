@@ -3,7 +3,15 @@
 import { useState, useMemo, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { Search, UserCog, UserPlus, Trash2, Copy, RefreshCw } from "lucide-react"
+import {
+  Search,
+  UserCog,
+  UserPlus,
+  Trash2,
+  Copy,
+  RefreshCw,
+  KeyRound,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { EmptyState } from "@/components/ui/empty"
@@ -22,6 +30,7 @@ import {
   updateProfile,
   inviteTeamMember,
   deleteTeamMember,
+  resetTeamMemberPassword,
   type UpdateProfileInputT,
   type InviteTeamMemberInputT,
 } from "@/app/actions/team"
@@ -183,13 +192,37 @@ function EditDialog({
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [deleting, startDelete] = useTransition()
+  const [resettingPw, startResetPw] = useTransition()
   const [fullName, setFullName] = useState(profile.full_name)
   const [role, setRole] = useState<Enums<"user_role">>(profile.role)
   const [companyId, setCompanyId] = useState(profile.company_id ?? "")
   const [phone, setPhone] = useState(profile.phone ?? "")
   const [confirmDelete, setConfirmDelete] = useState(false)
+  // After a successful reset, the new temp password is shown inline so staff
+  // can copy & share it. Stored only in component state — never persisted.
+  const [resetPassword, setResetPassword] = useState<string | null>(null)
 
   const isSelf = profile.id === currentUserId
+
+  function doResetPassword() {
+    startResetPw(async () => {
+      try {
+        const { password } = await resetTeamMemberPassword(profile.id)
+        setResetPassword(password)
+        toast.success("New password generated. Share it securely.")
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Reset failed")
+      }
+    })
+  }
+
+  function copyResetPassword() {
+    if (!resetPassword) return
+    navigator.clipboard.writeText(resetPassword).then(
+      () => toast.success("Password copied"),
+      () => toast.error("Copy failed")
+    )
+  }
 
   function submit() {
     if (!fullName.trim()) {
@@ -285,6 +318,47 @@ function EditDialog({
               onChange={(e) => setPhone(e.target.value)}
             />
           </Field>
+
+          <div className="rounded-md border border-border-strong bg-background/40 p-3 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-medium">Password</p>
+                <p className="text-xs text-muted">
+                  Generate a new temporary password and share it with the user
+                  — they should change it after signing in.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={doResetPassword}
+                disabled={pending || deleting || resettingPw}
+              >
+                <KeyRound className="h-4 w-4" />
+                {resettingPw ? "Resetting…" : "Reset password"}
+              </Button>
+            </div>
+            {resetPassword && (
+              <div className="flex gap-2 pt-1">
+                <Input
+                  value={resetPassword}
+                  readOnly
+                  className="font-mono"
+                  onFocus={(e) => e.target.select()}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={copyResetPassword}
+                  title="Copy"
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+          </div>
 
           {confirmDelete && (
             <div className="rounded-md border border-danger/40 bg-danger/5 px-3 py-2.5 text-sm space-y-2">
