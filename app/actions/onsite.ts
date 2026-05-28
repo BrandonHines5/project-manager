@@ -14,8 +14,8 @@ const IsoDate = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD")
 
-const ScheduleItemId = z.string().uuid()
-const ProjectId = z.string().uuid()
+const ScheduleItemId = z.string().min(1)
+const ProjectId = z.string().min(1)
 
 const CompletionInput = z.discriminatedUnion("answer", [
   z.object({

@@ -50,38 +50,12 @@ const ProjectInput = z.object({
     .regex(/^[+\d\s().\-x]*$/, "Phone may only contain digits, spaces, +, -, (), ., or x")
     .optional()
     .or(z.literal("")),
-  // Jobsite coordinates for the onsite check-in geofence. Pasted from
-  // Google Maps by staff; both must be present to count as set.
-  latitude: z.coerce
-    .number()
-    .min(-90)
-    .max(90)
-    .optional()
-    .or(z.literal("").transform(() => undefined)),
-  longitude: z.coerce
-    .number()
-    .min(-180)
-    .max(180)
-    .optional()
-    .or(z.literal("").transform(() => undefined)),
   // "1" if this came from the dashboard picker. Used to set dashboard_pulled_at
   // server-side so we don't trust a client-supplied timestamp.
   dashboard_pulled: z.string().optional().or(z.literal("")),
   // If present, the new project is created by duplicating this source
   // project (template) and then layering the form's identity fields on top.
   source_template_id: z.string().optional().or(z.literal("")),
-}).superRefine((val, ctx) => {
-  // Coordinates are useless solo — the geofence needs both. Reject a
-  // partial pair so we never persist an unusable record.
-  const hasLat = val.latitude !== undefined
-  const hasLng = val.longitude !== undefined
-  if (hasLat !== hasLng) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: [hasLat ? "longitude" : "latitude"],
-      message: "Provide both latitude and longitude, or leave both blank",
-    })
-  }
 })
 
 export type ProjectFormState = {
@@ -180,8 +154,6 @@ export async function createProject(
       client_name: emptyToNull(input.client_name),
       client_email: emptyToNull(input.client_email),
       client_phone: emptyToNull(input.client_phone),
-      latitude: input.latitude ?? null,
-      longitude: input.longitude ?? null,
       // Set server-side after re-fetching the dashboard to confirm the
       // pull. See the dashboardPulledAt computation above.
       dashboard_pulled_at: dashboardPulledAt,
@@ -208,48 +180,133 @@ export async function createProject(
 }
 
 // ---------------------------------------------------------------------------
-// Set jobsite coordinates (onsite check-in)
+// Edit existing project (header dialog — covers everything but project_number)
 // ---------------------------------------------------------------------------
 
-const CoordinatesInput = z.object({
-  project_id: z.string().uuid(),
-  // Coerce strings so the inline form on /onsite can post raw FormData values.
-  latitude: z.coerce.number().min(-90).max(90),
-  longitude: z.coerce.number().min(-180).max(180),
-})
+// Optional-ish field helpers. Most fields can be blanked (""), and we map
+// those to null below so the DB ends up with a real NULL, not an empty
+// string. project_number is intentionally not editable here — it's the
+// public key, referenced by the dashboard URL and elsewhere.
+const optEditStr = z
+  .string()
+  .max(500)
+  .optional()
+  .or(z.literal(""))
 
-export type SetProjectCoordinatesResult =
+const ProjectEditInput = z
+  .object({
+    // zod v4's .uuid() rejects some valid Postgres UUIDs. The column is
+    // typed `uuid` so a bad value errors at update time and RLS guards
+    // access — we just check non-empty.
+    project_id: z.string().min(1),
+    name: z.string().min(1, "Name is required").max(200),
+    address: optEditStr,
+    status: z.enum([
+      "lead",
+      "pre_construction",
+      "active",
+      "on_hold",
+      "complete",
+      "cancelled",
+    ]),
+    contract_price: z.coerce
+      .number()
+      .nonnegative()
+      .nullable()
+      .optional()
+      .or(z.literal("").transform(() => null)),
+    start_date: optEditStr,
+    target_completion_date: optEditStr,
+    client_name: z.string().max(200).optional().or(z.literal("")),
+    client_email: z
+      .string()
+      .max(200)
+      .email("Must be a valid email")
+      .optional()
+      .or(z.literal("")),
+    client_phone: z
+      .string()
+      .max(50)
+      .regex(/^[+\d\s().\-x]*$/, "Phone may only contain digits, spaces, +, -, (), ., or x")
+      .optional()
+      .or(z.literal("")),
+    notes: z.string().optional().or(z.literal("")),
+    latitude: z.coerce
+      .number()
+      .min(-90)
+      .max(90)
+      .optional()
+      .or(z.literal("").transform(() => undefined)),
+    longitude: z.coerce
+      .number()
+      .min(-180)
+      .max(180)
+      .optional()
+      .or(z.literal("").transform(() => undefined)),
+  })
+  .superRefine((val, ctx) => {
+    const hasLat = val.latitude !== undefined
+    const hasLng = val.longitude !== undefined
+    if (hasLat !== hasLng) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [hasLat ? "longitude" : "latitude"],
+        message: "Provide both latitude and longitude, or leave both blank",
+      })
+    }
+  })
+
+export type UpdateProjectResult =
   | { ok: true }
-  | { ok: false; error: string }
+  | { ok: false; error: string; fieldErrors?: Record<string, string> }
 
-export async function setProjectCoordinates(
-  input: z.input<typeof CoordinatesInput>
-): Promise<SetProjectCoordinatesResult> {
+export async function updateProject(
+  input: z.input<typeof ProjectEditInput>
+): Promise<UpdateProjectResult> {
   await requireStaff()
-  const parsed = CoordinatesInput.safeParse(input)
+  const parsed = ProjectEditInput.safeParse(input)
   if (!parsed.success) {
+    const fieldErrors: Record<string, string> = {}
+    for (const issue of parsed.error.issues) {
+      const key = issue.path[0]?.toString() ?? "_"
+      if (!fieldErrors[key]) fieldErrors[key] = issue.message
+    }
     return {
       ok: false,
-      error:
-        parsed.error.issues[0]?.message ??
-        "Latitude and longitude must be valid numbers",
+      error: "Please fix the highlighted fields",
+      fieldErrors,
     }
   }
+  const { project_id, ...rest } = parsed.data
   const supabase = await createSupabaseServerClient()
   // .select() forces the update to return the matched row so we can tell a
   // silent zero-rows case (wrong id, or RLS hid it) apart from a real save.
   const { data, error } = await supabase
     .from("projects")
     .update({
-      latitude: parsed.data.latitude,
-      longitude: parsed.data.longitude,
+      name: rest.name,
+      address: emptyToNull(rest.address),
+      status: rest.status,
+      contract_price: rest.contract_price ?? null,
+      start_date: emptyToNull(rest.start_date) ?? null,
+      target_completion_date: emptyToNull(rest.target_completion_date) ?? null,
+      client_name: emptyToNull(rest.client_name),
+      client_email: emptyToNull(rest.client_email),
+      client_phone: emptyToNull(rest.client_phone),
+      notes: emptyToNull(rest.notes),
+      latitude: rest.latitude ?? null,
+      longitude: rest.longitude ?? null,
     })
-    .eq("id", parsed.data.project_id)
+    .eq("id", project_id)
     .select("id")
     .maybeSingle()
   if (error) return { ok: false, error: error.message }
   if (!data) return { ok: false, error: "Project not found." }
-  revalidatePath(`/projects/${parsed.data.project_id}/onsite`)
+  revalidatePath(`/projects/${project_id}`)
+  revalidatePath(`/projects/${project_id}/onsite`)
+  revalidatePath(`/projects/${project_id}/schedule`)
+  revalidatePath(`/projects/${project_id}/pricing`)
+  revalidatePath("/projects")
   return { ok: true }
 }
 
