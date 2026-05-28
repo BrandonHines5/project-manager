@@ -193,12 +193,21 @@ const optEditStr = z
   .optional()
   .or(z.literal(""))
 
+// Dates from <input type="date"> arrive as YYYY-MM-DD. Validate the shape
+// here so a forged or stale payload errors at the action boundary instead
+// of as a generic Postgres "invalid input syntax for type date" later on.
+const optEditDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD")
+  .optional()
+  .or(z.literal(""))
+
 const ProjectEditInput = z
   .object({
-    // zod v4's .uuid() rejects some valid Postgres UUIDs. The column is
-    // typed `uuid` so a bad value errors at update time and RLS guards
-    // access — we just check non-empty.
-    project_id: z.string().min(1),
+    // z.guid() validates UUID shape without the RFC variant-digit strictness
+    // of z.uuid() (which incorrectly rejects some valid Postgres UUIDs in
+    // this DB — see PR #22 follow-up).
+    project_id: z.guid(),
     name: z.string().min(1, "Name is required").max(200),
     address: optEditStr,
     status: z.enum([
@@ -215,8 +224,8 @@ const ProjectEditInput = z
       .nullable()
       .optional()
       .or(z.literal("").transform(() => null)),
-    start_date: optEditStr,
-    target_completion_date: optEditStr,
+    start_date: optEditDate,
+    target_completion_date: optEditDate,
     client_name: z.string().max(200).optional().or(z.literal("")),
     client_email: z
       .string()

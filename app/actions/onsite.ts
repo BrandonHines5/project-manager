@@ -14,8 +14,10 @@ const IsoDate = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD")
 
-const ScheduleItemId = z.string().min(1)
-const ProjectId = z.string().min(1)
+// z.guid() — UUID-shape check that's compatible with this DB's UUIDs
+// (z.uuid() in zod v4 rejects some valid Postgres UUIDs).
+const ScheduleItemId = z.guid()
+const ProjectId = z.guid()
 
 const CompletionInput = z.discriminatedUnion("answer", [
   z.object({

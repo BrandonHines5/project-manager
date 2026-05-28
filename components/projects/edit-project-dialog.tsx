@@ -107,7 +107,14 @@ function EditProjectDialog({
   }
 
   return (
-    <Dialog open onOpenChange={(v) => !v && onClose()}>
+    <Dialog
+      open
+      onOpenChange={(v) => {
+        // Don't let backdrop/Escape close while the save is in flight —
+        // the user would miss field errors that come back from the action.
+        if (!v && !pending) onClose()
+      }}
+    >
       <DialogContent size="lg">
         <DialogHeader>
           <div>
