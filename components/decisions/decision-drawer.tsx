@@ -961,7 +961,17 @@ function ChoicesEditor({
           const price = effectivePrice(c)
           const variance =
             hasAllowance && price != null ? price - (allowance ?? 0) : null
-          const hasItems = c.cost_items.length > 0
+          // Only count meaningful (non-blank) rows, and only when allowance
+          // mode is active — otherwise stale per-choice rows from a cleared
+          // allowance would silently lock the manual price input.
+          const hasItems =
+            hasAllowance &&
+            c.cost_items.some(
+              (ci) =>
+                ci.cost_code_id ||
+                ci.description ||
+                (ci.unit_cost ?? 0) > 0
+            )
           return (
             <li
               key={c.client_key}
@@ -1471,7 +1481,7 @@ function ClientChoicePicker({
                               {variance > 0
                                 ? `+${formatCurrency(variance)} you pay`
                                 : variance < 0
-                                ? `${formatCurrency(variance)} credit`
+                                ? `${formatCurrency(Math.abs(variance))} credit`
                                 : "no charge"}
                             </Badge>
                           )}

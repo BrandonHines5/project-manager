@@ -105,6 +105,14 @@ const DecisionInput = z
         path: ["allowance_cost_code_id"],
       })
     }
+    if (d.allowance_amount != null && d.cost_items.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Decision-level cost breakdowns are not allowed when an allowance is set.",
+        path: ["cost_items"],
+      })
+    }
     // Per-choice cost breakdowns only make sense in the allowance flow —
     // a change_order with choices isn't a thing, and a selection without an
     // allowance uses the simpler manual per-choice price.
