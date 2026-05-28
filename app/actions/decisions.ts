@@ -105,25 +105,25 @@ const DecisionInput = z
         path: ["allowance_cost_code_id"],
       })
     }
-    if (d.allowance_amount != null && d.cost_items.length > 0) {
+    // Decision-level cost breakdowns are change-order-only. Selections capture
+    // cost on each choice (the client picks one and its price flows through).
+    if (d.kind === "selection" && d.cost_items.length > 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message:
-          "Decision-level cost breakdowns are not allowed when an allowance is set.",
+          "Selections track cost per choice — use the per-choice breakdown instead of a decision-level one.",
         path: ["cost_items"],
       })
     }
-    // Per-choice cost breakdowns only make sense in the allowance flow —
-    // a change_order with choices isn't a thing, and a selection without an
-    // allowance uses the simpler manual per-choice price.
+    // Per-choice cost breakdowns only make sense on selections (change orders
+    // have no choices).
     const hasChoiceBreakdown = (d.choices ?? []).some(
       (c) => (c.cost_items ?? []).length > 0
     )
-    if (hasChoiceBreakdown && d.allowance_amount == null) {
+    if (hasChoiceBreakdown && d.kind !== "selection") {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message:
-          "Per-choice cost breakdowns are only allowed when an allowance is set.",
+        message: "Per-choice cost breakdowns are only valid on selections.",
         path: ["choices"],
       })
     }
@@ -170,13 +170,11 @@ export async function saveDecision(input: DecisionInputT) {
   const newlyPendingClient =
     parsed.status === "pending_client" && prevStatus !== "pending_client"
 
-  // Allowance flow short-circuits the decision-level cost breakdown — pricing
-  // comes from the selected choice's own line items / manual price. We still
-  // compute a preview cost_delta on save (variance vs. allowance) so the
-  // staff list shows a sensible estimate before the client approves; the
-  // client_decide_decision RPC overwrites this on approval.
-  const isAllowance =
-    parsed.kind === "selection" && parsed.allowance_amount != null
+  // Selections capture cost on each choice; the chosen choice's price (minus
+  // the allowance, if any) becomes cost_delta on approval. Change orders use
+  // the decision-level breakdown.
+  const isSelection = parsed.kind === "selection"
+  const isAllowance = isSelection && parsed.allowance_amount != null
   const allowanceAmount = isAllowance ? Number(parsed.allowance_amount) : null
   const allowanceCostCodeId = isAllowance
     ? nz(parsed.allowance_cost_code_id)
@@ -205,42 +203,43 @@ export async function saveDecision(input: DecisionInputT) {
     }
   }
 
-  // Derive the client-facing cost_delta. Three paths:
-  // 1. Allowance selection → variance of any currently-selected choice from
-  //    the allowance. Until a client picks, the staff sees the manually-set
-  //    cost_delta cleared (server-side recompute on approval).
-  // 2. Decision-level cost_items present → marked-up total.
-  // 3. Otherwise → fall back to the manual cost_delta value.
-  const subtotal = parsed.cost_items.reduce(
-    (sum, ci) => sum + ci.quantity * ci.unit_cost,
-    0
-  )
+  // Derive the client-facing cost_delta:
+  // - Selection: null until approval — the RPC fills it in from the chosen
+  //   choice's price (minus allowance, if set). If staff is re-saving an
+  //   already-approved selection and the chosen choice's price changed, we
+  //   recompute here so the pricing rollup stays accurate.
+  // - Change order: marked-up total from decision-level cost_items if any,
+  //   else the manual cost_delta value.
   let finalCostDelta: number | null
-  if (isAllowance) {
-    // If staff is editing an already-approved selection and the chosen
-    // choice's price changed, recompute its variance so the pricing rollup
-    // stays accurate. For draft/pending selections leave cost_delta null —
-    // the RPC will fill it in when the client picks.
+  if (isSelection) {
     finalCostDelta = null
     if (parsed.status === "approved" && parsed.id) {
-      // Look up the selected_choice_id of the existing row so we can match it
-      // against the in-flight choices. We already read prevStatus above; reuse
-      // a focused query for the choice id.
       const { data: existing } = await supabase
         .from("decisions")
-        .select("selected_choice_id")
+        .select("selected_choice_id, cost_delta")
         .eq("id", parsed.id)
         .maybeSingle()
       const selectedId = existing?.selected_choice_id ?? null
+      const existingCostDelta = existing?.cost_delta ?? null
       if (selectedId) {
         const match = parsed.choices.find((c) => c.id === selectedId)
         if (match) {
-          const price = effectiveChoicePrice.get(match.client_key) ?? 0
-          finalCostDelta = round2(price - (allowanceAmount ?? 0))
+          // If the chosen choice has no recorded price (legacy data from
+          // before per-choice costs), preserve the existing cost_delta
+          // rather than treating the missing price as zero.
+          const price = effectiveChoicePrice.get(match.client_key) ?? null
+          finalCostDelta =
+            price == null
+              ? existingCostDelta
+              : round2(price - (allowanceAmount ?? 0))
         }
       }
     }
   } else if (parsed.cost_items.length > 0) {
+    const subtotal = parsed.cost_items.reduce(
+      (sum, ci) => sum + ci.quantity * ci.unit_cost,
+      0
+    )
     finalCostDelta = round2(subtotal * markupMul)
   } else {
     finalCostDelta = parsed.cost_delta ?? null
@@ -320,9 +319,9 @@ export async function saveDecision(input: DecisionInputT) {
     .delete()
     .eq("decision_id", id)
   if (dciDelErr) throw new Error(dciDelErr.message)
-  // Decision-level line items only make sense in the non-allowance flow; the
-  // zod refinement above already rejects mixing them.
-  if (!isAllowance && parsed.cost_items.length) {
+  // Decision-level line items are change-order-only — selections capture
+  // cost per choice. The zod refinement above already rejects mixing them.
+  if (!isSelection && parsed.cost_items.length) {
     const rows = parsed.cost_items.map((ci, i) => ({
       decision_id: id!,
       cost_code_id: nz(ci.cost_code_id),
@@ -407,8 +406,9 @@ export async function saveDecision(input: DecisionInputT) {
     // Lines were already wiped above as part of the decision_cost_items
     // delete (the FK uses on delete cascade only when the parent choice is
     // dropped, but the explicit per-decision wipe also catches choice-scoped
-    // rows). Only meaningful in the allowance flow.
-    if (isAllowance) {
+    // rows). Available for any selection — each choice can itemize its own
+    // cost, and with an allowance the variance is what flows to billing.
+    {
       const choiceRows: TablesInsert<"decision_cost_items">[] = []
       for (const c of parsed.choices) {
         const choiceId = choiceIdByClientKey.get(c.client_key)
