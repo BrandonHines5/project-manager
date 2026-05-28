@@ -44,7 +44,7 @@ export function SidebarBrand({ onNavigate }: { onNavigate?: () => void }) {
       onClick={onNavigate}
       className="px-5 h-14 flex items-center gap-2 border-b border-white/10"
     >
-      <div className="h-8 w-8 rounded-md bg-brand-500 flex items-center justify-center font-bold text-sm">
+      <div className="h-8 w-8 rounded-md bg-brand-500 text-white flex items-center justify-center font-bold text-sm">
         HH
       </div>
       <div className="leading-tight">
