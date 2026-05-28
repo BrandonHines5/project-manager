@@ -357,29 +357,6 @@ function ProjectFormFields({
               className={cn(locked && "bg-background/60 text-muted")}
             />
           </Field>
-          <Field
-            label="Jobsite latitude"
-            hint="Optional. Paste coordinates from Google Maps (right-click → copy) to enable onsite check-ins."
-          >
-            <Input
-              name="latitude"
-              type="number"
-              step="any"
-              min={-90}
-              max={90}
-              placeholder="40.123456"
-            />
-          </Field>
-          <Field label="Jobsite longitude">
-            <Input
-              name="longitude"
-              type="number"
-              step="any"
-              min={-180}
-              max={180}
-              placeholder="-111.987654"
-            />
-          </Field>
           <Field label="Client name">
             <Input
               name="client_name"

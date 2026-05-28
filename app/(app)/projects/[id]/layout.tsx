@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { ProjectTabs } from "./project-tabs"
 import { MembersButton } from "@/components/projects/members-dialog"
 import { DuplicateProjectButton } from "@/components/projects/duplicate-button"
+import { EditProjectButton } from "@/components/projects/edit-project-dialog"
 import type { Enums } from "@/lib/db/types"
 
 const STATUS_LABEL: Record<Enums<"project_status">, string> = {
@@ -31,7 +32,7 @@ export default async function ProjectDetailLayout({
   const { data: project } = await supabase
     .from("projects")
     .select(
-      "id, project_number, name, address, status, dashboard_url, client_name, client_email, client_phone"
+      "id, project_number, name, address, status, dashboard_url, client_name, client_email, client_phone, contract_price, start_date, target_completion_date, notes, latitude, longitude"
     )
     .eq("id", id)
     .maybeSingle()
@@ -110,6 +111,25 @@ export default async function ProjectDetailLayout({
               )}
             </div>
             <div className="flex items-center gap-4 text-sm">
+              {isStaff && (
+                <EditProjectButton
+                  project={{
+                    id: project.id,
+                    name: project.name,
+                    address: project.address,
+                    status: project.status,
+                    contract_price: project.contract_price,
+                    start_date: project.start_date,
+                    target_completion_date: project.target_completion_date,
+                    client_name: project.client_name,
+                    client_email: project.client_email,
+                    client_phone: project.client_phone,
+                    notes: project.notes,
+                    latitude: project.latitude,
+                    longitude: project.longitude,
+                  }}
+                />
+              )}
               {isStaff && (
                 <MembersButton
                   projectId={project.id}

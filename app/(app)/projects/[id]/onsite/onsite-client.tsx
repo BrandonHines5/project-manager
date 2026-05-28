@@ -2,14 +2,13 @@
 
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
-import { CheckCircle2, MapPin, MapPinOff, Loader2 } from "lucide-react"
+import { CheckCircle2, MapPin, MapPinOff, Loader2, Pencil } from "lucide-react"
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input, Field } from "@/components/ui/input"
 import { EmptyState } from "@/components/ui/empty"
 import { Badge } from "@/components/ui/badge"
 import { useOnsite } from "@/lib/geolocation/use-onsite"
-import { setProjectCoordinates } from "@/app/actions/projects"
 import {
   answerCompletion,
   answerStart,
@@ -46,7 +45,15 @@ export function OnsiteClient({
   prompts: OnsitePrompt[]
 }) {
   if (latitude == null || longitude == null) {
-    return <CoordinatesSetup projectId={projectId} />
+    return (
+      <EmptyState
+        icon={<Pencil className="h-8 w-8" />}
+        title="No jobsite coordinates set"
+        description={
+          'Open "Edit" in the project header and paste the latitude/longitude from Google Maps to enable onsite check-ins.'
+        }
+      />
+    )
   }
   return (
     <OnsiteBody
@@ -418,86 +425,3 @@ function DatePickerRow({
   )
 }
 
-function CoordinatesSetup({ projectId }: { projectId: string }) {
-  const [pending, startTransition] = useTransition()
-  const [error, setError] = useState<string | null>(null)
-  const [lat, setLat] = useState("")
-  const [lng, setLng] = useState("")
-  const [done, setDone] = useState(false)
-
-  function save() {
-    setError(null)
-    startTransition(async () => {
-      try {
-        const res = await setProjectCoordinates({
-          project_id: projectId,
-          latitude: lat,
-          longitude: lng,
-        } as Parameters<typeof setProjectCoordinates>[0])
-        if (!res.ok) setError(res.error)
-        else setDone(true)
-      } catch {
-        setError("Couldn't save coordinates. Please try again.")
-      }
-    })
-  }
-
-  if (done) {
-    return (
-      <EmptyState
-        icon={<CheckCircle2 className="h-8 w-8" />}
-        title="Coordinates saved"
-        description="Reload the page to start the location check."
-        action={
-          <Button onClick={() => window.location.reload()}>Reload</Button>
-        }
-      />
-    )
-  }
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-sm">
-          Set the jobsite coordinates to enable onsite check-ins
-        </CardTitle>
-      </CardHeader>
-      <CardBody className="space-y-3">
-        <p className="text-sm text-muted">
-          Open the address in Google Maps, right-click the spot, then copy
-          the latitude/longitude pair from the menu and paste them below.
-        </p>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Latitude">
-            <Input
-              type="number"
-              step="any"
-              min={-90}
-              max={90}
-              placeholder="40.123456"
-              value={lat}
-              onChange={(e) => setLat(e.target.value)}
-            />
-          </Field>
-          <Field label="Longitude">
-            <Input
-              type="number"
-              step="any"
-              min={-180}
-              max={180}
-              placeholder="-111.987654"
-              value={lng}
-              onChange={(e) => setLng(e.target.value)}
-            />
-          </Field>
-        </div>
-        {error && <p className="text-sm text-danger">{error}</p>}
-        <div>
-          <Button onClick={save} disabled={pending || !lat || !lng}>
-            {pending ? "Saving…" : "Save coordinates"}
-          </Button>
-        </div>
-      </CardBody>
-    </Card>
-  )
-}
