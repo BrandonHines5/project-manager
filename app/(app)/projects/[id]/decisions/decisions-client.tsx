@@ -244,7 +244,14 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
                     <td className="px-4 py-3">
                       <KindChip kind={d.kind} />
                     </td>
-                    <td className="px-4 py-3 font-medium">{d.title}</td>
+                    <td className="px-4 py-3 font-medium">
+                      <div>{d.title}</div>
+                      {d.allowance_amount != null && (
+                        <div className="text-[11px] text-muted font-normal mt-0.5">
+                          Allowance {formatCurrency(Number(d.allowance_amount))}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <StatusBadge status={d.status} />
                     </td>

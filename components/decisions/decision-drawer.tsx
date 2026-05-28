@@ -90,7 +90,11 @@ type Choice = {
   client_key: string
   title: string
   description?: string | null
+  // In the allowance flow: absolute cost. Otherwise: contract delta.
   price_delta?: number | null
+  // Per-choice cost breakdown (allowance flow only). Subtotal × the
+  // decision-level markup_percent rolls up into the choice's effective cost.
+  cost_items: CostItem[]
 }
 
 export function DecisionDrawer({
@@ -130,7 +134,8 @@ export function DecisionDrawer({
   const [costItems, setCostItems] = useState<CostItem[]>(() => {
     if (!decision) return []
     return data.cost_items
-      .filter((ci) => ci.decision_id === decision.id)
+      // Only decision-level lines (per-choice rows hang off each choice).
+      .filter((ci) => ci.decision_id === decision.id && !ci.choice_id)
       .map((ci) => ({
         id: ci.id,
         cost_code_id: ci.cost_code_id,
@@ -193,8 +198,27 @@ export function DecisionDrawer({
         title: c.title,
         description: c.description,
         price_delta: c.price_delta,
+        cost_items: data.cost_items
+          .filter((ci) => ci.choice_id === c.id)
+          .map((ci) => ({
+            id: ci.id,
+            cost_code_id: ci.cost_code_id,
+            description: ci.description,
+            quantity: Number(ci.quantity),
+            unit: ci.unit,
+            unit_cost: Number(ci.unit_cost),
+          })),
       }))
   })
+  const [allowanceAmount, setAllowanceAmount] = useState<string>(
+    decision?.allowance_amount != null ? String(decision.allowance_amount) : ""
+  )
+  const [allowanceCostCodeId, setAllowanceCostCodeId] = useState<string>(
+    decision?.allowance_cost_code_id ?? ""
+  )
+  const hasAllowance =
+    kind === "selection" && allowanceAmount !== "" && !isNaN(Number(allowanceAmount))
+  const allowanceNum = hasAllowance ? Number(allowanceAmount) : null
   // Mirror `choices` into a ref so the async upload callback can read the
   // latest list when it resolves — otherwise an upload kicked off before
   // the staff deletes a choice would re-append attachments referencing
@@ -297,20 +321,33 @@ export function DecisionDrawer({
       kind,
       title: title.trim(),
       description: description || null,
-      cost_delta: hasBreakdown
-        ? null
-        : costDelta === ""
-        ? null
-        : Number(costDelta),
+      cost_delta:
+        hasAllowance
+          ? null
+          : hasBreakdown
+          ? null
+          : costDelta === ""
+          ? null
+          : Number(costDelta),
       markup_percent: markupNum,
-      cost_items: effectiveCostItems.map((ci) => ({
-        id: ci.id,
-        cost_code_id: ci.cost_code_id || null,
-        description: ci.description || null,
-        quantity: ci.quantity,
-        unit: ci.unit || null,
-        unit_cost: ci.unit_cost,
-      })),
+      cost_items: hasAllowance
+        ? []
+        : effectiveCostItems.map((ci) => ({
+            id: ci.id,
+            cost_code_id: ci.cost_code_id || null,
+            description: ci.description || null,
+            quantity: ci.quantity,
+            unit: ci.unit || null,
+            unit_cost: ci.unit_cost,
+          })),
+      allowance_amount:
+        kind === "selection" && allowanceAmount !== ""
+          ? Number(allowanceAmount)
+          : null,
+      allowance_cost_code_id:
+        kind === "selection" && allowanceCostCodeId && allowanceAmount !== ""
+          ? allowanceCostCodeId
+          : null,
       status: overrideStatus ?? status,
       due_date: dueDate || null,
       followups: followups
@@ -345,6 +382,23 @@ export function DecisionDrawer({
                   c.price_delta == null || (c.price_delta as unknown) === ""
                     ? null
                     : Number(c.price_delta),
+                cost_items: hasAllowance
+                  ? (c.cost_items ?? [])
+                      .filter(
+                        (ci) =>
+                          ci.cost_code_id ||
+                          ci.description ||
+                          (ci.unit_cost ?? 0) > 0
+                      )
+                      .map((ci) => ({
+                        id: ci.id,
+                        cost_code_id: ci.cost_code_id || null,
+                        description: ci.description || null,
+                        quantity: ci.quantity,
+                        unit: ci.unit || null,
+                        unit_cost: ci.unit_cost,
+                      }))
+                  : [],
               }))
           : [],
     }
@@ -507,7 +561,16 @@ export function DecisionDrawer({
               />
             </Field>
           </div>
-          {canEdit && (
+          {canEdit && kind === "selection" && (
+            <AllowanceEditor
+              amount={allowanceAmount}
+              onAmountChange={setAllowanceAmount}
+              costCodeId={allowanceCostCodeId}
+              onCostCodeChange={setAllowanceCostCodeId}
+              costCodes={data.cost_codes}
+            />
+          )}
+          {canEdit && !hasAllowance && (
             <CostBreakdownEditor
               items={costItems}
               onChange={setCostItems}
@@ -518,8 +581,25 @@ export function DecisionDrawer({
               total={breakdownTotal}
             />
           )}
-          {/* Manual single-cost mode — only shown when no breakdown is in use. */}
-          {!hasBreakdown && (
+          {canEdit && hasAllowance && (
+            <Field
+              label="Markup %"
+              hint="Applied to each choice's cost breakdown. Hidden from clients."
+            >
+              <Input
+                type="number"
+                step="0.01"
+                value={markupPercent}
+                onChange={(e) => setMarkupPercent(e.target.value)}
+                placeholder="0"
+                className="w-32 text-right tabular-nums"
+              />
+            </Field>
+          )}
+          {/* Manual single-cost mode — only shown when no breakdown is in use
+              and not in the allowance flow (allowance prices come from per-
+              choice values). */}
+          {!hasBreakdown && !hasAllowance && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field
                 label={
@@ -551,7 +631,7 @@ export function DecisionDrawer({
               </Field>
             </div>
           )}
-          {!canEdit && hasBreakdown && (
+          {!canEdit && hasBreakdown && !hasAllowance && (
             <Field label="Price">
               <div className="h-9 flex items-center font-mono text-sm">
                 <CostDelta value={decision?.cost_delta ?? null} />
@@ -599,6 +679,9 @@ export function DecisionDrawer({
                 }}
                 uploading={uploading}
                 selectedChoiceId={decision?.selected_choice_id ?? null}
+                allowance={allowanceNum}
+                markupPercent={markupNum}
+                costCodes={data.cost_codes}
               />
             ) : (
               <ClientChoicePicker
@@ -608,6 +691,14 @@ export function DecisionDrawer({
                 onSelect={setClientSelectedChoiceKey}
                 locked={status === "approved" || status === "rejected"}
                 approvedChoiceId={decision?.selected_choice_id ?? null}
+                allowance={allowanceNum}
+                allowanceCostCode={
+                  decision?.allowance_cost_code_id
+                    ? data.cost_codes.find(
+                        (c) => c.id === decision.allowance_cost_code_id
+                      ) ?? null
+                    : null
+                }
               />
             )
           )}
@@ -795,6 +886,9 @@ function ChoicesEditor({
   onRemoveChoice,
   uploading,
   selectedChoiceId,
+  allowance,
+  markupPercent,
+  costCodes,
 }: {
   value: Choice[]
   onChange: (v: Choice[]) => void
@@ -807,7 +901,13 @@ function ChoicesEditor({
   onRemoveChoice: (key: string) => void
   uploading: boolean
   selectedChoiceId: string | null
+  // When non-null we're in the allowance flow: per-choice prices become
+  // absolute costs and we surface a variance preview against this amount.
+  allowance: number | null
+  markupPercent: number
+  costCodes: DecisionsData["cost_codes"]
 }) {
+  const hasAllowance = allowance != null
   function add() {
     onChange([
       ...value,
@@ -816,11 +916,24 @@ function ChoicesEditor({
         title: "",
         description: "",
         price_delta: null,
+        cost_items: [],
       },
     ])
   }
   function update(key: string, patch: Partial<Choice>) {
     onChange(value.map((c) => (c.client_key === key ? { ...c, ...patch } : c)))
+  }
+  // Per-choice effective price (cost_items × markup → falls back to manual).
+  function effectivePrice(c: Choice): number | null {
+    const items = c.cost_items.filter(
+      (ci) => ci.cost_code_id || ci.description || (ci.unit_cost ?? 0) > 0
+    )
+    if (items.length === 0) return c.price_delta ?? null
+    const sub = items.reduce(
+      (s, ci) => s + (Number(ci.quantity) || 0) * (Number(ci.unit_cost) || 0),
+      0
+    )
+    return Math.round(sub * (1 + markupPercent / 100) * 100) / 100
   }
 
   return (
@@ -828,10 +941,12 @@ function ChoicesEditor({
       <div className="flex items-center justify-between">
         <Label>
           <Palette className="inline h-3 w-3 mr-1 text-blue-500" />
-          Choices to offer
+          {hasAllowance ? "Choices & per-choice cost" : "Choices to offer"}
         </Label>
         <span className="text-[11px] text-muted">
-          Pre-load options — the owner picks one when they approve.
+          {hasAllowance
+            ? "Variance from the allowance flows to billing on approval."
+            : "Pre-load options — the owner picks one when they approve."}
         </span>
       </div>
       {value.length === 0 && (
@@ -843,6 +958,20 @@ function ChoicesEditor({
         {value.map((c, i) => {
           const photos = attachmentsForChoice(c.client_key)
           const isSelected = !!(c.id && selectedChoiceId && c.id === selectedChoiceId)
+          const price = effectivePrice(c)
+          const variance =
+            hasAllowance && price != null ? price - (allowance ?? 0) : null
+          // Only count meaningful (non-blank) rows, and only when allowance
+          // mode is active — otherwise stale per-choice rows from a cleared
+          // allowance would silently lock the manual price input.
+          const hasItems =
+            hasAllowance &&
+            c.cost_items.some(
+              (ci) =>
+                ci.cost_code_id ||
+                ci.description ||
+                (ci.unit_cost ?? 0) > 0
+            )
           return (
             <li
               key={c.client_key}
@@ -868,14 +997,24 @@ function ChoicesEditor({
                   <Input
                     type="number"
                     step="0.01"
-                    value={c.price_delta ?? ""}
+                    value={
+                      hasItems
+                        ? price ?? ""
+                        : c.price_delta ?? ""
+                    }
+                    disabled={hasItems}
                     onChange={(e) =>
                       update(c.client_key, {
                         price_delta:
                           e.target.value === "" ? null : Number(e.target.value),
                       })
                     }
-                    placeholder="Price (optional)"
+                    placeholder={hasAllowance ? "Cost" : "Price (optional)"}
+                    title={
+                      hasItems
+                        ? "Auto-calculated from the breakdown below"
+                        : undefined
+                    }
                   />
                 </div>
                 {isSelected && (
@@ -892,6 +1031,24 @@ function ChoicesEditor({
                   <X className="h-4 w-4" />
                 </button>
               </div>
+              {hasAllowance && variance != null && (
+                <div className="pl-7 text-[11px] font-mono tabular-nums">
+                  {variance > 0 ? (
+                    <span className="text-foreground">
+                      Client pays{" "}
+                      <span className="text-danger">
+                        {formatCurrency(variance)}
+                      </span>
+                    </span>
+                  ) : variance < 0 ? (
+                    <span className="text-success">
+                      Credit {formatCurrency(Math.abs(variance))}
+                    </span>
+                  ) : (
+                    <span className="text-muted">At allowance — no charge</span>
+                  )}
+                </div>
+              )}
               <Textarea
                 rows={2}
                 value={c.description ?? ""}
@@ -900,6 +1057,13 @@ function ChoicesEditor({
                 }
                 placeholder="Short description shown to the client"
               />
+              {hasAllowance && (
+                <ChoiceCostBreakdownEditor
+                  items={c.cost_items}
+                  onChange={(items) => update(c.client_key, { cost_items: items })}
+                  costCodes={costCodes}
+                />
+              )}
               <ChoicePhotosRow
                 photos={photos}
                 onAdd={(files) => onAddPhotos(files, c.client_key)}
@@ -917,6 +1081,223 @@ function ChoicesEditor({
       >
         <Plus className="h-3 w-3" /> Add choice
       </button>
+    </div>
+  )
+}
+
+function ChoiceCostBreakdownEditor({
+  items,
+  onChange,
+  costCodes,
+}: {
+  items: CostItem[]
+  onChange: (v: CostItem[]) => void
+  costCodes: DecisionsData["cost_codes"]
+}) {
+  const subtotal = items.reduce(
+    (s, ci) => s + (Number(ci.quantity) || 0) * (Number(ci.unit_cost) || 0),
+    0
+  )
+  function add() {
+    onChange([
+      ...items,
+      {
+        cost_code_id: null,
+        description: "",
+        quantity: 1,
+        unit: null,
+        unit_cost: 0,
+      },
+    ])
+  }
+  function update(i: number, patch: Partial<CostItem>) {
+    onChange(items.map((it, idx) => (idx === i ? { ...it, ...patch } : it)))
+  }
+  function remove(i: number) {
+    onChange(items.filter((_, idx) => idx !== i))
+  }
+  return (
+    <div className="rounded border border-border bg-background/40 p-2 space-y-1.5">
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] uppercase tracking-wide text-muted inline-flex items-center gap-1">
+          <Calculator className="h-3 w-3 text-brand-500" />
+          Cost breakdown
+        </span>
+        <span className="inline-flex items-center gap-1 text-[10px] text-muted">
+          <EyeOff className="h-3 w-3" /> internal
+        </span>
+      </div>
+      {items.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="text-muted">
+              <tr>
+                <th className="text-left font-medium pb-1 w-[30%]">Cost code</th>
+                <th className="text-left font-medium pb-1">Description</th>
+                <th className="text-right font-medium pb-1 w-16">Qty</th>
+                <th className="text-left font-medium pb-1 w-14">Unit</th>
+                <th className="text-right font-medium pb-1 w-24">Unit cost</th>
+                <th className="text-right font-medium pb-1 w-24">Line</th>
+                <th className="w-6"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((ci, i) => {
+                const lineTotal = (ci.quantity || 0) * (ci.unit_cost || 0)
+                return (
+                  <tr key={i} className="align-top">
+                    <td className="pr-1 pb-1">
+                      <Select
+                        value={ci.cost_code_id ?? ""}
+                        onChange={(e) =>
+                          update(i, { cost_code_id: e.target.value || null })
+                        }
+                      >
+                        <option value="">— Select —</option>
+                        {costCodes.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.code} · {c.name}
+                          </option>
+                        ))}
+                      </Select>
+                    </td>
+                    <td className="pr-1 pb-1">
+                      <Input
+                        value={ci.description ?? ""}
+                        onChange={(e) =>
+                          update(i, { description: e.target.value })
+                        }
+                        placeholder="Detail"
+                      />
+                    </td>
+                    <td className="pr-1 pb-1">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        className="text-right tabular-nums"
+                        value={ci.quantity}
+                        onChange={(e) =>
+                          update(i, { quantity: Number(e.target.value) || 0 })
+                        }
+                      />
+                    </td>
+                    <td className="pr-1 pb-1">
+                      <Input
+                        value={ci.unit ?? ""}
+                        onChange={(e) => update(i, { unit: e.target.value })}
+                        placeholder="ea"
+                      />
+                    </td>
+                    <td className="pr-1 pb-1">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        className="text-right tabular-nums"
+                        value={ci.unit_cost}
+                        onChange={(e) =>
+                          update(i, { unit_cost: Number(e.target.value) || 0 })
+                        }
+                      />
+                    </td>
+                    <td className="pr-1 pb-1 text-right font-mono tabular-nums pt-2">
+                      {formatCurrency(lineTotal)}
+                    </td>
+                    <td className="pb-1 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => remove(i)}
+                        className="text-muted hover:text-danger p-1 cursor-pointer"
+                        aria-label="Remove line"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className="flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={add}
+          className="text-[11px] text-brand-600 hover:underline inline-flex items-center gap-1 cursor-pointer"
+        >
+          <Plus className="h-3 w-3" /> Add line
+        </button>
+        {items.length > 0 && (
+          <span className="text-[11px] font-mono tabular-nums text-muted">
+            Subtotal {formatCurrency(subtotal)}
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function AllowanceEditor({
+  amount,
+  onAmountChange,
+  costCodeId,
+  onCostCodeChange,
+  costCodes,
+}: {
+  amount: string
+  onAmountChange: (v: string) => void
+  costCodeId: string
+  onCostCodeChange: (v: string) => void
+  costCodes: DecisionsData["cost_codes"]
+}) {
+  const hasAmount = amount !== "" && !isNaN(Number(amount))
+  return (
+    <div className="rounded-md border border-blue-200 bg-blue-50/40 p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <Label>
+          <Calculator className="inline h-3 w-3 mr-1 text-blue-600" />
+          Allowance (optional)
+        </Label>
+        {hasAmount && (
+          <button
+            type="button"
+            onClick={() => {
+              onAmountChange("")
+              onCostCodeChange("")
+            }}
+            className="text-[11px] text-muted hover:text-danger cursor-pointer"
+          >
+            Clear allowance
+          </button>
+        )}
+      </div>
+      <p className="text-xs text-muted">
+        Budgeted amount already included in the contract. When set, each
+        choice&apos;s cost becomes absolute and only the variance flows into
+        billing.
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-[140px_1fr] gap-2">
+        <Input
+          type="number"
+          step="0.01"
+          value={amount}
+          onChange={(e) => onAmountChange(e.target.value)}
+          placeholder="2,000.00"
+          className="tabular-nums"
+        />
+        <Select
+          value={costCodeId}
+          onChange={(e) => onCostCodeChange(e.target.value)}
+          disabled={!hasAmount}
+        >
+          <option value="">— Cost code (optional) —</option>
+          {costCodes.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.code} · {c.name}
+            </option>
+          ))}
+        </Select>
+      </div>
     </div>
   )
 }
@@ -992,6 +1373,8 @@ function ClientChoicePicker({
   onSelect,
   locked,
   approvedChoiceId,
+  allowance,
+  allowanceCostCode,
 }: {
   choices: Choice[]
   attachmentsForChoice: (key: string) => Attachment[]
@@ -999,6 +1382,11 @@ function ClientChoicePicker({
   onSelect: (id: string) => void
   locked: boolean
   approvedChoiceId: string | null
+  allowance: number | null
+  allowanceCostCode: Pick<
+    DecisionsData["cost_codes"][number],
+    "code" | "name"
+  > | null
 }) {
   if (choices.length === 0) {
     return (
@@ -1007,17 +1395,40 @@ function ClientChoicePicker({
       </div>
     )
   }
+  const hasAllowance = allowance != null
   return (
     <div className="space-y-2">
       <Label>
         <Palette className="inline h-3 w-3 mr-1 text-blue-500" />
         {locked ? "Choices" : "Pick one"}
       </Label>
+      {hasAllowance && (
+        <div className="rounded-md border border-blue-200 bg-blue-50/40 p-2.5 text-xs text-blue-900">
+          <span className="font-medium">
+            Allowance {formatCurrency(allowance ?? 0)}
+          </span>
+          {allowanceCostCode && (
+            <span className="text-blue-800/70">
+              {" "}
+              · {allowanceCostCode.code} {allowanceCostCode.name}
+            </span>
+          )}
+          <span className="text-blue-800/80">
+            {" "}
+            — already included in your contract. You only pay or get credit
+            for the difference.
+          </span>
+        </div>
+      )}
       <ul className="space-y-2">
         {choices.map((c, i) => {
           const isSelected = selected === c.client_key
           const isApproved = approvedChoiceId && c.id === approvedChoiceId
           const photos = attachmentsForChoice(c.client_key)
+          const variance =
+            hasAllowance && c.price_delta != null
+              ? Number(c.price_delta) - (allowance ?? 0)
+              : null
           return (
             <li key={c.client_key}>
               <button
@@ -1052,8 +1463,34 @@ function ClientChoicePicker({
                       {isApproved && (
                         <Badge tone="success">Your choice</Badge>
                       )}
-                      {c.price_delta != null && c.price_delta !== 0 && (
-                        <CostDelta value={Number(c.price_delta)} />
+                      {hasAllowance && c.price_delta != null ? (
+                        <>
+                          <span className="text-xs font-mono tabular-nums text-muted">
+                            Cost {formatCurrency(Number(c.price_delta))}
+                          </span>
+                          {variance != null && (
+                            <Badge
+                              tone={
+                                variance > 0
+                                  ? "danger"
+                                  : variance < 0
+                                  ? "success"
+                                  : "muted"
+                              }
+                            >
+                              {variance > 0
+                                ? `+${formatCurrency(variance)} you pay`
+                                : variance < 0
+                                ? `${formatCurrency(Math.abs(variance))} credit`
+                                : "no charge"}
+                            </Badge>
+                          )}
+                        </>
+                      ) : (
+                        c.price_delta != null &&
+                        c.price_delta !== 0 && (
+                          <CostDelta value={Number(c.price_delta)} />
+                        )
                       )}
                     </div>
                     {c.description && (

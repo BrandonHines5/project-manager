@@ -344,6 +344,7 @@ export type Database = {
       }
       decision_cost_items: {
         Row: {
+          choice_id: string | null
           cost_code_id: string | null
           created_at: string
           decision_id: string
@@ -355,6 +356,7 @@ export type Database = {
           unit_cost: number
         }
         Insert: {
+          choice_id?: string | null
           cost_code_id?: string | null
           created_at?: string
           decision_id: string
@@ -366,6 +368,7 @@ export type Database = {
           unit_cost?: number
         }
         Update: {
+          choice_id?: string | null
           cost_code_id?: string | null
           created_at?: string
           decision_id?: string
@@ -377,6 +380,13 @@ export type Database = {
           unit_cost?: number
         }
         Relationships: [
+          {
+            foreignKeyName: "decision_cost_items_choice_id_fkey"
+            columns: ["choice_id"]
+            isOneToOne: false
+            referencedRelation: "decision_choices"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "decision_cost_items_cost_code_id_fkey"
             columns: ["cost_code_id"]
@@ -453,6 +463,8 @@ export type Database = {
       }
       decisions: {
         Row: {
+          allowance_amount: number | null
+          allowance_cost_code_id: string | null
           approved_at: string | null
           approved_by_client_id: string | null
           cost_delta: number | null
@@ -471,6 +483,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          allowance_amount?: number | null
+          allowance_cost_code_id?: string | null
           approved_at?: string | null
           approved_by_client_id?: string | null
           cost_delta?: number | null
@@ -489,6 +503,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          allowance_amount?: number | null
+          allowance_cost_code_id?: string | null
           approved_at?: string | null
           approved_by_client_id?: string | null
           cost_delta?: number | null
@@ -507,6 +523,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "decisions_allowance_cost_code_id_fkey"
+            columns: ["allowance_cost_code_id"]
+            isOneToOne: false
+            referencedRelation: "cost_codes"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "decisions_approved_by_client_id_fkey"
             columns: ["approved_by_client_id"]

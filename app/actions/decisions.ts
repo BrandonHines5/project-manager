@@ -7,7 +7,7 @@ import { requireSession, requireStaff } from "@/lib/auth"
 import { addDays, todayISO } from "@/lib/utils"
 import { sendEmail, appUrl } from "@/lib/email"
 import { sendDashboardWebhook } from "@/lib/dashboard"
-import type { TablesUpdate } from "@/lib/db/types"
+import type { TablesInsert, TablesUpdate } from "@/lib/db/types"
 
 const optStr = z.string().nullish()
 
@@ -42,6 +42,15 @@ const Attachment = z.object({
   caption: optStr,
 })
 
+const CostItem = z.object({
+  id: optStr,
+  cost_code_id: optStr,
+  description: optStr,
+  quantity: z.coerce.number().default(1),
+  unit: optStr,
+  unit_cost: z.coerce.number().default(0),
+})
+
 const Choice = z.object({
   id: optStr,
   // Stable client-side key. For saved choices this equals `id`; for unsaved
@@ -50,16 +59,12 @@ const Choice = z.object({
   client_key: z.string(),
   title: z.string().min(1),
   description: optStr,
+  // For allowance selections: this is the absolute COST of the choice.
+  // Otherwise: the delta to the contract. Can also be derived from cost_items
+  // below × the parent decision's markup_percent — when both are present the
+  // server recomputes from the breakdown and ignores the manual value.
   price_delta: z.coerce.number().nullish(),
-})
-
-const CostItem = z.object({
-  id: optStr,
-  cost_code_id: optStr,
-  description: optStr,
-  quantity: z.coerce.number().default(1),
-  unit: optStr,
-  unit_cost: z.coerce.number().default(0),
+  cost_items: z.array(CostItem).default([]),
 })
 
 const DecisionInput = z
@@ -75,6 +80,9 @@ const DecisionInput = z
     cost_delta: z.coerce.number().nullish(),
     markup_percent: z.coerce.number().default(0),
     cost_items: z.array(CostItem).default([]),
+    // Allowance fields — only meaningful for selections.
+    allowance_amount: z.coerce.number().nullish(),
+    allowance_cost_code_id: optStr,
     status: z.enum(["draft", "pending_client", "approved", "rejected"]).default("draft"),
     due_date: optStr,
     followups: z.array(Followup).default([]),
@@ -82,6 +90,44 @@ const DecisionInput = z
     choices: z.array(Choice).default([]),
   })
   .passthrough()
+  .superRefine((d, ctx) => {
+    if (d.allowance_amount != null && d.kind !== "selection") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Allowances are only valid on selections.",
+        path: ["allowance_amount"],
+      })
+    }
+    if (d.allowance_cost_code_id && d.allowance_amount == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Set an allowance amount before picking a cost code.",
+        path: ["allowance_cost_code_id"],
+      })
+    }
+    if (d.allowance_amount != null && d.cost_items.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Decision-level cost breakdowns are not allowed when an allowance is set.",
+        path: ["cost_items"],
+      })
+    }
+    // Per-choice cost breakdowns only make sense in the allowance flow —
+    // a change_order with choices isn't a thing, and a selection without an
+    // allowance uses the simpler manual per-choice price.
+    const hasChoiceBreakdown = (d.choices ?? []).some(
+      (c) => (c.cost_items ?? []).length > 0
+    )
+    if (hasChoiceBreakdown && d.allowance_amount == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Per-choice cost breakdowns are only allowed when an allowance is set.",
+        path: ["choices"],
+      })
+    }
+  })
 
 export type DecisionInputT = z.infer<typeof DecisionInput>
 
@@ -124,21 +170,81 @@ export async function saveDecision(input: DecisionInputT) {
   const newlyPendingClient =
     parsed.status === "pending_client" && prevStatus !== "pending_client"
 
-  // Derive the client-facing cost_delta. If the staff entered a cost
-  // breakdown (any line item), the marked-up total takes precedence and the
-  // manual `cost_delta` field they may also have typed is ignored. If they
-  // entered no line items, fall back to the manual value as before.
-  //
-  // `markup_percent` is stored on the decision so re-opening the drawer
-  // shows the same number — but the client never reads it.
+  // Allowance flow short-circuits the decision-level cost breakdown — pricing
+  // comes from the selected choice's own line items / manual price. We still
+  // compute a preview cost_delta on save (variance vs. allowance) so the
+  // staff list shows a sensible estimate before the client approves; the
+  // client_decide_decision RPC overwrites this on approval.
+  const isAllowance =
+    parsed.kind === "selection" && parsed.allowance_amount != null
+  const allowanceAmount = isAllowance ? Number(parsed.allowance_amount) : null
+  const allowanceCostCodeId = isAllowance
+    ? nz(parsed.allowance_cost_code_id)
+    : null
+
+  // Compute the effective per-choice price (cost_items × markup → fallback to
+  // manual). Memoized into a Map so both the cost_delta preview and the
+  // decision_choices upsert below use the same numbers.
+  const markupMul = 1 + parsed.markup_percent / 100
+  const effectiveChoicePrice = new Map<string, number | null>()
+  for (const c of parsed.choices) {
+    if (c.cost_items.length > 0) {
+      const choiceSubtotal = c.cost_items.reduce(
+        (sum, ci) => sum + ci.quantity * ci.unit_cost,
+        0
+      )
+      effectiveChoicePrice.set(
+        c.client_key,
+        round2(choiceSubtotal * markupMul)
+      )
+    } else {
+      effectiveChoicePrice.set(
+        c.client_key,
+        c.price_delta == null ? null : Number(c.price_delta)
+      )
+    }
+  }
+
+  // Derive the client-facing cost_delta. Three paths:
+  // 1. Allowance selection → variance of any currently-selected choice from
+  //    the allowance. Until a client picks, the staff sees the manually-set
+  //    cost_delta cleared (server-side recompute on approval).
+  // 2. Decision-level cost_items present → marked-up total.
+  // 3. Otherwise → fall back to the manual cost_delta value.
   const subtotal = parsed.cost_items.reduce(
     (sum, ci) => sum + ci.quantity * ci.unit_cost,
     0
   )
-  const finalCostDelta =
-    parsed.cost_items.length > 0
-      ? round2(subtotal * (1 + parsed.markup_percent / 100))
-      : (parsed.cost_delta ?? null)
+  let finalCostDelta: number | null
+  if (isAllowance) {
+    // If staff is editing an already-approved selection and the chosen
+    // choice's price changed, recompute its variance so the pricing rollup
+    // stays accurate. For draft/pending selections leave cost_delta null —
+    // the RPC will fill it in when the client picks.
+    finalCostDelta = null
+    if (parsed.status === "approved" && parsed.id) {
+      // Look up the selected_choice_id of the existing row so we can match it
+      // against the in-flight choices. We already read prevStatus above; reuse
+      // a focused query for the choice id.
+      const { data: existing } = await supabase
+        .from("decisions")
+        .select("selected_choice_id")
+        .eq("id", parsed.id)
+        .maybeSingle()
+      const selectedId = existing?.selected_choice_id ?? null
+      if (selectedId) {
+        const match = parsed.choices.find((c) => c.id === selectedId)
+        if (match) {
+          const price = effectiveChoicePrice.get(match.client_key) ?? 0
+          finalCostDelta = round2(price - (allowanceAmount ?? 0))
+        }
+      }
+    }
+  } else if (parsed.cost_items.length > 0) {
+    finalCostDelta = round2(subtotal * markupMul)
+  } else {
+    finalCostDelta = parsed.cost_delta ?? null
+  }
 
   if (id) {
     const updateRow: TablesUpdate<"decisions"> = {
@@ -148,6 +254,8 @@ export async function saveDecision(input: DecisionInputT) {
       description: parsed.description ?? null,
       cost_delta: finalCostDelta,
       markup_percent: parsed.markup_percent,
+      allowance_amount: allowanceAmount,
+      allowance_cost_code_id: allowanceCostCodeId,
       status: parsed.status,
       due_date: nz(parsed.due_date),
     }
@@ -179,6 +287,8 @@ export async function saveDecision(input: DecisionInputT) {
           description: parsed.description ?? null,
           cost_delta: finalCostDelta,
           markup_percent: parsed.markup_percent,
+          allowance_amount: allowanceAmount,
+          allowance_cost_code_id: allowanceCostCodeId,
           status: parsed.status,
           due_date: nz(parsed.due_date),
           number,
@@ -202,17 +312,17 @@ export async function saveDecision(input: DecisionInputT) {
     id = inserted.id
   }
 
-  // Replace cost-item breakdown. Same delete-then-insert pattern as
-  // follow-ups — line items are append-only from the staff's perspective and
-  // rarely re-ordered, so a wipe-and-reinsert is the simplest correct sync.
-  // Capture the delete error: if it fails and we then insert, the decision
-  // would end up with stale + new rows for the same line numbers.
+  // Replace cost-item breakdown. Wipe-and-reinsert across both decision-level
+  // (choice_id IS NULL) and per-choice (choice_id IS NOT NULL) rows — the
+  // staff form is the source of truth for both.
   const { error: dciDelErr } = await supabase
     .from("decision_cost_items")
     .delete()
     .eq("decision_id", id)
   if (dciDelErr) throw new Error(dciDelErr.message)
-  if (parsed.cost_items.length) {
+  // Decision-level line items only make sense in the non-allowance flow; the
+  // zod refinement above already rejects mixing them.
+  if (!isAllowance && parsed.cost_items.length) {
     const rows = parsed.cost_items.map((ci, i) => ({
       decision_id: id!,
       cost_code_id: nz(ci.cost_code_id),
@@ -260,13 +370,17 @@ export async function saveDecision(input: DecisionInputT) {
     for (let i = 0; i < parsed.choices.length; i++) {
       const c = parsed.choices[i]
       const cid = nz(c.id)
+      // Effective price is what we computed from the choice's own cost_items
+      // (× markup) or the manual value. Always write this so the DB matches
+      // what the UI showed at save time.
+      const choicePrice = effectiveChoicePrice.get(c.client_key) ?? null
       if (cid) {
         const { error: uErr } = await supabase
           .from("decision_choices")
           .update({
             title: c.title,
             description: c.description ?? null,
-            price_delta: c.price_delta ?? null,
+            price_delta: choicePrice,
             position: i,
           })
           .eq("id", cid)
@@ -280,13 +394,44 @@ export async function saveDecision(input: DecisionInputT) {
             decision_id: id!,
             title: c.title,
             description: c.description ?? null,
-            price_delta: c.price_delta ?? null,
+            price_delta: choicePrice,
             position: i,
           })
           .select("id")
           .single()
         if (iErr) throw new Error(iErr.message)
         if (ins) choiceIdByClientKey.set(c.client_key, ins.id)
+      }
+    }
+    // Insert per-choice cost items now that we know each choice's real id.
+    // Lines were already wiped above as part of the decision_cost_items
+    // delete (the FK uses on delete cascade only when the parent choice is
+    // dropped, but the explicit per-decision wipe also catches choice-scoped
+    // rows). Only meaningful in the allowance flow.
+    if (isAllowance) {
+      const choiceRows: TablesInsert<"decision_cost_items">[] = []
+      for (const c of parsed.choices) {
+        const choiceId = choiceIdByClientKey.get(c.client_key)
+        if (!choiceId) continue
+        for (let j = 0; j < c.cost_items.length; j++) {
+          const ci = c.cost_items[j]
+          choiceRows.push({
+            decision_id: id!,
+            choice_id: choiceId,
+            cost_code_id: nz(ci.cost_code_id),
+            description: ci.description ?? null,
+            quantity: ci.quantity,
+            unit: ci.unit ?? null,
+            unit_cost: ci.unit_cost,
+            position: j,
+          })
+        }
+      }
+      if (choiceRows.length) {
+        const { error: dciInsErr } = await supabase
+          .from("decision_cost_items")
+          .insert(choiceRows)
+        if (dciInsErr) throw new Error(dciInsErr.message)
       }
     }
   } else {
