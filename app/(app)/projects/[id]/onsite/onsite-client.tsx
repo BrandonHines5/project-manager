@@ -2,13 +2,12 @@
 
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
-import { CheckCircle2, MapPin, MapPinOff, Loader2, Pencil } from "lucide-react"
+import { CheckCircle2 } from "lucide-react"
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input, Field } from "@/components/ui/input"
 import { EmptyState } from "@/components/ui/empty"
 import { Badge } from "@/components/ui/badge"
-import { useOnsite } from "@/lib/geolocation/use-onsite"
 import {
   answerCompletion,
   answerStart,
@@ -22,6 +21,8 @@ const TRIGGER_LABEL: Record<OnsitePrompt["trigger"], string> = {
   ending_today: "Ending today",
   starting_today: "Starting today",
   upcoming_unstarted: "Upcoming",
+  todo_past_due: "To-do past due",
+  todo_due_today: "To-do due today",
 }
 const TRIGGER_TONE: Record<
   OnsitePrompt["trigger"],
@@ -31,176 +32,40 @@ const TRIGGER_TONE: Record<
   ending_today: "warning",
   starting_today: "brand",
   upcoming_unstarted: "muted",
+  todo_past_due: "danger",
+  todo_due_today: "warning",
 }
 
 export function OnsiteClient({
   projectId,
-  latitude,
-  longitude,
   prompts: initialPrompts,
 }: {
   projectId: string
-  latitude: number | null
-  longitude: number | null
   prompts: OnsitePrompt[]
 }) {
-  if (latitude == null || longitude == null) {
+  const [prompts, setPrompts] = useState(initialPrompts)
+
+  if (prompts.length === 0) {
     return (
       <EmptyState
-        icon={<Pencil className="h-8 w-8" />}
-        title="No jobsite coordinates set"
-        description={
-          'Open "Edit" in the project header and paste the latitude/longitude from Google Maps to enable onsite check-ins.'
-        }
+        icon={<CheckCircle2 className="h-8 w-8" />}
+        title="All caught up"
+        description="No schedule items need an update right now."
       />
     )
   }
   return (
-    <OnsiteBody
-      projectId={projectId}
-      latitude={latitude}
-      longitude={longitude}
-      prompts={initialPrompts}
-    />
-  )
-}
-
-function OnsiteBody({
-  projectId,
-  latitude,
-  longitude,
-  prompts: initialPrompts,
-}: {
-  projectId: string
-  latitude: number
-  longitude: number
-  prompts: OnsitePrompt[]
-}) {
-  const [override, setOverride] = useState(false)
-  const [prompts, setPrompts] = useState(initialPrompts)
-  const { state, distanceMeters, errorMessage, retry } = useOnsite({
-    projectId,
-    lat: latitude,
-    lng: longitude,
-  })
-
-  const showPrompts = state === "onsite" || override
-
-  return (
-    <div className="space-y-4">
-      <GeolocationBanner
-        state={state}
-        distanceMeters={distanceMeters}
-        errorMessage={errorMessage}
-        override={override}
-        onRetry={retry}
-        onOverride={() => setOverride(true)}
-      />
-      {showPrompts && prompts.length === 0 && (
-        <EmptyState
-          icon={<CheckCircle2 className="h-8 w-8" />}
-          title="All caught up"
-          description="No schedule items need an update right now."
+    <div className="space-y-3">
+      {prompts.map((p) => (
+        <PromptCard
+          key={p.id}
+          prompt={p}
+          projectId={projectId}
+          onResolved={() =>
+            setPrompts((cur) => cur.filter((x) => x.id !== p.id))
+          }
         />
-      )}
-      {showPrompts && prompts.length > 0 && (
-        <div className="space-y-3">
-          {prompts.map((p) => (
-            <PromptCard
-              key={p.id}
-              prompt={p}
-              projectId={projectId}
-              onResolved={() =>
-                setPrompts((cur) => cur.filter((x) => x.id !== p.id))
-              }
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function GeolocationBanner({
-  state,
-  distanceMeters,
-  errorMessage,
-  override,
-  onRetry,
-  onOverride,
-}: {
-  state: ReturnType<typeof useOnsite>["state"]
-  distanceMeters: number | null
-  errorMessage: string | null
-  override: boolean
-  onRetry: () => void
-  onOverride: () => void
-}) {
-  if (state === "onsite") {
-    return (
-      <div className="flex items-center gap-2 rounded-md border border-brand-500/40 bg-brand-50 px-3 py-2 text-sm text-brand-700">
-        <MapPin className="h-4 w-4" />
-        <span>
-          You&rsquo;re onsite
-          {distanceMeters != null && (
-            <> ({Math.round(distanceMeters)}m from the recorded point).</>
-          )}
-        </span>
-      </div>
-    )
-  }
-  if (state === "requesting" || state === "idle") {
-    return (
-      <div className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-sm text-muted">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        Checking your location&hellip;
-      </div>
-    )
-  }
-  if (override) {
-    return (
-      <div className="flex items-center gap-2 rounded-md border border-border bg-background/40 px-3 py-2 text-sm text-muted">
-        <MapPinOff className="h-4 w-4" />
-        Showing prompts without a location check.
-      </div>
-    )
-  }
-  if (state === "offsite") {
-    return (
-      <div className="flex flex-col gap-2 rounded-md border border-border bg-surface px-3 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-2">
-          <MapPinOff className="h-4 w-4 text-muted" />
-          <span>
-            You&rsquo;re {distanceMeters != null ? Math.round(distanceMeters) : "?"}m
-            from the jobsite. Prompts unlock within 200m.
-          </span>
-        </div>
-        <div className="flex gap-2">
-          <Button size="sm" variant="ghost" onClick={onRetry}>
-            Retry
-          </Button>
-          <Button size="sm" variant="secondary" onClick={onOverride}>
-            Show anyway
-          </Button>
-        </div>
-      </div>
-    )
-  }
-  // denied / unavailable
-  return (
-    <div className="flex flex-col gap-2 rounded-md border border-border bg-surface px-3 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-      <div className="flex items-center gap-2">
-        <MapPinOff className="h-4 w-4 text-muted" />
-        <span>{errorMessage ?? "Couldn't determine your location."}</span>
-      </div>
-      <div className="flex gap-2">
-        <Button size="sm" variant="ghost" onClick={onRetry}>
-          Retry
-        </Button>
-        <Button size="sm" variant="secondary" onClick={onOverride}>
-          Show anyway
-        </Button>
-      </div>
+      ))}
     </div>
   )
 }
@@ -241,10 +106,19 @@ function PromptCard({
   }
 
   const isCompletionPrompt =
-    prompt.trigger === "past_due" || prompt.trigger === "ending_today"
+    prompt.trigger === "past_due" ||
+    prompt.trigger === "ending_today" ||
+    prompt.trigger === "todo_past_due" ||
+    prompt.trigger === "todo_due_today"
   const isStartPrompt =
     prompt.trigger === "starting_today" ||
     prompt.trigger === "upcoming_unstarted"
+  // Work items and to-dos use different date columns and slightly different
+  // copy; the underlying action handles the column choice, we just label.
+  const isTodo = prompt.kind === "todo"
+  const completionDateLabel = isTodo ? "due date" : "end date"
+  const yesTodayLabel = isTodo ? "Yes, done today" : "Yes, completing today"
+  const completionDateAnchor = isTodo ? prompt.due_date : prompt.end_date
 
   return (
     <Card>
@@ -261,9 +135,13 @@ function PromptCard({
           <DatePickerRow
             label={
               picking === "already_done"
-                ? "What date did it actually complete?"
+                ? isTodo
+                  ? "What date did it actually get done?"
+                  : "What date did it actually complete?"
                 : picking === "new_end_date"
-                  ? "What's the new end date?"
+                  ? isTodo
+                    ? "What's the new due date?"
+                    : "What's the new end date?"
                   : "What's the new start date?"
             }
             value={dateValue}
@@ -316,14 +194,14 @@ function PromptCard({
                 )
               }
             >
-              Yes, completing today
+              {yesTodayLabel}
             </Button>
             <Button
               size="sm"
               variant="secondary"
               disabled={pending}
               onClick={() => {
-                setDateValue(prompt.end_date ?? todayISO())
+                setDateValue(completionDateAnchor ?? todayISO())
                 setPicking("already_done")
               }}
             >
@@ -338,7 +216,7 @@ function PromptCard({
                 setPicking("new_end_date")
               }}
             >
-              No, new end date&hellip;
+              No, new {completionDateLabel}&hellip;
             </Button>
           </div>
         ) : isStartPrompt ? (
@@ -424,4 +302,3 @@ function DatePickerRow({
     </div>
   )
 }
-
