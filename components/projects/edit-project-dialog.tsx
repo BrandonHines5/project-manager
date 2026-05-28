@@ -30,8 +30,6 @@ type EditableProject = {
   client_email: string | null
   client_phone: string | null
   notes: string | null
-  latitude: number | null
-  longitude: number | null
 }
 
 export function EditProjectButton({ project }: { project: EditableProject }) {
@@ -86,8 +84,6 @@ function EditProjectDialog({
       client_email: String(fd.get("client_email") ?? ""),
       client_phone: String(fd.get("client_phone") ?? ""),
       notes: String(fd.get("notes") ?? ""),
-      latitude: String(fd.get("latitude") ?? ""),
-      longitude: String(fd.get("longitude") ?? ""),
     } as Parameters<typeof updateProject>[0]
 
     startTransition(async () => {
@@ -120,7 +116,7 @@ function EditProjectDialog({
           <div>
             <DialogTitle>Edit project</DialogTitle>
             <DialogDescription>
-              Update job details, client contact info, and jobsite coordinates.
+              Update job details and client contact info.
             </DialogDescription>
           </div>
         </DialogHeader>
@@ -177,36 +173,6 @@ function EditProjectDialog({
                 name="target_completion_date"
                 type="date"
                 defaultValue={project.target_completion_date ?? ""}
-              />
-            </Field>
-            <Field
-              label="Jobsite latitude"
-              hint={
-                fieldErrors.latitude ??
-                "Open the address in Google Maps, right-click, copy coordinates."
-              }
-            >
-              <Input
-                name="latitude"
-                type="number"
-                step="any"
-                min={-90}
-                max={90}
-                placeholder="40.123456"
-                defaultValue={project.latitude ?? ""}
-                className={cn(fieldErrors.latitude && "border-danger")}
-              />
-            </Field>
-            <Field label="Jobsite longitude" hint={fieldErrors.longitude}>
-              <Input
-                name="longitude"
-                type="number"
-                step="any"
-                min={-180}
-                max={180}
-                placeholder="-111.987654"
-                defaultValue={project.longitude ?? ""}
-                className={cn(fieldErrors.longitude && "border-danger")}
               />
             </Field>
             <Field label="Client name">

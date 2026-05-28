@@ -15,14 +15,13 @@ export default async function OnsitePage({
   const supabase = await createSupabaseServerClient()
   const { data: project, error } = await supabase
     .from("projects")
-    .select("id, name, address, latitude, longitude")
+    .select("id, name, address")
     .eq("id", id)
     .maybeSingle()
   if (error) throw new Error(`Failed to load project: ${error.message}`)
   if (!project) notFound()
 
-  const hasCoords = project.latitude != null && project.longitude != null
-  const prompts = hasCoords ? await getOnsitePrompts(supabase, project.id) : []
+  const prompts = await getOnsitePrompts(supabase, project.id)
 
   return (
     <div className="max-w-3xl mx-auto px-4 md:px-6 py-6">
@@ -31,16 +30,11 @@ export default async function OnsitePage({
         <h2 className="text-lg font-semibold">Onsite check-in</h2>
       </div>
       <p className="text-sm text-muted mb-6">
-        When you&rsquo;re within 200m of {project.name}
-        {project.address ? ` (${project.address})` : ""}, this page surfaces
-        schedule items that need a quick yes/no/date update.
+        Schedule items for {project.name}
+        {project.address ? ` (${project.address})` : ""} that need a quick
+        yes/no/date update right now.
       </p>
-      <OnsiteClient
-        projectId={project.id}
-        latitude={project.latitude}
-        longitude={project.longitude}
-        prompts={prompts}
-      />
+      <OnsiteClient projectId={project.id} prompts={prompts} />
     </div>
   )
 }

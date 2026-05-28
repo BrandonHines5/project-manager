@@ -240,29 +240,6 @@ const ProjectEditInput = z
       .optional()
       .or(z.literal("")),
     notes: z.string().optional().or(z.literal("")),
-    latitude: z.coerce
-      .number()
-      .min(-90)
-      .max(90)
-      .optional()
-      .or(z.literal("").transform(() => undefined)),
-    longitude: z.coerce
-      .number()
-      .min(-180)
-      .max(180)
-      .optional()
-      .or(z.literal("").transform(() => undefined)),
-  })
-  .superRefine((val, ctx) => {
-    const hasLat = val.latitude !== undefined
-    const hasLng = val.longitude !== undefined
-    if (hasLat !== hasLng) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: [hasLat ? "longitude" : "latitude"],
-        message: "Provide both latitude and longitude, or leave both blank",
-      })
-    }
   })
 
 export type UpdateProjectResult =
@@ -303,8 +280,6 @@ export async function updateProject(
       client_email: emptyToNull(rest.client_email),
       client_phone: emptyToNull(rest.client_phone),
       notes: emptyToNull(rest.notes),
-      latitude: rest.latitude ?? null,
-      longitude: rest.longitude ?? null,
     })
     .eq("id", project_id)
     .select("id")

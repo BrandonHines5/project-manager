@@ -56,18 +56,18 @@ const StartInput = z.discriminatedUnion("answer", [
 export type OnsiteAnswerResult = { ok: true } | { ok: false; error: string }
 
 /**
- * Answers a "will this complete on time?" / "when did this finish?" prompt
- * for a work item whose end_date has hit or passed. Three shapes:
+ * Answers a "will this complete on time?" / "when did this finish?" prompt.
+ * Works for both work items (which use end_date) and to-dos (which use
+ * due_date) — the action looks up the row's kind and writes the right
+ * column. Three answer shapes:
  *
- * - yes_today      → mark complete; snap end_date to today only if it had
- *                    drifted past (avoids inflating duration on items that
- *                    are simply hitting their planned end_date).
- * - already_done   → mark complete with the user-supplied actual end date.
- * - new_end_date   → keep working; push the end_date out and let the
- *                    predecessor cascade move successors forward.
- *
- * Any date change runs the same cascade the schedule editor uses, so
- * downstream items shift consistently with the rest of the app.
+ * - yes_today      → mark complete; snap the relevant date to today only if
+ *                    it had drifted past (avoids inflating duration on items
+ *                    that are simply hitting their planned date).
+ * - already_done   → mark complete with the user-supplied actual date.
+ * - new_end_date   → keep working; push the date out. For work items this
+ *                    also runs the predecessor cascade so successors move.
+ *                    To-dos don't drive the cascade.
  */
 export async function answerCompletion(
   input: z.input<typeof CompletionInput>
@@ -86,35 +86,42 @@ export async function answerCompletion(
   // defense in depth is cheap.
   const { data: item, error: readErr } = await supabase
     .from("schedule_items")
-    .select("id, start_date, end_date, status")
+    .select("id, kind, start_date, end_date, due_date, status")
     .eq("id", data.schedule_item_id)
     .eq("project_id", data.project_id)
     .maybeSingle()
   if (readErr) return { ok: false, error: readErr.message }
   if (!item) return { ok: false, error: "Schedule item not found." }
 
-  let newEndDate: string | null = item.end_date
+  const isTodo = item.kind === "todo"
+  const currentDate = isTodo ? item.due_date : item.end_date
+  let newDate: string | null = currentDate
   let newStatus: "in_progress" | "complete" = "complete"
 
   if (data.answer === "yes_today") {
     const today = todayISO()
-    if (item.end_date && item.end_date < today) newEndDate = today
+    if (currentDate && currentDate < today) newDate = today
   } else if (data.answer === "already_done") {
-    newEndDate = data.actual_end_date
+    newDate = data.actual_end_date
   } else {
-    newEndDate = data.new_end_date
+    newDate = data.new_end_date
     newStatus = "in_progress"
   }
 
-  const dateChanged = newEndDate !== item.end_date
+  const dateChanged = newDate !== currentDate
+  const update = isTodo
+    ? { status: newStatus, due_date: newDate }
+    : { status: newStatus, end_date: newDate }
   const { error: updErr } = await supabase
     .from("schedule_items")
-    .update({ status: newStatus, end_date: newEndDate })
+    .update(update)
     .eq("id", data.schedule_item_id)
     .eq("project_id", data.project_id)
   if (updErr) return { ok: false, error: updErr.message }
 
-  if (dateChanged) {
+  // Only work items drive the predecessor cascade — to-dos aren't part of
+  // the dependency graph.
+  if (dateChanged && !isTodo) {
     const cascadeErr = await runCascade(data.project_id, data.schedule_item_id)
     if (cascadeErr) return { ok: false, error: cascadeErr }
   }

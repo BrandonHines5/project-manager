@@ -7,6 +7,8 @@ export type OnsitePromptTrigger =
   | "ending_today"
   | "starting_today"
   | "upcoming_unstarted"
+  | "todo_past_due"
+  | "todo_due_today"
 
 export type OnsitePrompt = {
   id: string
@@ -20,14 +22,16 @@ export type OnsitePrompt = {
   question: string
 }
 
-const MAX_PROMPTS = 15
+const MAX_PROMPTS = 20
 
 // Priority ordering — the first trigger a row matches (in this list) wins,
 // so a past-due item never gets demoted to "upcoming" just because both
 // criteria technically hit.
 const TRIGGER_PRIORITY: OnsitePromptTrigger[] = [
   "past_due",
+  "todo_past_due",
   "ending_today",
+  "todo_due_today",
   "starting_today",
   "upcoming_unstarted",
 ]
@@ -39,10 +43,14 @@ export async function getOnsitePrompts(
   const today = todayISO()
   const twoDaysOut = addDays(today, 2)
 
-  // Single fetch covers all four triggers. We tag the trigger per-row in JS
-  // rather than running four separate queries — the result set is small (a
-  // project's open work items rarely exceed a few dozen) so this is cheaper
+  // Single fetch covers all triggers. We tag the trigger per-row in JS
+  // rather than running separate queries — the result set is small (a
+  // project's open items rarely exceed a few dozen) so this is cheaper
   // than the round-trip per rule.
+  //
+  // Work items live on start_date/end_date; to-dos live on due_date. The
+  // OR clause covers both shapes; classify() picks the right trigger
+  // based on which column was populated.
   const { data, error } = await supabase
     .from("schedule_items")
     .select(
@@ -51,12 +59,14 @@ export async function getOnsitePrompts(
     .eq("project_id", projectId)
     .or(
       [
-        // Past due or ending today: end_date <= today AND status != complete.
+        // Work items: past due or ending today.
         `and(end_date.lte.${today},status.neq.complete)`,
-        // Starting today: start_date = today AND not yet started.
+        // Work items: starting today, not yet started.
         `and(start_date.eq.${today},status.eq.not_started)`,
-        // Upcoming unstarted: start_date in (today, today+2] AND not_started.
+        // Work items: starting in (today, today+2], not yet started.
         `and(start_date.gt.${today},start_date.lte.${twoDaysOut},status.eq.not_started)`,
+        // To-dos: due today or earlier and not complete.
+        `and(kind.eq.todo,due_date.lte.${today},status.neq.complete)`,
       ].join(",")
     )
 
@@ -80,14 +90,14 @@ export async function getOnsitePrompts(
     })
   }
 
-  // Sort by trigger priority, then by oldest end_date / earliest start_date
-  // so the most urgent items are at the top of the list.
+  // Sort by trigger priority, then by oldest due/end date so the most
+  // urgent items are at the top of the list.
   prompts.sort((a, b) => {
     const pa = TRIGGER_PRIORITY.indexOf(a.trigger)
     const pb = TRIGGER_PRIORITY.indexOf(b.trigger)
     if (pa !== pb) return pa - pb
-    const aDate = a.end_date ?? a.start_date ?? ""
-    const bDate = b.end_date ?? b.start_date ?? ""
+    const aDate = a.end_date ?? a.due_date ?? a.start_date ?? ""
+    const bDate = b.end_date ?? b.due_date ?? b.start_date ?? ""
     return aDate.localeCompare(bDate)
   })
 
@@ -96,13 +106,23 @@ export async function getOnsitePrompts(
 
 function classify(
   row: {
+    kind: Enums<"schedule_item_kind">
     start_date: string | null
     end_date: string | null
+    due_date: string | null
     status: Enums<"schedule_item_status">
   },
   today: string,
   twoDaysOut: string
 ): OnsitePromptTrigger | null {
+  if (row.kind === "todo") {
+    if (row.due_date && row.status !== "complete") {
+      if (row.due_date < today) return "todo_past_due"
+      if (row.due_date === today) return "todo_due_today"
+    }
+    return null
+  }
+  // Work items.
   if (row.end_date && row.status !== "complete") {
     if (row.end_date < today) return "past_due"
     if (row.end_date === today) return "ending_today"
@@ -119,7 +139,11 @@ function classify(
 function buildQuestion(
   title: string,
   trigger: OnsitePromptTrigger,
-  row: { start_date: string | null; end_date: string | null }
+  row: {
+    start_date: string | null
+    end_date: string | null
+    due_date: string | null
+  }
 ): string {
   switch (trigger) {
     case "ending_today":
@@ -134,5 +158,11 @@ function buildQuestion(
       return `${title} is scheduled to start ${formatDate(
         row.start_date
       )} but hasn't started yet. Still on track?`
+    case "todo_due_today":
+      return `${title} is due today. Done?`
+    case "todo_past_due":
+      return `${title} was due ${formatDate(
+        row.due_date
+      )}. When did it / will it get done?`
   }
 }
