@@ -1,6 +1,6 @@
 "use server"
 
-import { randomBytes } from "node:crypto"
+import { randomInt } from "node:crypto"
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
@@ -46,14 +46,15 @@ function nz(v: string | null | undefined) {
 // the client-side generator in the team-client InviteDialog so resets and new
 // invites produce the same shape of password. Server-side because the result
 // is the auth secret — we don't want it bouncing through the browser.
+//
+// Uses crypto.randomInt for uniform character selection (no modulo bias).
 function generateTempPassword() {
   const alphabet =
     "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
   const symbols = "!@#$%&*?"
-  const buf = randomBytes(14)
   let out = ""
-  for (let i = 0; i < 13; i++) out += alphabet[buf[i] % alphabet.length]
-  out += symbols[buf[13] % symbols.length]
+  for (let i = 0; i < 13; i++) out += alphabet[randomInt(alphabet.length)]
+  out += symbols[randomInt(symbols.length)]
   return out
 }
 
