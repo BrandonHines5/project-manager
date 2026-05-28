@@ -1,5 +1,6 @@
 "use server"
 
+import { randomInt } from "node:crypto"
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
@@ -33,8 +34,28 @@ const DeleteTeamMemberInput = z.object({
   id: z.string().uuid(),
 })
 
+const ResetPasswordInput = z.object({
+  id: z.string().uuid(),
+})
+
 function nz(v: string | null | undefined) {
   return v && v !== "" ? v : null
+}
+
+// Generate a 14-char temporary password using crypto-grade randomness. Mirrors
+// the client-side generator in the team-client InviteDialog so resets and new
+// invites produce the same shape of password. Server-side because the result
+// is the auth secret — we don't want it bouncing through the browser.
+//
+// Uses crypto.randomInt for uniform character selection (no modulo bias).
+function generateTempPassword() {
+  const alphabet =
+    "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+  const symbols = "!@#$%&*?"
+  let out = ""
+  for (let i = 0; i < 13; i++) out += alphabet[randomInt(alphabet.length)]
+  out += symbols[randomInt(symbols.length)]
+  return out
 }
 
 export async function updateProfile(input: UpdateProfileInputT) {
@@ -107,6 +128,31 @@ export async function inviteTeamMember(input: InviteTeamMemberInputT) {
 
   revalidatePath("/team")
   return { id: newId }
+}
+
+/**
+ * Generate a new temporary password for a team member and return it so the
+ * caller can show & share it. Uses the admin client so we don't depend on
+ * SMTP / the /recover email flow.
+ */
+export async function resetTeamMemberPassword(id: string) {
+  await requireStaff()
+  const parsed = ResetPasswordInput.parse({ id })
+
+  const admin = createSupabaseAdminClient()
+  if (!admin) {
+    throw new Error(
+      "SUPABASE_SERVICE_ROLE_KEY is not configured. Add it to .env.local (and Vercel) to enable password resets."
+    )
+  }
+
+  const password = generateTempPassword()
+  const { error } = await admin.auth.admin.updateUserById(parsed.id, {
+    password,
+  })
+  if (error) throw new Error(error.message)
+
+  return { password }
 }
 
 export async function deleteTeamMember(id: string) {
