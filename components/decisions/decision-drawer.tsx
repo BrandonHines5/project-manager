@@ -322,7 +322,7 @@ export function DecisionDrawer({
       title: title.trim(),
       description: description || null,
       cost_delta:
-        hasAllowance
+        kind === "selection"
           ? null
           : hasBreakdown
           ? null
@@ -330,7 +330,7 @@ export function DecisionDrawer({
           ? null
           : Number(costDelta),
       markup_percent: markupNum,
-      cost_items: hasAllowance
+      cost_items: kind === "selection"
         ? []
         : effectiveCostItems.map((ci) => ({
             id: ci.id,
@@ -382,23 +382,21 @@ export function DecisionDrawer({
                   c.price_delta == null || (c.price_delta as unknown) === ""
                     ? null
                     : Number(c.price_delta),
-                cost_items: hasAllowance
-                  ? (c.cost_items ?? [])
-                      .filter(
-                        (ci) =>
-                          ci.cost_code_id ||
-                          ci.description ||
-                          (ci.unit_cost ?? 0) > 0
-                      )
-                      .map((ci) => ({
-                        id: ci.id,
-                        cost_code_id: ci.cost_code_id || null,
-                        description: ci.description || null,
-                        quantity: ci.quantity,
-                        unit: ci.unit || null,
-                        unit_cost: ci.unit_cost,
-                      }))
-                  : [],
+                cost_items: (c.cost_items ?? [])
+                  .filter(
+                    (ci) =>
+                      ci.cost_code_id ||
+                      ci.description ||
+                      (ci.unit_cost ?? 0) > 0
+                  )
+                  .map((ci) => ({
+                    id: ci.id,
+                    cost_code_id: ci.cost_code_id || null,
+                    description: ci.description || null,
+                    quantity: ci.quantity,
+                    unit: ci.unit || null,
+                    unit_cost: ci.unit_cost,
+                  })),
               }))
           : [],
     }
@@ -570,7 +568,7 @@ export function DecisionDrawer({
               costCodes={data.cost_codes}
             />
           )}
-          {canEdit && !hasAllowance && (
+          {canEdit && kind === "change_order" && (
             <CostBreakdownEditor
               items={costItems}
               onChange={setCostItems}
@@ -581,7 +579,7 @@ export function DecisionDrawer({
               total={breakdownTotal}
             />
           )}
-          {canEdit && hasAllowance && (
+          {canEdit && kind === "selection" && (
             <Field
               label="Markup %"
               hint="Applied to each choice's cost breakdown. Hidden from clients."
@@ -596,10 +594,9 @@ export function DecisionDrawer({
               />
             </Field>
           )}
-          {/* Manual single-cost mode — only shown when no breakdown is in use
-              and not in the allowance flow (allowance prices come from per-
-              choice values). */}
-          {!hasBreakdown && !hasAllowance && (
+          {/* Manual single-cost mode — change orders only. Selections capture
+              cost per choice. */}
+          {!hasBreakdown && kind === "change_order" && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field
                 label={
@@ -631,7 +628,7 @@ export function DecisionDrawer({
               </Field>
             </div>
           )}
-          {!canEdit && hasBreakdown && !hasAllowance && (
+          {!canEdit && hasBreakdown && kind === "change_order" && (
             <Field label="Price">
               <div className="h-9 flex items-center font-mono text-sm">
                 <CostDelta value={decision?.cost_delta ?? null} />
@@ -941,12 +938,12 @@ function ChoicesEditor({
       <div className="flex items-center justify-between">
         <Label>
           <Palette className="inline h-3 w-3 mr-1 text-blue-500" />
-          {hasAllowance ? "Choices & per-choice cost" : "Choices to offer"}
+          Choices &amp; per-choice cost
         </Label>
         <span className="text-[11px] text-muted">
           {hasAllowance
             ? "Variance from the allowance flows to billing on approval."
-            : "Pre-load options — the owner picks one when they approve."}
+            : "Pre-load options — the owner picks one and its cost flows to billing."}
         </span>
       </div>
       {value.length === 0 && (
@@ -961,17 +958,14 @@ function ChoicesEditor({
           const price = effectivePrice(c)
           const variance =
             hasAllowance && price != null ? price - (allowance ?? 0) : null
-          // Only count meaningful (non-blank) rows, and only when allowance
-          // mode is active — otherwise stale per-choice rows from a cleared
-          // allowance would silently lock the manual price input.
-          const hasItems =
-            hasAllowance &&
-            c.cost_items.some(
-              (ci) =>
-                ci.cost_code_id ||
-                ci.description ||
-                (ci.unit_cost ?? 0) > 0
-            )
+          // Only count meaningful (non-blank) rows so empty placeholders
+          // don't silently lock the manual price input.
+          const hasItems = c.cost_items.some(
+            (ci) =>
+              ci.cost_code_id ||
+              ci.description ||
+              (ci.unit_cost ?? 0) > 0
+          )
           return (
             <li
               key={c.client_key}
@@ -1057,13 +1051,11 @@ function ChoicesEditor({
                 }
                 placeholder="Short description shown to the client"
               />
-              {hasAllowance && (
-                <ChoiceCostBreakdownEditor
-                  items={c.cost_items}
-                  onChange={(items) => update(c.client_key, { cost_items: items })}
-                  costCodes={costCodes}
-                />
-              )}
+              <ChoiceCostBreakdownEditor
+                items={c.cost_items}
+                onChange={(items) => update(c.client_key, { cost_items: items })}
+                costCodes={costCodes}
+              />
               <ChoicePhotosRow
                 photos={photos}
                 onAdd={(files) => onAddPhotos(files, c.client_key)}
