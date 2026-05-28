@@ -216,15 +216,22 @@ export async function saveDecision(input: DecisionInputT) {
     if (parsed.status === "approved" && parsed.id) {
       const { data: existing } = await supabase
         .from("decisions")
-        .select("selected_choice_id")
+        .select("selected_choice_id, cost_delta")
         .eq("id", parsed.id)
         .maybeSingle()
       const selectedId = existing?.selected_choice_id ?? null
+      const existingCostDelta = existing?.cost_delta ?? null
       if (selectedId) {
         const match = parsed.choices.find((c) => c.id === selectedId)
         if (match) {
-          const price = effectiveChoicePrice.get(match.client_key) ?? 0
-          finalCostDelta = round2(price - (allowanceAmount ?? 0))
+          // If the chosen choice has no recorded price (legacy data from
+          // before per-choice costs), preserve the existing cost_delta
+          // rather than treating the missing price as zero.
+          const price = effectiveChoicePrice.get(match.client_key) ?? null
+          finalCostDelta =
+            price == null
+              ? existingCostDelta
+              : round2(price - (allowanceAmount ?? 0))
         }
       }
     }
