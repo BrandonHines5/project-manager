@@ -87,7 +87,7 @@ function daysBetween(a: string, b: string) {
 }
 
 export async function saveScheduleItem(input: ScheduleItemInputT) {
-  await requireStaff()
+  const profile = await requireStaff()
   const result = ScheduleItemInput.safeParse(input)
   if (!result.success) {
     const first = result.error.issues[0]
@@ -163,6 +163,10 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     )
   }
 
+  // created_by is now NOT NULL (migration 0021). The trg_si_fill_created_by
+  // trigger would fall back to auth.uid() if we forgot, but being explicit
+  // here keeps the action self-documenting and lets us record items created
+  // via service-role tooling correctly in the future.
   const baseRow = {
     project_id: parsed.project_id,
     parent_id: parentIdResolved,
@@ -178,6 +182,7 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     recurrence_rule: (parsed.recurrence_rule ?? null) as RecurrenceRule | null,
     parent_anchor: anchorFinal,
     parent_offset_days: offsetFinal,
+    created_by: profile.id,
   }
 
   let id: string | null = nz(parsed.id)

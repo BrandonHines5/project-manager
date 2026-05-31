@@ -35,17 +35,34 @@ export async function savePayment(input: PaymentInputT) {
   const parsed = result.data
 
   if (parsed.id) {
-    const { error } = await supabase
+    const { data: before } = await supabase
       .from("project_payments")
-      .update({
-        amount: parsed.amount,
-        paid_on: parsed.paid_on,
-        method: parsed.method,
-        reference: parsed.reference ?? null,
-        notes: parsed.notes ?? null,
-      })
+      .select("*")
       .eq("id", parsed.id)
+      .maybeSingle()
+    const patch = {
+      amount: parsed.amount,
+      paid_on: parsed.paid_on,
+      method: parsed.method,
+      reference: parsed.reference ?? null,
+      notes: parsed.notes ?? null,
+    }
+    const { data: after, error } = await supabase
+      .from("project_payments")
+      .update(patch)
+      .eq("id", parsed.id)
+      .select("*")
+      .maybeSingle()
     if (error) throw new Error(error.message)
+    if (after) {
+      await supabase.from("payment_audit").insert({
+        payment_id: parsed.id,
+        action: "update",
+        actor_id: profile.id,
+        before: before ?? null,
+        after,
+      })
+    }
   } else {
     const { data: row, error } = await supabase
       .from("project_payments")
@@ -61,11 +78,16 @@ export async function savePayment(input: PaymentInputT) {
       .select("*")
       .single()
     if (error) throw new Error(error.message)
-    // Only NEW payments get pushed — edits to existing rows don't fire a
-    // second event (the dashboard treats payments as append-only). If the
-    // staff truly need to correct a payment, deleting + re-adding is the
-    // right path and will refire correctly.
-    if (row) await sendDashboardWebhook("payment.recorded", row)
+    if (row) {
+      await supabase.from("payment_audit").insert({
+        payment_id: row.id,
+        action: "create",
+        actor_id: profile.id,
+        before: null,
+        after: row,
+      })
+      await sendDashboardWebhook("payment.recorded", row)
+    }
   }
   revalidatePath(`/projects/${parsed.project_id}/pricing`)
 }
@@ -77,12 +99,67 @@ export async function deletePayment({
   id: string
   project_id: string
 }) {
-  await requireStaff()
+  const profile = await requireStaff()
   const supabase = await createSupabaseServerClient()
+  const { data: before } = await supabase
+    .from("project_payments")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle()
+  if (!before) {
+    // Already gone (or RLS-invisible). Treat as success — idempotent delete.
+    return
+  }
+  if (before.deleted_at) {
+    // Already soft-deleted; do nothing rather than re-stamp.
+    return
+  }
   const { error } = await supabase
     .from("project_payments")
-    .delete()
+    .update({
+      deleted_at: new Date().toISOString(),
+      deleted_by: profile.id,
+    })
     .eq("id", id)
   if (error) throw new Error(error.message)
+  await supabase.from("payment_audit").insert({
+    payment_id: id,
+    action: "delete",
+    actor_id: profile.id,
+    before,
+    after: null,
+  })
+  revalidatePath(`/projects/${project_id}/pricing`)
+}
+
+export async function restorePayment({
+  id,
+  project_id,
+}: {
+  id: string
+  project_id: string
+}) {
+  const profile = await requireStaff()
+  const supabase = await createSupabaseServerClient()
+  const { data: before } = await supabase
+    .from("project_payments")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle()
+  if (!before || !before.deleted_at) return
+  const { data: after, error } = await supabase
+    .from("project_payments")
+    .update({ deleted_at: null, deleted_by: null })
+    .eq("id", id)
+    .select("*")
+    .maybeSingle()
+  if (error) throw new Error(error.message)
+  await supabase.from("payment_audit").insert({
+    payment_id: id,
+    action: "restore",
+    actor_id: profile.id,
+    before,
+    after: after ?? null,
+  })
   revalidatePath(`/projects/${project_id}/pricing`)
 }

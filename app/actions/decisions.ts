@@ -617,51 +617,59 @@ async function materializeFollowups(
 
   if (!templates || templates.length === 0) return 0
 
-  // Track which TEMPLATE has already been materialized via a sentinel in
-  // schedule_items.description (a JSON tail). Templates are matched by their
-  // own UUID, not by title — so duplicate titles materialize separately and
-  // each assignment lands on the right row.
-  const TEMPLATE_TAG = (templateId: string) => `\n[followup_template:${templateId}]`
-
+  // Idempotency lives in `decision_followup_materializations` (junction
+  // table, migration 0023). Its primary key is (decision_id, template_id),
+  // so re-approving a decision can't double-create a followup even if the
+  // schedule_item's description was edited later. Prior behaviour
+  // (description-LIKE match on a marker) was brittle.
   const { data: existing } = await supabase
-    .from("schedule_items")
-    .select("id, description")
-    .eq("source_decision_id", decisionId)
-  const materializedTemplateIds = new Set<string>()
-  for (const row of existing ?? []) {
-    const match = (row.description ?? "").match(/\[followup_template:([^\]]+)\]/)
-    if (match) materializedTemplateIds.add(match[1])
-  }
+    .from("decision_followup_materializations")
+    .select("template_id")
+    .eq("decision_id", decisionId)
+  const materializedTemplateIds = new Set(
+    (existing ?? []).map((r) => r.template_id)
+  )
 
   const approvedDate = todayISO()
   const newTemplates = templates.filter((t) => !materializedTemplateIds.has(t.id))
   if (newTemplates.length === 0) return 0
 
-  // We insert one schedule_item per template and tag it so we can match
-  // assignments + notifications back deterministically.
-  const newTodos = newTemplates.map((t) => ({
-    project_id: projectId,
-    kind: "todo" as const,
-    title: t.title,
-    description: (t.notes ?? "") + TEMPLATE_TAG(t.id),
-    due_date: addDays(approvedDate, t.due_offset_days),
-    source_decision_id: decisionId,
-    created_by: createdBy,
-  }))
-
-  const { data: inserted, error } = await supabase
-    .from("schedule_items")
-    .insert(newTodos)
-    .select("id, description")
-  if (error) throw new Error(error.message)
-
-  // Map inserted schedule_items back to the original templates by parsing
-  // the tag. This is robust against duplicate titles, identical descriptions,
-  // and inserts whose ordering the DB chose not to preserve.
+  // Insert one schedule_item per template. We need each row's id back, so
+  // do these individually (Supabase JS doesn't let us match returned rows
+  // to input rows by index reliably across error retries).
   const idByTemplateId = new Map<string, string>()
-  for (const row of inserted ?? []) {
-    const m = (row.description ?? "").match(/\[followup_template:([^\]]+)\]/)
-    if (m) idByTemplateId.set(m[1], row.id)
+  for (const t of newTemplates) {
+    const { data: row, error } = await supabase
+      .from("schedule_items")
+      .insert({
+        project_id: projectId,
+        kind: "todo" as const,
+        title: t.title,
+        description: t.notes,
+        due_date: addDays(approvedDate, t.due_offset_days),
+        source_decision_id: decisionId,
+        created_by: createdBy,
+      })
+      .select("id")
+      .single()
+    if (error) throw new Error(error.message)
+    idByTemplateId.set(t.id, row.id)
+  }
+
+  // Record materialization. The UNIQUE PK protects us from concurrent
+  // re-approves; conflicts are silently ignored.
+  const junctionRows = newTemplates
+    .filter((t) => idByTemplateId.has(t.id))
+    .map((t) => ({
+      decision_id: decisionId,
+      template_id: t.id,
+      schedule_item_id: idByTemplateId.get(t.id)!,
+    }))
+  if (junctionRows.length) {
+    const { error: jErr } = await supabase
+      .from("decision_followup_materializations")
+      .upsert(junctionRows, { onConflict: "decision_id,template_id" })
+    if (jErr) console.warn("[followup junction insert]", jErr.message)
   }
 
   const assignmentRows = newTemplates
@@ -698,7 +706,7 @@ async function materializeFollowups(
     if (nErr) console.warn("[followup notifications insert]", nErr.message)
   }
 
-  return inserted?.length ?? 0
+  return newTemplates.length
 }
 
 export async function deleteDecision({

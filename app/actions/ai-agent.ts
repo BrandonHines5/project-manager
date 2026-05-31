@@ -201,7 +201,7 @@ export async function applyPlanAction(input: {
   // client as the generic "Server Components render" digest, which is
   // useless for the user. Return typed errors instead so the dialog can
   // show the real reason a plan didn't apply.
-  await requireStaff()
+  const profile = await requireStaff()
   const parsed = ApplyInputSchema.safeParse(input)
   if (!parsed.success) {
     const issue = parsed.error.issues[0]
@@ -217,12 +217,43 @@ export async function applyPlanAction(input: {
     }
   }
   const supabase = await createSupabaseServerClient()
-  const results = await applyPlanInternal(supabase, parsed.data.mutations)
+  const results = await applyPlanInternal(
+    supabase,
+    parsed.data.mutations,
+    profile.id
+  )
   if (results.some((r) => r.ok)) {
-    // Schedule pages are dynamic anyway — revalidating the /projects tree
-    // on any success is cheap and guarantees the user sees their change
-    // after the dialog closes.
-    revalidatePath("/projects", "layout")
+    // Only some mutation kinds carry the project_id on the wire; the
+    // schedule_item-scoped ones (add_checklist_item, update_schedule_item*)
+    // and decision-scoped ones (update_decision_status,
+    // add_decision_followup) reference the row by id alone. For a clean
+    // per-project revalidation we'd need a lookup per affected row.
+    // Instead: gather every project_id we DO know, and fall back to a
+    // broad layout revalidation if any mutation kind lacked one. This is
+    // still strictly better than the old unconditional broad revalidate
+    // when every mutation in the plan is a `create_*`.
+    const projectIds = new Set<string>()
+    let needsBroadRevalidate = false
+    for (const r of results) {
+      if (!r.ok) continue
+      const m = r.mutation
+      switch (m.kind) {
+        case "create_todo":
+        case "create_work_item":
+        case "create_decision":
+          projectIds.add(m.project_id)
+          break
+        default:
+          needsBroadRevalidate = true
+      }
+    }
+    if (needsBroadRevalidate) {
+      revalidatePath("/projects", "layout")
+    } else {
+      for (const pid of projectIds) {
+        revalidatePath(`/projects/${pid}`, "layout")
+      }
+    }
   }
   return { ok: true, results }
 }

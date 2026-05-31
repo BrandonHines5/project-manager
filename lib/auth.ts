@@ -38,6 +38,18 @@ export async function getSessionProfile(): Promise<SessionProfile | null> {
     user.user_metadata?.full_name ||
     user.email?.split("@")[0] ||
     "User"
+  // Self-heal should be rare — the handle_new_user trigger covers the
+  // normal signup path. When it fires, log enough context to investigate.
+  // If a user who *should* be staff lands here, they get silently downgraded
+  // to client and we want to find out before they hit a permission wall.
+  console.warn(
+    "[auth] self-heal firing — profiles row missing for user",
+    JSON.stringify({
+      user_id: user.id,
+      email: user.email,
+      assumed_role: "client",
+    })
+  )
   const { data: created, error } = await supabase
     .from("profiles")
     .insert({
