@@ -224,6 +224,14 @@ const ProjectEditInput = z
       .nullable()
       .optional()
       .or(z.literal("").transform(() => null)),
+    // Bounded to match the CHECK constraint (migration 0027): 0–25%, two
+    // decimals. Empty string means "leave as 0".
+    retainage_percent: z.coerce
+      .number()
+      .min(0, "Retainage must be 0% or more")
+      .max(25, "Retainage cannot exceed 25%")
+      .optional()
+      .or(z.literal("").transform(() => 0)),
     start_date: optEditDate,
     target_completion_date: optEditDate,
     client_name: z.string().max(200).optional().or(z.literal("")),
@@ -274,6 +282,7 @@ export async function updateProject(
       address: emptyToNull(rest.address),
       status: rest.status,
       contract_price: rest.contract_price ?? null,
+      retainage_percent: rest.retainage_percent ?? 0,
       start_date: emptyToNull(rest.start_date) ?? null,
       target_completion_date: emptyToNull(rest.target_completion_date) ?? null,
       client_name: emptyToNull(rest.client_name),

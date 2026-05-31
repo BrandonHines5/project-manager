@@ -17,7 +17,7 @@ export default async function PricingPage({
 
   const { data: project } = await supabase
     .from("projects")
-    .select("id, name, project_number, contract_price")
+    .select("id, name, project_number, contract_price, retainage_percent")
     .eq("id", projectId)
     .maybeSingle()
   if (!project) notFound()
@@ -33,6 +33,11 @@ export default async function PricingPage({
       .from("project_payments")
       .select("*")
       .eq("project_id", projectId)
+      // Hide soft-deleted payments from the staff view too; deleted payments
+      // remain in the audit table for accountability but shouldn't clutter
+      // the live ledger. Staff who need to inspect deletions can query
+      // payment_audit directly.
+      .is("deleted_at", null)
       .order("paid_on", { ascending: false }),
   ])
 
@@ -40,6 +45,7 @@ export default async function PricingPage({
     project_id: projectId,
     role: profile.role,
     contract_price: project.contract_price,
+    retainage_percent: Number(project.retainage_percent ?? 0),
     approved_decisions: decisions ?? [],
     payments: payments ?? [],
   }
