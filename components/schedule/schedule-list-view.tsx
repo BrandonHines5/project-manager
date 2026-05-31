@@ -181,6 +181,18 @@ export function ScheduleListView({
       <BulkActionsBar
         projectId={projectId}
         selectedIds={Array.from(selectedIds)}
+        profiles={data.profiles
+          .filter((p) => p.role === "staff")
+          .map((p) => ({
+            id: p.id,
+            full_name: p.full_name,
+            email: p.email ?? null,
+          }))
+          .sort((a, b) =>
+            (a.full_name || a.email || "").localeCompare(
+              b.full_name || b.email || ""
+            )
+          )}
         onClear={clearSelection}
       />
     </div>

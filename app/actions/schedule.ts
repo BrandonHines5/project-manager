@@ -1211,3 +1211,134 @@ export async function bulkDeleteScheduleItems(input: {
   revalidatePath(`/projects/${parsed.project_id}/schedule`)
   return { ok: deleted.size, skipped }
 }
+
+// ============================================================================
+// Bulk assign / unassign a profile across selected schedule items.
+// ============================================================================
+//
+// Both paths follow the same shape as the other bulk operations: scoped by
+// project_id, capped at 500 ids, return BulkScheduleResult.
+//
+// Assign is idempotent: if the profile is already on a row, that row counts
+// as "ok" rather than failing. We achieve this by checking which rows
+// already have the assignment and only inserting the missing ones. Reasons
+// "already assigned" appear in `skipped` so the staff sees the breakdown
+// without it looking like an error.
+//
+// Unassign deletes the (item, profile) pair where present. Missing rows count
+// as "skipped: not assigned" so the user knows they weren't on those items.
+
+const BulkAssignInput = BulkIdsInput.extend({
+  profile_id: z.string().uuid(),
+})
+
+export async function bulkAssignProfileToScheduleItems(input: {
+  project_id: string
+  ids: string[]
+  profile_id: string
+}): Promise<BulkScheduleResult> {
+  await requireStaff()
+  const parsed = BulkAssignInput.parse(input)
+  const supabase = await createSupabaseServerClient()
+
+  // Limit to items in this project so a forged id can't assign someone
+  // to a different project's row even with valid staff session.
+  const { data: items, error: itemsErr } = await supabase
+    .from("schedule_items")
+    .select("id")
+    .in("id", parsed.ids)
+    .eq("project_id", parsed.project_id)
+  if (itemsErr) throw new Error(itemsErr.message)
+  const validIds = new Set((items ?? []).map((i) => i.id))
+  const skipped: { id: string; reason: string }[] = []
+  for (const id of parsed.ids) {
+    if (!validIds.has(id)) {
+      skipped.push({ id, reason: "not found in project (or RLS denied)" })
+    }
+  }
+  if (validIds.size === 0) return { ok: 0, skipped }
+
+  const { data: existing, error: exErr } = await supabase
+    .from("schedule_assignments")
+    .select("schedule_item_id")
+    .in("schedule_item_id", Array.from(validIds))
+    .eq("profile_id", parsed.profile_id)
+  if (exErr) throw new Error(exErr.message)
+  const alreadyAssigned = new Set(
+    (existing ?? []).map((r) => r.schedule_item_id)
+  )
+
+  const toInsert = Array.from(validIds).filter(
+    (id) => !alreadyAssigned.has(id)
+  )
+  for (const id of alreadyAssigned) {
+    skipped.push({ id, reason: "already assigned" })
+  }
+
+  let inserted = 0
+  if (toInsert.length > 0) {
+    const rows = toInsert.map((id) => ({
+      schedule_item_id: id,
+      profile_id: parsed.profile_id,
+      company_id: null,
+    }))
+    const { data, error } = await supabase
+      .from("schedule_assignments")
+      .insert(rows)
+      .select("schedule_item_id")
+    if (error) throw new Error(error.message)
+    inserted = (data ?? []).length
+    const insertedSet = new Set((data ?? []).map((r) => r.schedule_item_id))
+    for (const id of toInsert) {
+      if (!insertedSet.has(id)) {
+        skipped.push({ id, reason: "insert blocked (RLS)" })
+      }
+    }
+  }
+  revalidatePath(`/projects/${parsed.project_id}/schedule`)
+  return { ok: inserted, skipped }
+}
+
+export async function bulkUnassignProfileFromScheduleItems(input: {
+  project_id: string
+  ids: string[]
+  profile_id: string
+}): Promise<BulkScheduleResult> {
+  await requireStaff()
+  const parsed = BulkAssignInput.parse(input)
+  const supabase = await createSupabaseServerClient()
+
+  // RLS already gates per-row, but scope to the project explicitly so the
+  // server can report "not found in project" for the skipped breakdown
+  // (otherwise we couldn't tell missing-row from RLS-blocked).
+  const { data: items, error: itemsErr } = await supabase
+    .from("schedule_items")
+    .select("id")
+    .in("id", parsed.ids)
+    .eq("project_id", parsed.project_id)
+  if (itemsErr) throw new Error(itemsErr.message)
+  const validIds = new Set((items ?? []).map((i) => i.id))
+  const skipped: { id: string; reason: string }[] = []
+  for (const id of parsed.ids) {
+    if (!validIds.has(id)) {
+      skipped.push({ id, reason: "not found in project (or RLS denied)" })
+    }
+  }
+  if (validIds.size === 0) return { ok: 0, skipped }
+
+  const { data: deleted, error } = await supabase
+    .from("schedule_assignments")
+    .delete()
+    .eq("profile_id", parsed.profile_id)
+    .in("schedule_item_id", Array.from(validIds))
+    .select("schedule_item_id")
+  if (error) throw new Error(error.message)
+  const removed = new Set((deleted ?? []).map((r) => r.schedule_item_id))
+  for (const id of validIds) {
+    if (!removed.has(id)) {
+      skipped.push({ id, reason: "not assigned" })
+    }
+  }
+  revalidatePath(`/projects/${parsed.project_id}/schedule`)
+  return { ok: removed.size, skipped }
+}

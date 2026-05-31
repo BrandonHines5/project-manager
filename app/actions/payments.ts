@@ -27,8 +27,6 @@ const PaymentInput = z
     method: z.enum(["check", "wire", "card", "cash", "other"]).default("check"),
     reference: optStr,
     notes: optStr,
-    lien_waiver_received: z.boolean().default(false),
-    lien_waiver_reference: optStr,
   })
   .passthrough()
 
@@ -65,10 +63,6 @@ export async function savePayment(input: PaymentInputT) {
       method: parsed.method,
       reference: parsed.reference ?? null,
       notes: parsed.notes ?? null,
-      lien_waiver_received: parsed.lien_waiver_received,
-      lien_waiver_reference: parsed.lien_waiver_received
-        ? parsed.lien_waiver_reference ?? null
-        : null,
     }
     const { data: after, error: updErr } = await supabase
       .from("project_payments")
@@ -92,10 +86,6 @@ export async function savePayment(input: PaymentInputT) {
         method: parsed.method,
         reference: parsed.reference ?? null,
         notes: parsed.notes ?? null,
-        lien_waiver_received: parsed.lien_waiver_received,
-        lien_waiver_reference: parsed.lien_waiver_received
-          ? parsed.lien_waiver_reference ?? null
-          : null,
         recorded_by: profile.id,
       })
       .select("*")
