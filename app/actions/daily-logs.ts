@@ -1,6 +1,7 @@
 "use server"
 
 import { revalidatePath } from "next/cache"
+import { after } from "next/server"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
@@ -194,9 +195,15 @@ export async function saveDailyLog(input: DailyLogInputT) {
 
   // Courtesy SMS to subs newly marked on-site. We only text once per
   // company per save so a PM editing notes after the fact doesn't fire
-  // duplicates. Best-effort; never blocks the save.
+  // duplicates. Scheduled via Next's after() (CodeRabbit #30): bare
+  // void promise in a Server Action isn't guaranteed to keep running
+  // after the response is sent, particularly in streaming / serverless
+  // contexts. after() is the supported post-response mechanism and
+  // even guarantees execution when the action errors or redirects.
   if (addedCompanyIds.length > 0) {
-    void notifyNewSubsOnSite(addedCompanyIds, parsed.project_id, parsed.log_date)
+    after(() =>
+      notifyNewSubsOnSite(addedCompanyIds, parsed.project_id, parsed.log_date)
+    )
   }
   return { id }
 }
@@ -230,8 +237,12 @@ async function notifyNewSubsOnSite(
       const body = `Hines Homes: ${c.name} logged on site at ${label} on ${logDate}. Reply with any access or scope notes.`
       const r = await sendQuoSms({ to: e164, content: body })
       if (!r.sent) {
+        // Mask the recipient phone in logs (CodeRabbit #30): a full E.164
+        // is PII once it lands in log storage, and the company name +
+        // tail-4 is enough to correlate.
+        const masked = e164.slice(0, 2) + "***" + e164.slice(-4)
         console.warn(
-          `[notifyNewSubsOnSite] SMS to ${c.name} (${e164}) failed: ${r.reason ?? "unknown"}`
+          `[notifyNewSubsOnSite] SMS to ${c.name} (${masked}) failed: ${r.reason ?? "unknown"}`
         )
       }
     }

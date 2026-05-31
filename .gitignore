@@ -40,6 +40,9 @@ yarn-error.log*
 # claude-code local config (per-machine launch paths, etc.)
 .claude/
 
+# Local PR-body scratch files (used by gh pr create --body-file)
+.pr-body-*.md
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
