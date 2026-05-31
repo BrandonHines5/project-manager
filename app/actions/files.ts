@@ -243,8 +243,28 @@ export async function setMediaTags(input: z.input<typeof TagUpdateInput>) {
       `Invalid tag payload at ${first.path.join(".") || "(root)"}: ${first.message}`
     )
   }
-  const table = TABLE_BY_SOURCE[parsed.data.source]
   const supabase = await createSupabaseServerClient()
+  // Resolve the target row's project before the write so we can refuse
+  // cross-project tag edits (CodeRabbit #32). The *_staff_all RLS
+  // policies on the attachment tables only check is_staff() — without
+  // this server-side scope check, any staff member could tag an
+  // attachment in a project they don't belong to just by knowing its
+  // id. Project_files carries project_id directly; the three nested
+  // attachments resolve via their parent. Daily-log and decision
+  // attachments fail-closed if their parent doesn't match.
+  const targetProjectId = await resolveAttachmentProjectId(
+    supabase,
+    parsed.data.source,
+    parsed.data.id
+  )
+  if (!targetProjectId) {
+    throw new Error("Attachment not found or not in this project.")
+  }
+  if (targetProjectId !== parsed.data.project_id) {
+    throw new Error("Cross-project tag updates are not allowed.")
+  }
+
+  const table = TABLE_BY_SOURCE[parsed.data.source]
   // Cast through `as any` because the table name is a runtime-resolved union;
   // each member has the same { tags: string[] } shape so the runtime call is
   // safe but the union of Update types is too wide for Supabase's overload.
@@ -257,6 +277,56 @@ export async function setMediaTags(input: z.input<typeof TagUpdateInput>) {
   // Files page is the only one that renders the unified gallery; daily-logs
   // and decisions pages don't, so a single revalidatePath here is enough.
   revalidatePath(`/projects/${parsed.data.project_id}/files`)
+}
+
+async function resolveAttachmentProjectId(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  source: TagSource,
+  id: string
+): Promise<string | null> {
+  switch (source) {
+    case "project_file": {
+      const { data } = await supabase
+        .from("project_files")
+        .select("project_id")
+        .eq("id", id)
+        .maybeSingle()
+      return data?.project_id ?? null
+    }
+    case "daily_log_attachment": {
+      const { data } = await supabase
+        .from("daily_log_attachments")
+        .select("daily_logs!inner(project_id)")
+        .eq("id", id)
+        .maybeSingle()
+      return (
+        (data as unknown as { daily_logs: { project_id: string } } | null)
+          ?.daily_logs.project_id ?? null
+      )
+    }
+    case "decision_attachment": {
+      const { data } = await supabase
+        .from("decision_attachments")
+        .select("decisions!inner(project_id)")
+        .eq("id", id)
+        .maybeSingle()
+      return (
+        (data as unknown as { decisions: { project_id: string } } | null)
+          ?.decisions.project_id ?? null
+      )
+    }
+    case "schedule_item_attachment": {
+      const { data } = await supabase
+        .from("schedule_item_attachments")
+        .select("schedule_items!inner(project_id)")
+        .eq("id", id)
+        .maybeSingle()
+      return (
+        (data as unknown as { schedule_items: { project_id: string } } | null)
+          ?.schedule_items.project_id ?? null
+      )
+    }
+  }
 }
 
 export async function getSignedUrlsForFiles(paths: string[]) {

@@ -36,11 +36,16 @@ export function GanttView({
   const floatDays = analysis.floatDays
   const projectFinishLabel = useMemo(() => {
     if (analysis.projectFinishEpochDay == null) return null
+    // Construct Date at UTC midnight of the epoch-day, then format in UTC
+    // too (CodeRabbit #32). Without timeZone: "UTC" the formatter uses
+    // the browser's local zone, which renders the previous calendar day
+    // for any user west of UTC.
     const d = new Date(analysis.projectFinishEpochDay * 86400000)
     return d.toLocaleDateString(undefined, {
       year: "numeric",
       month: "short",
       day: "numeric",
+      timeZone: "UTC",
     })
   }, [analysis.projectFinishEpochDay])
 
