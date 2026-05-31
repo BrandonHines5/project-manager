@@ -95,7 +95,7 @@ export function SidebarNavList({
 
 export function Sidebar({ role }: { role: UserRole }) {
   return (
-    <aside className="hidden md:flex md:flex-col w-56 shrink-0 border-r border-border bg-[#0d2543] text-white">
+    <aside className="hidden md:flex md:flex-col w-56 shrink-0 border-r border-border bg-sidebar text-sidebar-foreground">
       <SidebarBrand />
       <SidebarNavList role={role} />
       <div className="p-4 text-[11px] text-white/40 border-t border-white/10">

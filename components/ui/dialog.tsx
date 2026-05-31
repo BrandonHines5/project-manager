@@ -20,6 +20,16 @@ function useMounted() {
   )
 }
 
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+function focusableWithin(root: HTMLElement | null): HTMLElement[] {
+  if (!root) return []
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+    (el) => !el.hasAttribute("inert") && el.offsetParent !== null
+  )
+}
+
 export function Dialog({
   open,
   onOpenChange,
@@ -49,7 +59,13 @@ export function DialogContent({
 }) {
   const ctx = React.useContext(DialogContext)
   const mounted = useMounted()
+  const panelRef = React.useRef<HTMLDivElement | null>(null)
+  // Remember whatever was focused when the dialog opened so we can put focus
+  // back there on close. Without this, tab-driven users get dumped at the
+  // top of the page instead of where they were before opening the modal.
+  const returnFocusRef = React.useRef<HTMLElement | null>(null)
 
+  // Esc closes the dialog.
   React.useEffect(() => {
     if (!ctx?.open) return
     function onKey(e: KeyboardEvent) {
@@ -58,6 +74,51 @@ export function DialogContent({
     document.addEventListener("keydown", onKey)
     return () => document.removeEventListener("keydown", onKey)
   }, [ctx])
+
+  // Focus management: trap Tab inside the dialog while it's open, focus
+  // the first focusable element on mount, and restore focus to whatever
+  // was active before the dialog opened when it closes.
+  React.useEffect(() => {
+    if (!ctx?.open) return
+    returnFocusRef.current = (document.activeElement as HTMLElement) ?? null
+
+    // Defer focus until after the portal has mounted the content.
+    const t = setTimeout(() => {
+      const items = focusableWithin(panelRef.current)
+      if (items.length > 0) {
+        items[0].focus()
+      } else {
+        panelRef.current?.focus()
+      }
+    }, 0)
+
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "Tab") return
+      const items = focusableWithin(panelRef.current)
+      if (items.length === 0) return
+      const first = items[0]
+      const last = items[items.length - 1]
+      const active = document.activeElement as HTMLElement | null
+      if (e.shiftKey) {
+        if (active === first || !panelRef.current?.contains(active)) {
+          e.preventDefault()
+          last.focus()
+        }
+      } else {
+        if (active === last || !panelRef.current?.contains(active)) {
+          e.preventDefault()
+          first.focus()
+        }
+      }
+    }
+    document.addEventListener("keydown", onKey)
+
+    return () => {
+      clearTimeout(t)
+      document.removeEventListener("keydown", onKey)
+      returnFocusRef.current?.focus?.()
+    }
+  }, [ctx?.open])
 
   if (!mounted || !ctx?.open) return null
 
@@ -76,8 +137,12 @@ export function DialogContent({
       }}
     >
       <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        tabIndex={-1}
         className={cn(
-          "bg-surface w-full shadow-2xl border-l border-border sm:border sm:rounded-lg",
+          "bg-surface w-full shadow-2xl border-l border-border sm:border sm:rounded-lg outline-none",
           side === "right"
             ? "h-full max-w-2xl sm:max-w-3xl sm:h-[90vh] sm:rounded-l-lg sm:rounded-r-lg"
             : `h-full sm:h-auto sm:max-h-[90vh] sm:my-auto ${sizeClass}`,
