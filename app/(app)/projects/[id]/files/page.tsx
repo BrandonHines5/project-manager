@@ -28,10 +28,13 @@ export default async function FilesPage({
     { data: logAttachments },
     { data: decisionAttachments },
   ] = await Promise.all([
+    // Plans gallery shows only the current revision of each chain — historic
+    // versions remain accessible via the per-file "History" affordance.
     supabase
       .from("project_files")
       .select("*")
       .eq("project_id", projectId)
+      .eq("is_current", true)
       .order("created_at", { ascending: false }),
     supabase
       .from("daily_log_attachments")

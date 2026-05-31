@@ -762,11 +762,14 @@ export type Database = {
           file_size: number | null
           file_type: string | null
           id: string
+          is_current: boolean
+          parent_file_id: string | null
           project_id: string
           storage_bucket: string
           storage_path: string
           title: string
           uploaded_by: string | null
+          version: number
         }
         Insert: {
           category?: Database["public"]["Enums"]["file_category"]
@@ -776,11 +779,14 @@ export type Database = {
           file_size?: number | null
           file_type?: string | null
           id?: string
+          is_current?: boolean
+          parent_file_id?: string | null
           project_id: string
           storage_bucket?: string
           storage_path: string
           title: string
           uploaded_by?: string | null
+          version?: number
         }
         Update: {
           category?: Database["public"]["Enums"]["file_category"]
@@ -790,11 +796,14 @@ export type Database = {
           file_size?: number | null
           file_type?: string | null
           id?: string
+          is_current?: boolean
+          parent_file_id?: string | null
           project_id?: string
           storage_bucket?: string
           storage_path?: string
           title?: string
           uploaded_by?: string | null
+          version?: number
         }
         Relationships: [
           {

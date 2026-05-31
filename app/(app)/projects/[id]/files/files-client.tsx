@@ -15,6 +15,8 @@ import {
   Trash2,
   Download,
   X,
+  History,
+  RefreshCcw,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -34,6 +36,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client"
 import {
   saveProjectFile,
   deleteProjectFile,
+  getFileVersions,
   type FileInputT,
 } from "@/app/actions/files"
 import type { Tables, Enums } from "@/lib/db/types"
@@ -72,6 +75,17 @@ const CATEGORY_META: Record<
 export function FilesClient({ data }: { data: FilesData }) {
   const canEdit = data.role === "staff"
   const [uploadOpen, setUploadOpen] = useState(false)
+  // When non-null, the upload dialog opens pre-targeted as a revision of the
+  // referenced file (parent_file_id chain handled server-side).
+  const [revisionTarget, setRevisionTarget] = useState<{
+    id: string
+    title: string
+    category: Enums<"file_category">
+  } | null>(null)
+  // When set, render the History dialog for the given plan's chain.
+  const [historyTarget, setHistoryTarget] = useState<Tables<"project_files"> | null>(
+    null
+  )
   const [search, setSearch] = useState("")
   const [sourceFilter, setSourceFilter] = useState<
     "all" | "plan" | "daily-log" | "decision"
@@ -131,6 +145,14 @@ export function FilesClient({ data }: { data: FilesData }) {
                 url={data.signed_urls[p.storage_path]}
                 canEdit={canEdit}
                 projectId={data.project_id}
+                onReplace={() =>
+                  setRevisionTarget({
+                    id: p.id,
+                    title: p.title,
+                    category: p.category,
+                  })
+                }
+                onShowHistory={() => setHistoryTarget(p)}
               />
             ))}
           </div>
@@ -232,6 +254,21 @@ export function FilesClient({ data }: { data: FilesData }) {
           projectId={data.project_id}
         />
       )}
+      {revisionTarget && canEdit && (
+        <UploadDialog
+          open={true}
+          onClose={() => setRevisionTarget(null)}
+          projectId={data.project_id}
+          revisionOf={revisionTarget}
+        />
+      )}
+      {historyTarget && (
+        <HistoryDialog
+          file={historyTarget}
+          projectId={data.project_id}
+          onClose={() => setHistoryTarget(null)}
+        />
+      )}
       {lightbox && (
         <Lightbox
           media={lightbox}
@@ -248,20 +285,32 @@ function PlanCard({
   url,
   canEdit,
   projectId,
+  onReplace,
+  onShowHistory,
 }: {
   file: Tables<"project_files">
   url: string | undefined
   canEdit: boolean
   projectId: string
+  onReplace: () => void
+  onShowHistory: () => void
 }) {
   const meta = CATEGORY_META[file.category]
   const Icon = meta.icon
   const isImage = file.file_type?.startsWith("image/") ?? false
   const router = useRouter()
   const [pending, startTransition] = useTransition()
+  const hasHistory = file.version > 1 || file.parent_file_id != null
 
   function handleDelete() {
-    if (!confirm(`Delete "${file.title}"?`)) return
+    if (
+      !confirm(
+        hasHistory
+          ? `Delete "${file.title}" v${file.version}? The previous revision will be promoted to current.`
+          : `Delete "${file.title}"?`
+      )
+    )
+      return
     startTransition(async () => {
       try {
         await deleteProjectFile({ id: file.id, project_id: projectId })
@@ -275,7 +324,7 @@ function PlanCard({
 
   return (
     <Card className="flex flex-col">
-      <div className="aspect-[4/3] bg-background flex items-center justify-center overflow-hidden">
+      <div className="aspect-[4/3] bg-background flex items-center justify-center overflow-hidden relative">
         {isImage && url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -286,11 +335,38 @@ function PlanCard({
         ) : (
           <Icon className="h-12 w-12 text-muted" />
         )}
+        {file.version > 1 && (
+          <span className="absolute top-2 left-2 inline-flex items-center rounded-full bg-foreground/80 text-white text-[10px] font-medium px-1.5 py-0.5">
+            v{file.version}
+          </span>
+        )}
       </div>
       <CardBody className="flex-1 flex flex-col gap-1">
         <div className="flex items-center justify-between gap-2">
           <Badge tone={meta.tone}>{meta.label}</Badge>
           <div className="flex items-center gap-1">
+            {hasHistory && (
+              <button
+                type="button"
+                onClick={onShowHistory}
+                className="text-muted hover:text-foreground p-1 cursor-pointer inline-flex"
+                title="View revision history"
+                aria-label="View revision history"
+              >
+                <History className="h-3.5 w-3.5" />
+              </button>
+            )}
+            {canEdit && (
+              <button
+                type="button"
+                onClick={onReplace}
+                className="text-muted hover:text-foreground p-1 cursor-pointer inline-flex"
+                title="Upload a new revision"
+                aria-label="Upload a new revision"
+              >
+                <RefreshCcw className="h-3.5 w-3.5" />
+              </button>
+            )}
             {url && (
               <a
                 href={url}
@@ -327,20 +403,110 @@ function PlanCard({
   )
 }
 
+function HistoryDialog({
+  file,
+  projectId,
+  onClose,
+}: {
+  file: Tables<"project_files">
+  projectId: string
+  onClose: () => void
+}) {
+  const [versions, setVersions] = useState<
+    Awaited<ReturnType<typeof getFileVersions>> | null
+  >(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    getFileVersions({ project_id: projectId, file_id: file.id })
+      .then((rows) => {
+        if (alive) setVersions(rows)
+      })
+      .catch((e) => {
+        if (alive) setError(e instanceof Error ? e.message : "Lookup failed")
+      })
+    return () => {
+      alive = false
+    }
+  }, [file.id, projectId])
+
+  return (
+    <Dialog open={true} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent size="md">
+        <DialogHeader>
+          <DialogTitle>{file.title} — history</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          {error ? (
+            <p className="text-sm text-danger">{error}</p>
+          ) : !versions ? (
+            <p className="text-sm text-muted">Loading…</p>
+          ) : versions.length === 0 ? (
+            <p className="text-sm text-muted">No history yet.</p>
+          ) : (
+            <ul className="space-y-2">
+              {versions
+                .slice()
+                .reverse()
+                .map((v) => (
+                  <li
+                    key={v.id}
+                    className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium truncate">
+                        v{v.version} · {v.file_name}
+                        {v.is_current && (
+                          <span className="ml-2 text-[11px] text-success">
+                            current
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-muted">
+                        {formatDate(v.created_at)}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+            </ul>
+          )}
+        </DialogBody>
+        <DialogFooter>
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function UploadDialog({
   open,
   onClose,
   projectId,
+  revisionOf,
 }: {
   open: boolean
   onClose: () => void
   projectId: string
+  // When set, the upload is treated as a new revision of this file:
+  // category + title pre-fill from it, and the saveProjectFile call carries
+  // replaces_id so the server links the chain.
+  revisionOf?: {
+    id: string
+    title: string
+    category: Enums<"file_category">
+  }
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [uploading, setUploading] = useState(false)
-  const [category, setCategory] = useState<Enums<"file_category">>("house_plans")
-  const [title, setTitle] = useState("")
+  const [category, setCategory] = useState<Enums<"file_category">>(
+    revisionOf?.category ?? "house_plans"
+  )
+  const [title, setTitle] = useState(revisionOf?.title ?? "")
   const [description, setDescription] = useState("")
   const [file, setFile] = useState<File | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -375,6 +541,7 @@ function UploadDialog({
         file_name: file.name,
         file_type: file.type || null,
         file_size: file.size,
+        replaces_id: revisionOf?.id,
       }
       startTransition(async () => {
         try {
@@ -397,7 +564,9 @@ function UploadDialog({
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent size="lg">
         <DialogHeader>
-          <DialogTitle>Upload file</DialogTitle>
+          <DialogTitle>
+            {revisionOf ? `Replace "${revisionOf.title}"` : "Upload file"}
+          </DialogTitle>
         </DialogHeader>
         <DialogBody className="space-y-4">
           <Field label="Category">
