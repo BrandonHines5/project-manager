@@ -37,6 +37,7 @@ import {
   saveProjectFile,
   deleteProjectFile,
   getFileVersions,
+  setMediaTags,
   type FileInputT,
 } from "@/app/actions/files"
 import type { Tables, Enums } from "@/lib/db/types"
@@ -44,6 +45,7 @@ import type { UserRole } from "@/lib/auth"
 
 type Media = {
   id: string
+  source_id: string
   storage_path: string
   file_name: string
   file_type: string | null
@@ -51,6 +53,7 @@ type Media = {
   source: "plan" | "daily-log" | "decision"
   source_label: string
   source_date: string
+  tags: string[]
 }
 
 export type FilesData = {
@@ -90,23 +93,35 @@ export function FilesClient({ data }: { data: FilesData }) {
   const [sourceFilter, setSourceFilter] = useState<
     "all" | "plan" | "daily-log" | "decision"
   >("all")
+  const [tagFilter, setTagFilter] = useState<string | null>(null)
   const [lightbox, setLightbox] = useState<Media | null>(null)
+
+  // Global tag pool for the filter chip row. Built from every visible
+  // media tag (not just the currently-filtered set) so the user can pivot
+  // by clicking through.
+  const allTags = useMemo(() => {
+    const s = new Set<string>()
+    for (const m of data.media) for (const t of m.tags) s.add(t)
+    return Array.from(s).sort()
+  }, [data.media])
 
   const filteredMedia = useMemo(() => {
     const q = search.trim().toLowerCase()
     return data.media
       .filter((m) => m.file_type?.startsWith("image/") || m.file_type?.startsWith("video/"))
       .filter((m) => sourceFilter === "all" || m.source === sourceFilter)
+      .filter((m) => !tagFilter || m.tags.includes(tagFilter))
       .filter((m) => {
         if (!q) return true
         return (
           m.file_name.toLowerCase().includes(q) ||
           (m.caption ?? "").toLowerCase().includes(q) ||
-          m.source_label.toLowerCase().includes(q)
+          m.source_label.toLowerCase().includes(q) ||
+          m.tags.some((t) => t.includes(q))
         )
       })
       .sort((a, b) => b.source_date.localeCompare(a.source_date))
-  }, [data.media, search, sourceFilter])
+  }, [data.media, search, sourceFilter, tagFilter])
 
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-6 py-5 space-y-8">
@@ -194,6 +209,41 @@ export function FilesClient({ data }: { data: FilesData }) {
           </div>
         </div>
 
+        {allTags.length > 0 && (
+          <div className="mb-3 flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] uppercase tracking-wide text-muted mr-1">
+              Tag
+            </span>
+            {allTags.map((t) => {
+              const active = tagFilter === t
+              return (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTagFilter(active ? null : t)}
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] cursor-pointer transition-colors",
+                    active
+                      ? "bg-brand-500 text-white"
+                      : "bg-surface text-muted border border-border-strong hover:text-foreground hover:bg-background"
+                  )}
+                >
+                  {t}
+                </button>
+              )
+            })}
+            {tagFilter && (
+              <button
+                type="button"
+                onClick={() => setTagFilter(null)}
+                className="text-[11px] text-muted hover:text-foreground underline cursor-pointer"
+              >
+                clear
+              </button>
+            )}
+          </div>
+        )}
+
         {filteredMedia.length === 0 ? (
           <EmptyState
             icon={<ImageIcon className="h-8 w-8" />}
@@ -273,6 +323,9 @@ export function FilesClient({ data }: { data: FilesData }) {
         <Lightbox
           media={lightbox}
           url={data.signed_urls[lightbox.storage_path]}
+          canEdit={canEdit}
+          projectId={data.project_id}
+          suggestions={allTags}
           onClose={() => setLightbox(null)}
         />
       )}
@@ -632,12 +685,22 @@ function UploadDialog({
 function Lightbox({
   media,
   url,
+  canEdit,
+  projectId,
+  suggestions,
   onClose,
 }: {
   media: Media
   url: string | undefined
+  canEdit: boolean
+  projectId: string
+  suggestions: string[]
   onClose: () => void
 }) {
+  const router = useRouter()
+  const [tags, setTags] = useState<string[]>(media.tags)
+  const [draft, setDraft] = useState("")
+  const [saving, startSaving] = useTransition()
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose()
@@ -645,6 +708,46 @@ function Lightbox({
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
   }, [onClose])
+
+  // Map our gallery's source string to the action's source enum.
+  const actionSource =
+    media.source === "plan"
+      ? "project_file"
+      : media.source === "daily-log"
+        ? "daily_log_attachment"
+        : "decision_attachment"
+
+  function commitTags(next: string[]) {
+    setTags(next)
+    startSaving(async () => {
+      try {
+        await setMediaTags({
+          project_id: projectId,
+          source: actionSource,
+          id: media.source_id,
+          tags: next,
+        })
+        // Keep parent state in sync so the gallery row + filter chips refresh.
+        router.refresh()
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Tag save failed")
+        // Roll back the optimistic update so chips revert.
+        setTags(media.tags)
+      }
+    })
+  }
+
+  function addTag(t: string) {
+    const v = t.trim().toLowerCase()
+    if (!v || v.length > 40) return
+    if (tags.includes(v)) {
+      setDraft("")
+      return
+    }
+    commitTags([...tags, v].sort())
+    setDraft("")
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4"
@@ -659,7 +762,7 @@ function Lightbox({
         <X className="h-5 w-5" />
       </button>
       <div
-        className="max-w-5xl max-h-[90vh] flex flex-col items-center"
+        className="max-w-5xl max-h-[90vh] w-full flex flex-col items-center"
         onClick={(e) => e.stopPropagation()}
       >
         {url ? (
@@ -667,14 +770,14 @@ function Lightbox({
             <video
               src={url}
               controls
-              className="max-h-[80vh] max-w-full rounded-md"
+              className="max-h-[70vh] max-w-full rounded-md"
             />
           ) : (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={url}
               alt={media.caption ?? media.file_name}
-              className="max-h-[80vh] max-w-full rounded-md object-contain"
+              className="max-h-[70vh] max-w-full rounded-md object-contain"
             />
           )
         ) : (
@@ -683,6 +786,78 @@ function Lightbox({
         <div className="mt-3 text-center text-white">
           <div className="font-medium">{media.caption ?? media.file_name}</div>
           <div className="text-sm text-white/70">{media.source_label}</div>
+        </div>
+
+        {/* Tag editor — staff can add/remove; everyone else sees read-only chips */}
+        <div className="mt-3 w-full max-w-2xl flex flex-col gap-2 items-center">
+          {(tags.length > 0 || canEdit) && (
+            <div className="flex flex-wrap items-center justify-center gap-1.5">
+              {tags.map((t) => (
+                <span
+                  key={t}
+                  className="inline-flex items-center gap-1 rounded-full bg-white/10 text-white text-xs px-2 py-0.5"
+                >
+                  {t}
+                  {canEdit && (
+                    <button
+                      type="button"
+                      onClick={() => commitTags(tags.filter((x) => x !== t))}
+                      aria-label={`Remove ${t}`}
+                      className="text-white/70 hover:text-white cursor-pointer"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </span>
+              ))}
+              {canEdit && (
+                <input
+                  type="text"
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === ",") {
+                      e.preventDefault()
+                      addTag(draft)
+                    }
+                    if (
+                      e.key === "Backspace" &&
+                      draft === "" &&
+                      tags.length > 0
+                    ) {
+                      commitTags(tags.slice(0, -1))
+                    }
+                  }}
+                  onBlur={() => {
+                    if (draft.trim() !== "") addTag(draft)
+                  }}
+                  placeholder={
+                    tags.length === 0 ? "Add tag…" : ""
+                  }
+                  disabled={saving}
+                  className="bg-transparent border-b border-white/30 text-white text-xs placeholder:text-white/40 outline-none w-24"
+                />
+              )}
+            </div>
+          )}
+          {canEdit && suggestions.length > 0 && (
+            <div className="flex flex-wrap items-center justify-center gap-1">
+              {suggestions
+                .filter((s) => !tags.includes(s))
+                .slice(0, 8)
+                .map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => addTag(s)}
+                    disabled={saving}
+                    className="text-[11px] text-white/60 hover:text-white border border-white/20 rounded-full px-2 py-0.5 cursor-pointer"
+                  >
+                    + {s}
+                  </button>
+                ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

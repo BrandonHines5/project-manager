@@ -85,6 +85,7 @@ export function AttachmentsEditor({
             position: attachments.length + fresh.length,
             uploaded_by: null,
             created_at: new Date().toISOString(),
+            tags: [],
             signed_url: URL.createObjectURL(file),
           })
         } catch (e) {

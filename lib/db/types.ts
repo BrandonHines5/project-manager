@@ -118,6 +118,7 @@ export type Database = {
           position: number
           storage_bucket: string
           storage_path: string
+          tags: string[]
         }
         Insert: {
           caption?: string | null
@@ -130,6 +131,7 @@ export type Database = {
           position?: number
           storage_bucket?: string
           storage_path: string
+          tags?: string[]
         }
         Update: {
           caption?: string | null
@@ -142,6 +144,7 @@ export type Database = {
           position?: number
           storage_bucket?: string
           storage_path?: string
+          tags?: string[]
         }
         Relationships: [
           {
@@ -247,6 +250,7 @@ export type Database = {
           position: number
           storage_bucket: string
           storage_path: string
+          tags: string[]
         }
         Insert: {
           caption?: string | null
@@ -260,6 +264,7 @@ export type Database = {
           position?: number
           storage_bucket?: string
           storage_path: string
+          tags?: string[]
         }
         Update: {
           caption?: string | null
@@ -273,6 +278,7 @@ export type Database = {
           position?: number
           storage_bucket?: string
           storage_path?: string
+          tags?: string[]
         }
         Relationships: [
           {
@@ -776,6 +782,7 @@ export type Database = {
           project_id: string
           storage_bucket: string
           storage_path: string
+          tags: string[]
           title: string
           uploaded_by: string | null
           version: number
@@ -793,6 +800,7 @@ export type Database = {
           project_id: string
           storage_bucket?: string
           storage_path: string
+          tags?: string[]
           title: string
           uploaded_by?: string | null
           version?: number
@@ -810,6 +818,7 @@ export type Database = {
           project_id?: string
           storage_bucket?: string
           storage_path?: string
+          tags?: string[]
           title?: string
           uploaded_by?: string | null
           version?: number
@@ -1127,6 +1136,7 @@ export type Database = {
           schedule_item_id: string
           storage_bucket: string
           storage_path: string
+          tags: string[]
           uploaded_by: string | null
         }
         Insert: {
@@ -1140,6 +1150,7 @@ export type Database = {
           schedule_item_id: string
           storage_bucket?: string
           storage_path: string
+          tags?: string[]
           uploaded_by?: string | null
         }
         Update: {
@@ -1153,6 +1164,7 @@ export type Database = {
           schedule_item_id?: string
           storage_bucket?: string
           storage_path?: string
+          tags?: string[]
           uploaded_by?: string | null
         }
         Relationships: [
