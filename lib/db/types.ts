@@ -50,6 +50,32 @@ export type Database = {
         }
         Relationships: []
       }
+      company_trades: {
+        Row: {
+          company_id: string
+          created_at: string
+          trade: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          trade: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          trade?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "company_trades_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cost_codes: {
         Row: {
           code: string
