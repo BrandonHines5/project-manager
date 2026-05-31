@@ -28,10 +28,13 @@ export default async function FilesPage({
     { data: logAttachments },
     { data: decisionAttachments },
   ] = await Promise.all([
+    // Plans gallery shows only the current revision of each chain — historic
+    // versions remain accessible via the per-file "History" affordance.
     supabase
       .from("project_files")
       .select("*")
       .eq("project_id", projectId)
+      .eq("is_current", true)
       .order("created_at", { ascending: false }),
     supabase
       .from("daily_log_attachments")
@@ -43,9 +46,13 @@ export default async function FilesPage({
       .eq("decisions.project_id", projectId),
   ])
 
-  // Build a unified list of all media for the gallery
+  // Build a unified list of all media for the gallery. `source_id` carries
+  // the row's real id (decoupled from the synthetic Media.id used as a React
+  // key) so the gallery's tag editor can dispatch back to setMediaTags
+  // without parsing the prefix again.
   type Media = {
     id: string
+    source_id: string
     storage_path: string
     file_name: string
     file_type: string | null
@@ -53,6 +60,7 @@ export default async function FilesPage({
     source: "plan" | "daily-log" | "decision"
     source_label: string
     source_date: string
+    tags: string[]
   }
 
   const media: Media[] = []
@@ -60,6 +68,7 @@ export default async function FilesPage({
   for (const p of plans ?? []) {
     media.push({
       id: `pf:${p.id}`,
+      source_id: p.id,
       storage_path: p.storage_path,
       file_name: p.file_name,
       file_type: p.file_type,
@@ -67,12 +76,14 @@ export default async function FilesPage({
       source: "plan",
       source_label: categoryLabel(p.category),
       source_date: p.created_at,
+      tags: p.tags ?? [],
     })
   }
   for (const a of logAttachments ?? []) {
     const dl = (a as unknown as { daily_logs: { log_date: string } }).daily_logs
     media.push({
       id: `dl:${a.id}`,
+      source_id: a.id,
       storage_path: a.storage_path,
       file_name: a.file_name,
       file_type: a.file_type,
@@ -80,6 +91,7 @@ export default async function FilesPage({
       source: "daily-log",
       source_label: `Daily log · ${dl.log_date}`,
       source_date: dl.log_date,
+      tags: a.tags ?? [],
     })
   }
   for (const a of decisionAttachments ?? []) {
@@ -87,6 +99,7 @@ export default async function FilesPage({
       .decisions
     media.push({
       id: `dec:${a.id}`,
+      source_id: a.id,
       storage_path: a.storage_path,
       file_name: a.file_name,
       file_type: a.file_type,
@@ -94,6 +107,7 @@ export default async function FilesPage({
       source: "decision",
       source_label: `Decision #${d.number} · ${d.title}`,
       source_date: a.created_at,
+      tags: a.tags ?? [],
     })
   }
 

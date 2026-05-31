@@ -294,3 +294,169 @@ export function computeCriticalPath(
   }
   return critical
 }
+
+/**
+ * Same forward+backward pass as computeCriticalPath, but returns a richer
+ * payload:
+ *   - critical: same Set as computeCriticalPath
+ *   - floatDays: Map<itemId, float in days>. 0 ⇒ on the critical path; N ⇒
+ *     this item can slip by N days without moving the project finish.
+ *   - projectFinishEpochDay: the EF of the latest item across the network.
+ *     Multiply by 86400000 to convert back to an ISO date for display.
+ *
+ * Same skips and cycle behavior as computeCriticalPath — items without dates
+ * are excluded from the map; a cyclic graph yields an empty result.
+ */
+export type ScheduleAnalysis = {
+  critical: Set<string>
+  floatDays: Map<string, number>
+  projectFinishEpochDay: number | null
+}
+
+export function computeScheduleAnalysis(
+  items: ScheduleItem[],
+  predecessors: Predecessor[]
+): ScheduleAnalysis {
+  const workItems = items.filter(
+    (i) =>
+      i.kind === "work" &&
+      i.start_date &&
+      i.end_date &&
+      !i.recurrence_parent_id
+  )
+  if (workItems.length === 0)
+    return {
+      critical: new Set(),
+      floatDays: new Map(),
+      projectFinishEpochDay: null,
+    }
+
+  const toEpochDay = (iso: string) =>
+    Math.round(new Date(iso).getTime() / 86400000)
+
+  const byId = new Map(workItems.map((i) => [i.id, i]))
+  const incoming = new Map<string, Predecessor[]>()
+  const outgoing = new Map<string, Predecessor[]>()
+  for (const p of predecessors) {
+    if (!byId.has(p.item_id) || !byId.has(p.predecessor_id)) continue
+    if (!incoming.has(p.item_id)) incoming.set(p.item_id, [])
+    if (!outgoing.has(p.predecessor_id)) outgoing.set(p.predecessor_id, [])
+    incoming.get(p.item_id)!.push(p)
+    outgoing.get(p.predecessor_id)!.push(p)
+  }
+
+  const duration = new Map<string, number>()
+  for (const it of workItems) {
+    const s = toEpochDay(it.start_date!)
+    const e = toEpochDay(it.end_date!)
+    duration.set(it.id, Math.max(1, e - s + 1))
+  }
+
+  const inDeg = new Map<string, number>(
+    workItems.map((i) => [i.id, incoming.get(i.id)?.length ?? 0])
+  )
+  const queue: string[] = []
+  for (const [id, deg] of inDeg) if (deg === 0) queue.push(id)
+  const order: string[] = []
+  while (queue.length) {
+    const cur = queue.shift()!
+    order.push(cur)
+    for (const out of outgoing.get(cur) ?? []) {
+      const next = out.item_id
+      const d = (inDeg.get(next) ?? 0) - 1
+      inDeg.set(next, d)
+      if (d === 0) queue.push(next)
+    }
+  }
+  if (order.length !== workItems.length)
+    return {
+      critical: new Set(),
+      floatDays: new Map(),
+      projectFinishEpochDay: null,
+    }
+
+  const es = new Map<string, number>()
+  const ef = new Map<string, number>()
+  for (const id of order) {
+    const it = byId.get(id)!
+    const dur = duration.get(id)!
+    const incomingEdges = incoming.get(id) ?? []
+    let earliest: number
+    if (incomingEdges.length === 0) {
+      earliest = toEpochDay(it.start_date!)
+    } else {
+      earliest = Number.NEGATIVE_INFINITY
+      for (const p of incomingEdges) {
+        const pred = byId.get(p.predecessor_id)!
+        const predES = es.get(pred.id)!
+        const predEF = ef.get(pred.id)!
+        let candidate: number
+        switch (p.dep_type) {
+          case "FS":
+            candidate = predEF + p.lag_days + 1
+            break
+          case "SS":
+            candidate = predES + p.lag_days
+            break
+          case "FF":
+            candidate = predEF + p.lag_days - dur + 1
+            break
+          case "SF":
+            candidate = predES + p.lag_days - dur + 1
+            break
+          default:
+            candidate = predEF + p.lag_days + 1
+        }
+        if (candidate > earliest) earliest = candidate
+      }
+    }
+    es.set(id, earliest)
+    ef.set(id, earliest + dur - 1)
+  }
+
+  const projectFinish = Math.max(...Array.from(ef.values()))
+
+  const lf = new Map<string, number>()
+  const ls = new Map<string, number>()
+  for (const id of [...order].reverse()) {
+    const dur = duration.get(id)!
+    let latest = projectFinish
+    const outs = outgoing.get(id) ?? []
+    if (outs.length > 0) {
+      latest = Infinity
+      for (const p of outs) {
+        const succLS = ls.get(p.item_id)!
+        const succLF = lf.get(p.item_id)!
+        let candidate: number
+        switch (p.dep_type) {
+          case "FS":
+            candidate = succLS - p.lag_days - 1
+            break
+          case "SS":
+            candidate = succLS - p.lag_days + dur - 1
+            break
+          case "FF":
+            candidate = succLF - p.lag_days
+            break
+          case "SF":
+            candidate = succLF - p.lag_days + dur - 1
+            break
+          default:
+            candidate = succLS - p.lag_days - 1
+        }
+        if (candidate < latest) latest = candidate
+      }
+    }
+    lf.set(id, latest)
+    ls.set(id, latest - dur + 1)
+  }
+
+  const critical = new Set<string>()
+  const floatDays = new Map<string, number>()
+  for (const id of order) {
+    const slack = (ls.get(id) ?? 0) - (es.get(id) ?? 0)
+    floatDays.set(id, slack)
+    if (slack === 0) critical.add(id)
+  }
+  return { critical, floatDays, projectFinishEpochDay: projectFinish }
+}

@@ -118,6 +118,7 @@ export type Database = {
           position: number
           storage_bucket: string
           storage_path: string
+          tags: string[]
         }
         Insert: {
           caption?: string | null
@@ -130,6 +131,7 @@ export type Database = {
           position?: number
           storage_bucket?: string
           storage_path: string
+          tags?: string[]
         }
         Update: {
           caption?: string | null
@@ -142,6 +144,7 @@ export type Database = {
           position?: number
           storage_bucket?: string
           storage_path?: string
+          tags?: string[]
         }
         Relationships: [
           {
@@ -247,6 +250,7 @@ export type Database = {
           position: number
           storage_bucket: string
           storage_path: string
+          tags: string[]
         }
         Insert: {
           caption?: string | null
@@ -260,6 +264,7 @@ export type Database = {
           position?: number
           storage_bucket?: string
           storage_path: string
+          tags?: string[]
         }
         Update: {
           caption?: string | null
@@ -273,6 +278,7 @@ export type Database = {
           position?: number
           storage_bucket?: string
           storage_path?: string
+          tags?: string[]
         }
         Relationships: [
           {
@@ -633,6 +639,7 @@ export type Database = {
         Row: {
           body: string | null
           created_at: string
+          email_sent_at: string | null
           id: string
           link_url: string | null
           read_at: string | null
@@ -643,6 +650,7 @@ export type Database = {
         Insert: {
           body?: string | null
           created_at?: string
+          email_sent_at?: string | null
           id?: string
           link_url?: string | null
           read_at?: string | null
@@ -653,6 +661,7 @@ export type Database = {
         Update: {
           body?: string | null
           created_at?: string
+          email_sent_at?: string | null
           id?: string
           link_url?: string | null
           read_at?: string | null
@@ -720,8 +729,10 @@ export type Database = {
           company_id: string | null
           created_at: string
           email: string | null
+          email_digest_pref: Database["public"]["Enums"]["email_digest_pref"]
           full_name: string
           id: string
+          last_digest_at: string | null
           phone: string | null
           role: Database["public"]["Enums"]["user_role"]
         }
@@ -729,8 +740,10 @@ export type Database = {
           company_id?: string | null
           created_at?: string
           email?: string | null
+          email_digest_pref?: Database["public"]["Enums"]["email_digest_pref"]
           full_name?: string
           id: string
+          last_digest_at?: string | null
           phone?: string | null
           role?: Database["public"]["Enums"]["user_role"]
         }
@@ -738,8 +751,10 @@ export type Database = {
           company_id?: string | null
           created_at?: string
           email?: string | null
+          email_digest_pref?: Database["public"]["Enums"]["email_digest_pref"]
           full_name?: string
           id?: string
+          last_digest_at?: string | null
           phone?: string | null
           role?: Database["public"]["Enums"]["user_role"]
         }
@@ -762,11 +777,15 @@ export type Database = {
           file_size: number | null
           file_type: string | null
           id: string
+          is_current: boolean
+          parent_file_id: string | null
           project_id: string
           storage_bucket: string
           storage_path: string
+          tags: string[]
           title: string
           uploaded_by: string | null
+          version: number
         }
         Insert: {
           category?: Database["public"]["Enums"]["file_category"]
@@ -776,11 +795,15 @@ export type Database = {
           file_size?: number | null
           file_type?: string | null
           id?: string
+          is_current?: boolean
+          parent_file_id?: string | null
           project_id: string
           storage_bucket?: string
           storage_path: string
+          tags?: string[]
           title: string
           uploaded_by?: string | null
+          version?: number
         }
         Update: {
           category?: Database["public"]["Enums"]["file_category"]
@@ -790,11 +813,15 @@ export type Database = {
           file_size?: number | null
           file_type?: string | null
           id?: string
+          is_current?: boolean
+          parent_file_id?: string | null
           project_id?: string
           storage_bucket?: string
           storage_path?: string
+          tags?: string[]
           title?: string
           uploaded_by?: string | null
+          version?: number
         }
         Relationships: [
           {
@@ -1109,6 +1136,7 @@ export type Database = {
           schedule_item_id: string
           storage_bucket: string
           storage_path: string
+          tags: string[]
           uploaded_by: string | null
         }
         Insert: {
@@ -1122,6 +1150,7 @@ export type Database = {
           schedule_item_id: string
           storage_bucket?: string
           storage_path: string
+          tags?: string[]
           uploaded_by?: string | null
         }
         Update: {
@@ -1135,6 +1164,7 @@ export type Database = {
           schedule_item_id?: string
           storage_bucket?: string
           storage_path?: string
+          tags?: string[]
           uploaded_by?: string | null
         }
         Relationships: [
@@ -1398,6 +1428,7 @@ export type Database = {
         | "permit"
         | "other"
       dependency_type: "FS" | "SS" | "FF" | "SF"
+      email_digest_pref: "immediate" | "daily" | "off"
       file_category:
         | "house_plans"
         | "plot_plan"
@@ -1581,6 +1612,7 @@ export const Constants = {
         "FF",
         "SF",
       ],
+      email_digest_pref: ["immediate", "daily", "off"],
       file_category: [
         "house_plans",
         "plot_plan",
