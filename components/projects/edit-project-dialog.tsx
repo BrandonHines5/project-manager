@@ -24,6 +24,7 @@ type EditableProject = {
   address: string | null
   status: Enums<"project_status">
   contract_price: number | null
+  retainage_percent: number | null
   start_date: string | null
   target_completion_date: string | null
   client_name: string | null
@@ -78,6 +79,7 @@ function EditProjectDialog({
       address: String(fd.get("address") ?? ""),
       status: String(fd.get("status") ?? project.status),
       contract_price: String(fd.get("contract_price") ?? ""),
+      retainage_percent: String(fd.get("retainage_percent") ?? ""),
       start_date: String(fd.get("start_date") ?? ""),
       target_completion_date: String(fd.get("target_completion_date") ?? ""),
       client_name: String(fd.get("client_name") ?? ""),
@@ -152,6 +154,24 @@ function EditProjectDialog({
                 placeholder="0.00"
                 defaultValue={project.contract_price ?? ""}
                 className={cn(fieldErrors.contract_price && "border-danger")}
+              />
+            </Field>
+            <Field
+              label="Retainage %"
+              hint={
+                fieldErrors.retainage_percent ??
+                "Held back until punchlist. 0 if not using retainage."
+              }
+            >
+              <Input
+                name="retainage_percent"
+                type="number"
+                step="0.5"
+                min="0"
+                max="25"
+                placeholder="0"
+                defaultValue={project.retainage_percent ?? 0}
+                className={cn(fieldErrors.retainage_percent && "border-danger")}
               />
             </Field>
             <Field label="Address" className="sm:col-span-2">

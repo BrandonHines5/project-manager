@@ -856,6 +856,8 @@ export type Database = {
           deleted_at: string | null
           deleted_by: string | null
           id: string
+          lien_waiver_received: boolean
+          lien_waiver_reference: string | null
           method: Database["public"]["Enums"]["payment_method"]
           notes: string | null
           paid_on: string
@@ -869,6 +871,8 @@ export type Database = {
           deleted_at?: string | null
           deleted_by?: string | null
           id?: string
+          lien_waiver_received?: boolean
+          lien_waiver_reference?: string | null
           method?: Database["public"]["Enums"]["payment_method"]
           notes?: string | null
           paid_on?: string
@@ -882,6 +886,8 @@ export type Database = {
           deleted_at?: string | null
           deleted_by?: string | null
           id?: string
+          lien_waiver_received?: boolean
+          lien_waiver_reference?: string | null
           method?: Database["public"]["Enums"]["payment_method"]
           notes?: string | null
           paid_on?: string
@@ -931,6 +937,7 @@ export type Database = {
           name: string
           notes: string | null
           project_number: string
+          retainage_percent: number
           start_date: string | null
           status: Database["public"]["Enums"]["project_status"]
           target_completion_date: string | null
@@ -952,6 +959,7 @@ export type Database = {
           name: string
           notes?: string | null
           project_number: string
+          retainage_percent?: number
           start_date?: string | null
           status?: Database["public"]["Enums"]["project_status"]
           target_completion_date?: string | null
@@ -973,6 +981,7 @@ export type Database = {
           name?: string
           notes?: string | null
           project_number?: string
+          retainage_percent?: number
           start_date?: string | null
           status?: Database["public"]["Enums"]["project_status"]
           target_completion_date?: string | null
