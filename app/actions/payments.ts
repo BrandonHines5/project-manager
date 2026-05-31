@@ -6,6 +6,16 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
 import { sendDashboardWebhook } from "@/lib/dashboard"
 
+// Audit-log writes are no longer done here. Migration 0031 installed an
+// AFTER INSERT OR UPDATE OR DELETE trigger on project_payments
+// (`trg_record_payment_audit`) that writes payment_audit rows itself,
+// captures the real actor via auth.uid(), and computes the action label
+// (create / update / delete / restore) from the soft-delete column
+// transitions. The previous RLS policy that let staff INSERT into
+// payment_audit was dropped in the same migration, so this action can
+// no longer fabricate an audit row even if it tried — and equally
+// importantly, can no longer drop one on the floor.
+
 const optStr = z.string().nullish()
 
 const PaymentInput = z
@@ -35,11 +45,18 @@ export async function savePayment(input: PaymentInputT) {
   const parsed = result.data
 
   if (parsed.id) {
-    const { data: before } = await supabase
+    // Distinguish "row missing / RLS hides it" from "DB error" by reading
+    // first and surfacing both with their own error message. The update
+    // path also returns the row so the caller can confirm the write
+    // actually landed.
+    const { data: existing, error: readErr } = await supabase
       .from("project_payments")
-      .select("*")
+      .select("id")
       .eq("id", parsed.id)
       .maybeSingle()
+    if (readErr) throw new Error(readErr.message)
+    if (!existing) throw new Error("Payment not found.")
+
     const patch = {
       amount: parsed.amount,
       paid_on: parsed.paid_on,
@@ -47,21 +64,17 @@ export async function savePayment(input: PaymentInputT) {
       reference: parsed.reference ?? null,
       notes: parsed.notes ?? null,
     }
-    const { data: after, error } = await supabase
+    const { data: after, error: updErr } = await supabase
       .from("project_payments")
       .update(patch)
       .eq("id", parsed.id)
-      .select("*")
+      .select("id")
       .maybeSingle()
-    if (error) throw new Error(error.message)
-    if (after) {
-      await supabase.from("payment_audit").insert({
-        payment_id: parsed.id,
-        action: "update",
-        actor_id: profile.id,
-        before: before ?? null,
-        after,
-      })
+    if (updErr) throw new Error(updErr.message)
+    if (!after) {
+      // Update returned no row even though the read found one — RLS
+      // denied the write or someone soft-deleted between the two calls.
+      throw new Error("Payment update was blocked.")
     }
   } else {
     const { data: row, error } = await supabase
@@ -79,13 +92,6 @@ export async function savePayment(input: PaymentInputT) {
       .single()
     if (error) throw new Error(error.message)
     if (row) {
-      await supabase.from("payment_audit").insert({
-        payment_id: row.id,
-        action: "create",
-        actor_id: profile.id,
-        before: null,
-        after: row,
-      })
       await sendDashboardWebhook("payment.recorded", row)
     }
   }
@@ -100,20 +106,26 @@ export async function deletePayment({
   project_id: string
 }) {
   const profile = await requireStaff()
+  void profile
   const supabase = await createSupabaseServerClient()
-  const { data: before } = await supabase
+  const { data: before, error: readErr } = await supabase
     .from("project_payments")
-    .select("*")
+    .select("id, deleted_at")
     .eq("id", id)
     .maybeSingle()
+  if (readErr) throw new Error(readErr.message)
   if (!before) {
-    // Already gone (or RLS-invisible). Treat as success — idempotent delete.
-    return
+    // Treat missing as a 404 instead of silent success — the prior
+    // version returned ok here, which could mask an authorisation bug
+    // where the user couldn't see the row but called delete anyway.
+    throw new Error("Payment not found.")
   }
   if (before.deleted_at) {
-    // Already soft-deleted; do nothing rather than re-stamp.
+    // Already soft-deleted — idempotent no-op without re-stamping.
     return
   }
+  // requireStaff() above already authorised this. The trigger captures
+  // the actor + before/after via auth.uid() and the column delta.
   const { error } = await supabase
     .from("project_payments")
     .update({
@@ -122,13 +134,6 @@ export async function deletePayment({
     })
     .eq("id", id)
   if (error) throw new Error(error.message)
-  await supabase.from("payment_audit").insert({
-    payment_id: id,
-    action: "delete",
-    actor_id: profile.id,
-    before,
-    after: null,
-  })
   revalidatePath(`/projects/${project_id}/pricing`)
 }
 
@@ -140,26 +145,20 @@ export async function restorePayment({
   project_id: string
 }) {
   const profile = await requireStaff()
+  void profile
   const supabase = await createSupabaseServerClient()
-  const { data: before } = await supabase
+  const { data: before, error: readErr } = await supabase
     .from("project_payments")
-    .select("*")
+    .select("id, deleted_at")
     .eq("id", id)
     .maybeSingle()
-  if (!before || !before.deleted_at) return
-  const { data: after, error } = await supabase
+  if (readErr) throw new Error(readErr.message)
+  if (!before) throw new Error("Payment not found.")
+  if (!before.deleted_at) return
+  const { error } = await supabase
     .from("project_payments")
     .update({ deleted_at: null, deleted_by: null })
     .eq("id", id)
-    .select("*")
-    .maybeSingle()
   if (error) throw new Error(error.message)
-  await supabase.from("payment_audit").insert({
-    payment_id: id,
-    action: "restore",
-    actor_id: profile.id,
-    before,
-    after: after ?? null,
-  })
   revalidatePath(`/projects/${project_id}/pricing`)
 }

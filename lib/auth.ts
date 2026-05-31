@@ -39,14 +39,16 @@ export async function getSessionProfile(): Promise<SessionProfile | null> {
     user.email?.split("@")[0] ||
     "User"
   // Self-heal should be rare — the handle_new_user trigger covers the
-  // normal signup path. When it fires, log enough context to investigate.
-  // If a user who *should* be staff lands here, they get silently downgraded
-  // to client and we want to find out before they hit a permission wall.
+  // normal signup path. When it fires, log enough context to investigate
+  // without dumping raw PII (CodeRabbit #29). user_id collapses to the
+  // first 8 chars (UUID prefix is enough to correlate with Supabase logs);
+  // email collapses to "<first-char>***@<domain>" which is identifiable
+  // to the operator but doesn't expose the inbox.
   console.warn(
     "[auth] self-heal firing — profiles row missing for user",
     JSON.stringify({
-      user_id: user.id,
-      email: user.email,
+      user_id_prefix: user.id.slice(0, 8),
+      email_redacted: redactEmail(user.email),
       assumed_role: "client",
     })
   )
@@ -75,6 +77,15 @@ export async function getSessionProfile(): Promise<SessionProfile | null> {
     return null
   }
   return created ?? null
+}
+
+// Collapses an email to "<first>***@<domain>". Returns null for null input
+// and "***@<no-at>" for malformed addresses so a log line is never empty.
+function redactEmail(email: string | null | undefined): string | null {
+  if (!email) return null
+  const at = email.indexOf("@")
+  if (at <= 0) return "***@" + email
+  return email[0] + "***@" + email.slice(at + 1)
 }
 
 export async function requireSession(): Promise<SessionProfile> {

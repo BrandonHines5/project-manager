@@ -163,10 +163,10 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     )
   }
 
-  // created_by is now NOT NULL (migration 0021). The trg_si_fill_created_by
-  // trigger would fall back to auth.uid() if we forgot, but being explicit
-  // here keeps the action self-documenting and lets us record items created
-  // via service-role tooling correctly in the future.
+  // baseRow is the column set both branches share. created_by is excluded
+  // here — adding it to the update path would silently overwrite the
+  // original author on every edit (CodeRabbit #29). It's added only to
+  // the insert payload below.
   const baseRow = {
     project_id: parsed.project_id,
     parent_id: parentIdResolved,
@@ -182,7 +182,6 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     recurrence_rule: (parsed.recurrence_rule ?? null) as RecurrenceRule | null,
     parent_anchor: anchorFinal,
     parent_offset_days: offsetFinal,
-    created_by: profile.id,
   }
 
   let id: string | null = nz(parsed.id)
@@ -195,7 +194,7 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
   } else {
     const { data, error } = await supabase
       .from("schedule_items")
-      .insert(baseRow)
+      .insert({ ...baseRow, created_by: profile.id })
       .select("id")
       .single()
     if (error) throw new Error(error.message)

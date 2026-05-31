@@ -76,9 +76,13 @@ export function Label({
  *
  * When `error` is set, the hint is hidden so the error replaces it (same
  * physical slot — no layout shift), and the error string is exposed via
- * `role="alert"` so screen readers announce it on submit. Pass `htmlFor` to
- * link the label to a specific input id; when omitted the wrapping label
- * still scopes clicks to the first descendant control.
+ * `role="alert"` so screen readers announce it on submit.
+ *
+ * The label is rendered as a SIBLING of `children`, not a wrapper. That
+ * means clicking the label text does NOT implicitly focus a nested
+ * input; pass `htmlFor` (matching the control's `id`) to establish that
+ * association explicitly. Without `htmlFor` the label is still
+ * visually-attached but won't be programmatically tied to any control.
  */
 export function Field({
   label,

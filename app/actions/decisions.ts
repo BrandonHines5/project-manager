@@ -634,12 +634,34 @@ async function materializeFollowups(
   const newTemplates = templates.filter((t) => !materializedTemplateIds.has(t.id))
   if (newTemplates.length === 0) return 0
 
-  // Insert one schedule_item per template. We need each row's id back, so
-  // do these individually (Supabase JS doesn't let us match returned rows
-  // to input rows by index reliably across error retries).
+  // Claim-then-insert pattern (CodeRabbit #29). The earlier flow inserted
+  // the schedule_item first and only recorded the materialization row at
+  // the end — two concurrent approvals could both insert a schedule_item
+  // for the same template before either junction insert ran, producing
+  // duplicates. Insert the junction row FIRST with schedule_item_id =
+  // NULL; the PK on (decision_id, template_id) makes this atomic. Only
+  // the winning insert proceeds to create the schedule_item; the loser
+  // gets a 23505 and silently skips. After the schedule_item lands, we
+  // link it back into the junction row. Every error is fatal — partial
+  // work would otherwise hide ghost rows on either side.
   const idByTemplateId = new Map<string, string>()
   for (const t of newTemplates) {
-    const { data: row, error } = await supabase
+    const { error: claimErr } = await supabase
+      .from("decision_followup_materializations")
+      .insert({
+        decision_id: decisionId,
+        template_id: t.id,
+        schedule_item_id: null,
+      })
+    if (claimErr) {
+      // 23505 = unique violation = another in-flight approval claimed
+      // this template. Skip the materialization here; the winning
+      // process owns the schedule_item insert.
+      if ((claimErr as { code?: string }).code === "23505") continue
+      throw new Error(claimErr.message)
+    }
+
+    const { data: si, error: siErr } = await supabase
       .from("schedule_items")
       .insert({
         project_id: projectId,
@@ -652,24 +674,29 @@ async function materializeFollowups(
       })
       .select("id")
       .single()
-    if (error) throw new Error(error.message)
-    idByTemplateId.set(t.id, row.id)
-  }
+    if (siErr) {
+      // Roll back our junction claim so a retry can re-attempt cleanly.
+      await supabase
+        .from("decision_followup_materializations")
+        .delete()
+        .eq("decision_id", decisionId)
+        .eq("template_id", t.id)
+      throw new Error(siErr.message)
+    }
 
-  // Record materialization. The UNIQUE PK protects us from concurrent
-  // re-approves; conflicts are silently ignored.
-  const junctionRows = newTemplates
-    .filter((t) => idByTemplateId.has(t.id))
-    .map((t) => ({
-      decision_id: decisionId,
-      template_id: t.id,
-      schedule_item_id: idByTemplateId.get(t.id)!,
-    }))
-  if (junctionRows.length) {
-    const { error: jErr } = await supabase
+    const { error: linkErr } = await supabase
       .from("decision_followup_materializations")
-      .upsert(junctionRows, { onConflict: "decision_id,template_id" })
-    if (jErr) console.warn("[followup junction insert]", jErr.message)
+      .update({ schedule_item_id: si.id })
+      .eq("decision_id", decisionId)
+      .eq("template_id", t.id)
+    if (linkErr) {
+      // Schedule item exists but isn't linked. Fail loudly — leaving a
+      // dangling row would let a re-approval skip the template (it's
+      // claimed) without ever surfacing the orphan schedule_item.
+      throw new Error(`Failed to link followup junction: ${linkErr.message}`)
+    }
+
+    idByTemplateId.set(t.id, si.id)
   }
 
   const assignmentRows = newTemplates

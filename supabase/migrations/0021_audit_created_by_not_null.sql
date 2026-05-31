@@ -1,38 +1,57 @@
 -- Audit hardening: make `created_by` NOT NULL on the three tables where we
 -- want a reliable authorship trail (schedule_items, daily_logs, decisions).
 --
--- Backfill: legacy rows (created before the action explicitly set created_by,
--- or created via the AI agent / service role) get attributed to the original
--- owner (Brandon, c7c1b77b-cbf0-47b9-b934-358b1b6c4d66). The next-best truth
--- we have for "who entered the system": project owners cluster around this
--- profile in current data.
+-- Backfill: legacy rows (created before the action explicitly set
+-- created_by, or created via the AI agent / service role) get attributed
+-- to their project's owner. That preserves real per-row authorship where
+-- we know it, instead of collapsing every legacy row to a single seed
+-- UUID which destroys cross-project authorship information and breaks
+-- fresh-environment replays where no such seed profile exists.
+--
+-- Any row whose project itself has no created_by, or which has no project
+-- at all, fails the final guard — the operator can resolve those by
+-- assigning a project owner before replaying. That's the right failure
+-- mode: better an explicit error than silent attribution to a stranger.
 --
 -- ON DELETE: was `set null`, which conflicts with NOT NULL. Switching to
--- `restrict` is correct: staff profile deletion shouldn't silently nuke the
--- authorship of every row they ever created. If a profile genuinely needs to
--- go, the operator must reassign authorship first.
+-- `restrict` is correct: staff profile deletion shouldn't silently nuke
+-- the authorship of every row they ever created. If a profile genuinely
+-- needs to go, the operator must reassign authorship first.
 
 do $$
-declare
-  v_fallback uuid := 'c7c1b77b-cbf0-47b9-b934-358b1b6c4d66';
 begin
-  -- Defensive: ensure the fallback actually exists before we backfill.
-  if not exists (select 1 from public.profiles where id = v_fallback) then
+  update public.schedule_items si
+    set created_by = p.created_by
+  from public.projects p
+  where si.project_id = p.id
+    and si.created_by is null
+    and p.created_by is not null;
+
+  update public.daily_logs dl
+    set created_by = p.created_by
+  from public.projects p
+  where dl.project_id = p.id
+    and dl.created_by is null
+    and p.created_by is not null;
+
+  update public.decisions d
+    set created_by = p.created_by
+  from public.projects p
+  where d.project_id = p.id
+    and d.created_by is null
+    and p.created_by is not null;
+
+  if exists (
+    select 1 from public.schedule_items where created_by is null
+    union all
+    select 1 from public.daily_logs where created_by is null
+    union all
+    select 1 from public.decisions where created_by is null
+  ) then
     raise exception
-      'fallback profile % missing; backfill aborted', v_fallback;
+      'created_by backfill left null rows; refusing to enforce NOT NULL. '
+      'Set projects.created_by for the orphaned rows first.';
   end if;
-
-  update public.schedule_items
-    set created_by = v_fallback
-    where created_by is null;
-
-  update public.daily_logs
-    set created_by = v_fallback
-    where created_by is null;
-
-  update public.decisions
-    set created_by = v_fallback
-    where created_by is null;
 end $$;
 
 -- Backstop trigger: if any future writer (AI agent, service-role tool,
