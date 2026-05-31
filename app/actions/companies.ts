@@ -23,9 +23,9 @@ const CompanyInput = z
     id: optStr,
     name: z.string().min(1).max(200),
     type: z.enum(["sub", "vendor", "client"]),
-    // Kept for back-compat; the canonical store is the company_trades table.
-    // We also write the first trade into trade_category so anything still
-    // reading that column shows a sensible value.
+    // Kept for back-compat callers; the canonical store is the
+    // company_trades table. The save_company_with_trades RPC writes the
+    // first trade into trade_category as a back-compat mirror.
     trade_category: optStr,
     trades: z.array(Trade).default([]),
     address: optStr,
@@ -43,7 +43,6 @@ function emptyToNull(v: string | null | undefined) {
 
 export async function saveCompany(input: CompanyInputT) {
   await requireStaff()
-  const supabase = await createSupabaseServerClient()
   const result = CompanyInput.safeParse(input)
   if (!result.success) {
     const first = result.error.issues[0]
@@ -56,54 +55,36 @@ export async function saveCompany(input: CompanyInputT) {
   // Dedupe + sort trades so the order in the junction is stable. Trade was
   // already trimmed+lower-cased by the zod transform above.
   const trades = Array.from(new Set(parsed.trades)).sort()
-
-  const row = {
-    name: parsed.name,
-    type: parsed.type,
-    // trade_category mirrors the first trade for legacy readers; the source
-    // of truth is the junction table now.
-    trade_category:
-      trades.length > 0 ? trades[0] : emptyToNull(parsed.trade_category),
-    address: emptyToNull(parsed.address),
-    phone: emptyToNull(parsed.phone),
-    email: emptyToNull(parsed.email),
-    notes: emptyToNull(parsed.notes),
-  }
-
-  let companyId = parsed.id
-  if (companyId) {
-    const { error } = await supabase
-      .from("companies")
-      .update(row)
-      .eq("id", companyId)
-    if (error) throw new Error(error.message)
-  } else {
-    const { data: inserted, error } = await supabase
-      .from("companies")
-      .insert(row)
-      .select("id")
-      .single()
-    if (error) throw new Error(error.message)
-    companyId = inserted.id
-  }
-
-  // Replace the trade set. Simpler than diffing and avoids the case where the
-  // junction grew stale because of a server-side migration mismatch. Cap at
-  // 20 trades so a bad client can't bloat the row.
+  // Validate cap BEFORE any DB write (CodeRabbit #30): the previous
+  // order placed this check after the company upsert, so a >20-trade
+  // payload would write the company successfully and then fail, leaving
+  // partial state.
   if (trades.length > 20) {
     throw new Error("At most 20 trades per company.")
   }
-  const { error: delErr } = await supabase
-    .from("company_trades")
-    .delete()
-    .eq("company_id", companyId)
-  if (delErr) throw new Error(delErr.message)
-  if (trades.length > 0) {
-    const { error: insErr } = await supabase
-      .from("company_trades")
-      .insert(trades.map((t) => ({ company_id: companyId!, trade: t })))
-    if (insErr) throw new Error(insErr.message)
-  }
+
+  const supabase = await createSupabaseServerClient()
+  // Single transactional RPC (migration 0032). The function upserts the
+  // companies row, deletes the prior trade set, and inserts the new one
+  // — all under one transaction, so a failure on either DB step rolls
+  // the whole call back. Replaces the previous three separate writes
+  // which could leave the company without trades if the second write
+  // failed.
+  const { data: newId, error } = await supabase.rpc(
+    "save_company_with_trades",
+    {
+      p_id: parsed.id ?? null,
+      p_name: parsed.name,
+      p_type: parsed.type,
+      p_address: emptyToNull(parsed.address),
+      p_phone: emptyToNull(parsed.phone),
+      p_email: emptyToNull(parsed.email),
+      p_notes: emptyToNull(parsed.notes),
+      p_trades: trades,
+    }
+  )
+  if (error) throw new Error(error.message)
+  void newId
 
   revalidatePath("/companies")
 }

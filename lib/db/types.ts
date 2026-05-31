@@ -1362,6 +1362,19 @@ export type Database = {
       is_member_of_project: { Args: { p_project: string }; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
       next_decision_number: { Args: { p_project: string }; Returns: number }
+      save_company_with_trades: {
+        Args: {
+          p_id: string | null
+          p_name: string
+          p_type: Database["public"]["Enums"]["company_type"]
+          p_address: string | null
+          p_phone: string | null
+          p_email: string | null
+          p_notes: string | null
+          p_trades: string[]
+        }
+        Returns: string
+      }
     }
     Enums: {
       company_type: "sub" | "vendor" | "client"

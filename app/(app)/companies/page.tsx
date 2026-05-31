@@ -12,12 +12,15 @@ export default async function CompaniesPage() {
   // (~companies × ~few trades each) so loading it all upfront is fine and
   // saves a per-row fetch when the dialog opens. The TradeChipsEditor also
   // needs the global pool for its suggestions row, served from the same data.
-  const [{ data: companies }, { data: trades }] = await Promise.all([
+  const [
+    { data: companies, error: companiesErr },
+    { data: trades, error: tradesErr },
+  ] = await Promise.all([
     supabase.from("companies").select("*").order("name"),
-    supabase
-      .from("company_trades")
-      .select("company_id, trade"),
+    supabase.from("company_trades").select("company_id, trade"),
   ])
+  if (companiesErr) throw new Error(companiesErr.message)
+  if (tradesErr) throw new Error(tradesErr.message)
   const tradesByCompany = new Map<string, string[]>()
   const tradePool = new Set<string>()
   for (const t of trades ?? []) {

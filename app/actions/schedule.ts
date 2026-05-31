@@ -422,31 +422,82 @@ async function applyCascade(
   projectId: string,
   movedId: string
 ): Promise<string[]> {
+  return applyCascadeBatch(projectId, [movedId])
+}
+
+/**
+ * Batched cascade for bulk moves. Loads the project graph ONCE, walks the
+ * cascade for every seed id against the same in-memory map, and writes
+ * each updated row exactly once. The single-id path is the trivial wrapper
+ * above; the bulk-shift action calls this directly with the full seed
+ * set so a 500-id shift doesn't trigger 500 round-trips for the same
+ * `schedule_items.*` and `schedule_predecessors.*` data
+ * (CodeRabbit #30 finding 7).
+ *
+ * Per-seed cascade results merge into a single Map keyed by item id, so
+ * when two seeds independently push a successor's start_date, the later
+ * (later in iteration order) one wins. With the cascade algorithm being
+ * monotone-forward — successor dates only ever move LATER — this matches
+ * the previous "loop applyCascade per seed" behaviour: the last write
+ * wins, which is correct because each iteration is computed against the
+ * updated graph the previous one left behind.
+ */
+async function applyCascadeBatch(
+  projectId: string,
+  seedIds: string[]
+): Promise<string[]> {
+  if (seedIds.length === 0) return []
   const supabase = await createSupabaseServerClient()
-  const { data: items } = await supabase
+  const { data: items, error: itemsErr } = await supabase
     .from("schedule_items")
     .select("*")
     .eq("project_id", projectId)
-  const { data: preds } = await supabase
+  if (itemsErr) throw new Error(itemsErr.message)
+  const { data: preds, error: predsErr } = await supabase
     .from("schedule_predecessors")
     .select("*")
-  if (!items || !preds) return [movedId]
-  const updates = cascadeFromPredecessors(items, preds, movedId)
-  for (const u of updates) {
+  if (predsErr) throw new Error(predsErr.message)
+  if (!items || !preds) return seedIds
+
+  // Mutable copy keyed by id so successive seeds see the cascade updates
+  // from prior seeds. cascadeFromPredecessors is pure — we have to
+  // splice the updates back into the list ourselves.
+  const itemMap = new Map(items.map((it) => [it.id, { ...it }]))
+  const allUpdates = new Map<string, { start_date: string; end_date: string }>()
+  const touched = new Set<string>()
+  for (const seed of seedIds) {
+    touched.add(seed)
+    const currentItems = Array.from(itemMap.values())
+    const updates = cascadeFromPredecessors(currentItems, preds, seed)
+    for (const u of updates) {
+      allUpdates.set(u.id, {
+        start_date: u.start_date,
+        end_date: u.end_date,
+      })
+      const prior = itemMap.get(u.id)
+      if (prior) {
+        itemMap.set(u.id, {
+          ...prior,
+          start_date: u.start_date,
+          end_date: u.end_date,
+        })
+      }
+      touched.add(u.id)
+    }
+  }
+
+  for (const [id, dates] of allUpdates) {
     const { error } = await supabase
       .from("schedule_items")
-      .update({ start_date: u.start_date, end_date: u.end_date })
-      .eq("id", u.id)
+      .update(dates)
+      .eq("id", id)
     if (error) {
-      // Cascade failed partway. Surface so the caller can investigate; the
-      // earlier updates have already persisted (no transaction is available
-      // via the JS client).
       throw new Error(
-        `Cascade failed at ${u.id}: ${error.message}. Some successor dates may be partially updated.`
+        `Cascade failed at ${id}: ${error.message}. Some successor dates may be partially updated.`
       )
     }
   }
-  return [movedId, ...updates.map((u) => u.id)]
+  return Array.from(touched)
 }
 
 /**
@@ -1051,16 +1102,13 @@ export async function bulkShiftScheduleDates(input: {
     movedIds.push(item.id)
   }
 
-  // Cascade from each moved item. Running one global cascade per move is
-  // O(items × cascade) but the cascade itself is O(graph) and graphs are
-  // small per project. For 500 moves on a 200-item project we're still in
-  // the sub-second range. If this becomes a bottleneck, batch cascades by
-  // dependency depth and dedupe traversal.
-  const cascadeMoved = new Set<string>(movedIds)
-  for (const id of movedIds) {
-    const more = await applyCascade(parsed.project_id, id)
-    for (const m of more) cascadeMoved.add(m)
-  }
+  // Batched cascade: load the project graph once, walk every seed
+  // against the same in-memory copy, write each affected row exactly
+  // once. The previous per-seed loop reloaded the full graph for every
+  // moved item, which got expensive at the 500-id selection cap.
+  const cascadeMoved = new Set<string>(
+    await applyCascadeBatch(parsed.project_id, movedIds)
+  )
   await applyAnchoredChildrenCascade(Array.from(cascadeMoved))
 
   // For any IDs that weren't returned by the SELECT (RLS / wrong project),

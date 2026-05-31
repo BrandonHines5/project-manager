@@ -57,7 +57,10 @@ export function BulkActionsBar({
           days: Math.trunc(n),
         })
         summarize(r, "shifted")
-        onClear()
+        // Only clear when at least one row was actually changed —
+        // otherwise the staff loses the selection they need to retry
+        // (CodeRabbit #30). Mirrors the delete branch.
+        if (r.ok > 0) onClear()
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Shift failed")
       }
@@ -73,7 +76,7 @@ export function BulkActionsBar({
           status,
         })
         summarize(r, `set to ${status.replace("_", " ")}`)
-        onClear()
+        if (r.ok > 0) onClear()
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Status update failed")
       }
@@ -104,7 +107,7 @@ export function BulkActionsBar({
 
   return (
     <div className="fixed bottom-4 left-1/2 z-40 -translate-x-1/2 w-[min(680px,calc(100vw-1rem))]">
-      <div className="bg-foreground text-white rounded-lg shadow-2xl border border-foreground/30 px-3 py-2 flex flex-wrap items-center gap-2">
+      <div className="bg-foreground text-surface rounded-lg shadow-2xl border border-foreground/30 px-3 py-2 flex flex-wrap items-center gap-2">
         <span className="text-sm font-medium">
           {selectedIds.length} selected
         </span>
@@ -112,11 +115,11 @@ export function BulkActionsBar({
           type="button"
           onClick={onClear}
           aria-label="Clear selection"
-          className="text-white/60 hover:text-white p-1 cursor-pointer"
+          className="text-surface/60 hover:text-surface p-1 cursor-pointer"
         >
           <X className="h-4 w-4" />
         </button>
-        <div className="h-5 w-px bg-white/20 mx-1" />
+        <div className="h-5 w-px bg-surface/20 mx-1" />
 
         {mode === "shift" ? (
           <div className="flex items-center gap-1">
@@ -124,10 +127,10 @@ export function BulkActionsBar({
               type="number"
               value={days}
               onChange={(e) => setDays(e.target.value)}
-              className="h-7 w-20 bg-white text-foreground"
+              className="h-7 w-20 bg-surface text-foreground"
               aria-label="Days to shift"
             />
-            <span className="text-xs text-white/70">days</span>
+            <span className="text-xs text-surface/70">days</span>
             <Button
               size="sm"
               onClick={runShift}
@@ -140,7 +143,7 @@ export function BulkActionsBar({
               size="sm"
               variant="ghost"
               onClick={() => setMode("none")}
-              className="text-white/80 hover:text-white"
+              className="text-surface/80 hover:text-surface"
             >
               Cancel
             </Button>
@@ -150,7 +153,7 @@ export function BulkActionsBar({
             <Select
               value={status}
               onChange={(e) => setStatus(e.target.value as StatusValue)}
-              className="h-7 w-36 bg-white text-foreground"
+              className="h-7 w-36 bg-surface text-foreground"
               aria-label="New status"
             >
               <option value="not_started">Not started</option>
@@ -170,7 +173,7 @@ export function BulkActionsBar({
               size="sm"
               variant="ghost"
               onClick={() => setMode("none")}
-              className="text-white/80 hover:text-white"
+              className="text-surface/80 hover:text-surface"
             >
               Cancel
             </Button>
@@ -181,7 +184,7 @@ export function BulkActionsBar({
               size="sm"
               variant="ghost"
               onClick={() => setMode("shift")}
-              className="text-white/90 hover:text-white hover:bg-white/10"
+              className="text-surface/90 hover:text-surface hover:bg-surface/10"
             >
               <Calendar className="h-3.5 w-3.5 mr-1" />
               Shift dates
@@ -190,7 +193,7 @@ export function BulkActionsBar({
               size="sm"
               variant="ghost"
               onClick={() => setMode("status")}
-              className="text-white/90 hover:text-white hover:bg-white/10"
+              className="text-surface/90 hover:text-surface hover:bg-surface/10"
             >
               <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
               Set status
@@ -200,7 +203,7 @@ export function BulkActionsBar({
               variant="ghost"
               onClick={runDelete}
               disabled={pending}
-              className="text-red-200 hover:text-red-100 hover:bg-red-500/20"
+              className="text-danger hover:bg-danger/20"
             >
               <Trash2 className="h-3.5 w-3.5 mr-1" />
               {pending ? "Working…" : "Delete"}
