@@ -87,7 +87,7 @@ function daysBetween(a: string, b: string) {
 }
 
 export async function saveScheduleItem(input: ScheduleItemInputT) {
-  await requireStaff()
+  const profile = await requireStaff()
   const result = ScheduleItemInput.safeParse(input)
   if (!result.success) {
     const first = result.error.issues[0]
@@ -163,6 +163,10 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     )
   }
 
+  // baseRow is the column set both branches share. created_by is excluded
+  // here — adding it to the update path would silently overwrite the
+  // original author on every edit (CodeRabbit #29). It's added only to
+  // the insert payload below.
   const baseRow = {
     project_id: parsed.project_id,
     parent_id: parentIdResolved,
@@ -190,7 +194,7 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
   } else {
     const { data, error } = await supabase
       .from("schedule_items")
-      .insert(baseRow)
+      .insert({ ...baseRow, created_by: profile.id })
       .select("id")
       .single()
     if (error) throw new Error(error.message)

@@ -10,7 +10,8 @@ import type { ProposedMutation, AppliedMutation } from "./types"
  */
 async function applyOne(
   supabase: SupabaseClient<Database>,
-  mutation: ProposedMutation
+  mutation: ProposedMutation,
+  actorId: string
 ): Promise<AppliedMutation> {
   try {
     switch (mutation.kind) {
@@ -33,29 +34,14 @@ async function applyOne(
             "checklist items can only be added to to-do items"
           )
         }
-        // Append at the end; position = max(existing) + 1.
-        //
-        // Known race: two concurrent appends on the same checklist can
-        // compute the same `nextPos` and end up co-located, producing an
-        // unstable sort between the two new rows. There's no unique
-        // constraint on (schedule_item_id, position), so no insert fails
-        // and no data is corrupted — the worst case is a cosmetic ordering
-        // glitch on simultaneous applies. If this becomes a real problem,
-        // move to a SECURITY DEFINER RPC that allocates `position`
-        // atomically. Not worth the round-trip for v1.
-        const { data: existing, error: pErr } = await supabase
-          .from("todo_checklist_items")
-          .select("position")
-          .eq("schedule_item_id", mutation.schedule_item_id)
-          .order("position", { ascending: false })
-          .limit(1)
-        if (pErr) throw new Error(pErr.message)
-        const nextPos = (existing?.[0]?.position ?? -1) + 1
-        const { error } = await supabase.from("todo_checklist_items").insert({
-          schedule_item_id: mutation.schedule_item_id,
-          label: mutation.label,
-          is_done: false,
-          position: nextPos,
+        // Atomic position allocation via the RPC introduced in migration
+        // 0025: it locks the parent row, reads max(position), inserts at
+        // max+1, all in one transaction. Eliminates the race where two
+        // concurrent plan-applies on the same checklist produced
+        // co-located rows with unstable sort order.
+        const { error } = await supabase.rpc("append_checklist_item", {
+          p_schedule_item_id: mutation.schedule_item_id,
+          p_label: mutation.label,
         })
         if (error) throw new Error(error.message)
         return { mutation, ok: true }
@@ -132,6 +118,7 @@ async function applyOne(
           description: mutation.description,
           due_date: mutation.due_date,
           parent_id: mutation.parent_id,
+          created_by: actorId,
         })
         if (error) throw new Error(error.message)
         return { mutation, ok: true }
@@ -151,6 +138,7 @@ async function applyOne(
           start_date: mutation.start_date,
           end_date: mutation.end_date,
           duration_days: durationDays,
+          created_by: actorId,
         })
         if (error) throw new Error(error.message)
         return { mutation, ok: true }
@@ -173,6 +161,7 @@ async function applyOne(
             description: mutation.description,
             number,
             status: "draft",
+            created_by: actorId,
           })
           if (!error) return { mutation, ok: true }
           if ((error as { code?: string }).code !== "23505") {
@@ -238,14 +227,15 @@ async function applyOne(
 
 export async function applyPlan(
   supabase: SupabaseClient<Database>,
-  mutations: ProposedMutation[]
+  mutations: ProposedMutation[],
+  actorId: string
 ): Promise<AppliedMutation[]> {
   // Sequential, not parallel — keeps the failure ordering deterministic for
   // the user's "applied / failed" report, and a typical plan is small enough
   // that the extra round-trips don't matter.
   const out: AppliedMutation[] = []
   for (const m of mutations) {
-    out.push(await applyOne(supabase, m))
+    out.push(await applyOne(supabase, m, actorId))
   }
   return out
 }

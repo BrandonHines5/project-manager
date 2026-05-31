@@ -163,7 +163,7 @@ export type Database = {
       daily_logs: {
         Row: {
           created_at: string
-          created_by: string | null
+          created_by: string
           id: string
           log_date: string
           notes: string | null
@@ -173,7 +173,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
-          created_by?: string | null
+          created_by: string
           id?: string
           log_date?: string
           notes?: string | null
@@ -183,7 +183,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
-          created_by?: string | null
+          created_by?: string
           id?: string
           log_date?: string
           notes?: string | null
@@ -381,11 +381,11 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "decision_cost_items_choice_id_fkey"
-            columns: ["choice_id"]
+            foreignKeyName: "decision_cost_items_choice_matches_decision_fkey"
+            columns: ["choice_id", "decision_id"]
             isOneToOne: false
             referencedRelation: "decision_choices"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "decision_id"]
           },
           {
             foreignKeyName: "decision_cost_items_cost_code_id_fkey"
@@ -399,6 +399,49 @@ export type Database = {
             columns: ["decision_id"]
             isOneToOne: false
             referencedRelation: "decisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      decision_followup_materializations: {
+        Row: {
+          created_at: string
+          decision_id: string
+          schedule_item_id: string | null
+          template_id: string
+        }
+        Insert: {
+          created_at?: string
+          decision_id: string
+          schedule_item_id?: string | null
+          template_id: string
+        }
+        Update: {
+          created_at?: string
+          decision_id?: string
+          schedule_item_id?: string | null
+          template_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "decision_followup_materializations_decision_id_fkey"
+            columns: ["decision_id"]
+            isOneToOne: false
+            referencedRelation: "decisions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "decision_followup_materializations_schedule_item_id_fkey"
+            columns: ["schedule_item_id"]
+            isOneToOne: false
+            referencedRelation: "schedule_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "decision_followup_materializations_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "decision_followup_templates"
             referencedColumns: ["id"]
           },
         ]
@@ -469,7 +512,7 @@ export type Database = {
           approved_by_client_id: string | null
           cost_delta: number | null
           created_at: string
-          created_by: string | null
+          created_by: string
           description: string | null
           due_date: string | null
           id: string
@@ -489,7 +532,7 @@ export type Database = {
           approved_by_client_id?: string | null
           cost_delta?: number | null
           created_at?: string
-          created_by?: string | null
+          created_by: string
           description?: string | null
           due_date?: string | null
           id?: string
@@ -509,7 +552,7 @@ export type Database = {
           approved_by_client_id?: string | null
           cost_delta?: number | null
           created_at?: string
-          created_by?: string | null
+          created_by?: string
           description?: string | null
           due_date?: string | null
           id?: string
@@ -597,6 +640,51 @@ export type Database = {
             columns: ["recipient_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payment_audit: {
+        Row: {
+          action: string
+          actor_id: string | null
+          after: Json | null
+          before: Json | null
+          created_at: string
+          id: string
+          payment_id: string
+        }
+        Insert: {
+          action: string
+          actor_id?: string | null
+          after?: Json | null
+          before?: Json | null
+          created_at?: string
+          id?: string
+          payment_id: string
+        }
+        Update: {
+          action?: string
+          actor_id?: string | null
+          after?: Json | null
+          before?: Json | null
+          created_at?: string
+          id?: string
+          payment_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_audit_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_audit_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "project_payments"
             referencedColumns: ["id"]
           },
         ]
@@ -739,6 +827,8 @@ export type Database = {
         Row: {
           amount: number
           created_at: string
+          deleted_at: string | null
+          deleted_by: string | null
           id: string
           method: Database["public"]["Enums"]["payment_method"]
           notes: string | null
@@ -750,6 +840,8 @@ export type Database = {
         Insert: {
           amount: number
           created_at?: string
+          deleted_at?: string | null
+          deleted_by?: string | null
           id?: string
           method?: Database["public"]["Enums"]["payment_method"]
           notes?: string | null
@@ -761,6 +853,8 @@ export type Database = {
         Update: {
           amount?: number
           created_at?: string
+          deleted_at?: string | null
+          deleted_by?: string | null
           id?: string
           method?: Database["public"]["Enums"]["payment_method"]
           notes?: string | null
@@ -770,6 +864,13 @@ export type Database = {
           reference?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "project_payments_deleted_by_fkey"
+            columns: ["deleted_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "project_payments_project_id_fkey"
             columns: ["project_id"]
@@ -1023,7 +1124,7 @@ export type Database = {
           baseline_end_date: string | null
           baseline_start_date: string | null
           created_at: string
-          created_by: string | null
+          created_by: string
           description: string | null
           due_date: string | null
           duration_days: number | null
@@ -1050,7 +1151,7 @@ export type Database = {
           baseline_end_date?: string | null
           baseline_start_date?: string | null
           created_at?: string
-          created_by?: string | null
+          created_by: string
           description?: string | null
           due_date?: string | null
           duration_days?: number | null
@@ -1077,7 +1178,7 @@ export type Database = {
           baseline_end_date?: string | null
           baseline_start_date?: string | null
           created_at?: string
-          created_by?: string | null
+          created_by?: string
           description?: string | null
           due_date?: string | null
           duration_days?: number | null
@@ -1220,6 +1321,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      append_checklist_item: {
+        Args: { p_label: string; p_schedule_item_id: string }
+        Returns: string
+      }
       client_decide_decision: {
         Args: { p_action: string; p_choice_id?: string; p_decision_id: string }
         Returns: Json
@@ -1395,10 +1500,25 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      company_type: ["sub", "vendor", "client"],
-      daily_log_visibility: ["internal", "client"],
-      decision_kind: ["change_order", "selection"],
-      decision_status: ["draft", "pending_client", "approved", "rejected"],
+      company_type: [
+        "sub",
+        "vendor",
+        "client",
+      ],
+      daily_log_visibility: [
+        "internal",
+        "client",
+      ],
+      decision_kind: [
+        "change_order",
+        "selection",
+      ],
+      decision_status: [
+        "draft",
+        "pending_client",
+        "approved",
+        "rejected",
+      ],
       delay_reason: [
         "weather",
         "sub",
@@ -1407,7 +1527,12 @@ export const Constants = {
         "permit",
         "other",
       ],
-      dependency_type: ["FS", "SS", "FF", "SF"],
+      dependency_type: [
+        "FS",
+        "SS",
+        "FF",
+        "SF",
+      ],
       file_category: [
         "house_plans",
         "plot_plan",
@@ -1415,7 +1540,13 @@ export const Constants = {
         "contract",
         "other",
       ],
-      payment_method: ["check", "wire", "card", "cash", "other"],
+      payment_method: [
+        "check",
+        "wire",
+        "card",
+        "cash",
+        "other",
+      ],
       project_status: [
         "lead",
         "pre_construction",
@@ -1424,16 +1555,30 @@ export const Constants = {
         "complete",
         "cancelled",
       ],
-      schedule_item_kind: ["work", "todo"],
+      schedule_item_kind: [
+        "work",
+        "todo",
+      ],
       schedule_item_status: [
         "not_started",
         "in_progress",
         "complete",
         "delayed",
       ],
-      schedule_parent_anchor: ["start", "end"],
-      todo_priority: ["low", "medium", "high"],
-      user_role: ["staff", "trade", "client"],
+      schedule_parent_anchor: [
+        "start",
+        "end",
+      ],
+      todo_priority: [
+        "low",
+        "medium",
+        "high",
+      ],
+      user_role: [
+        "staff",
+        "trade",
+        "client",
+      ],
     },
   },
 } as const

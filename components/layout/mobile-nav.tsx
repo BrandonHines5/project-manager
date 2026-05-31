@@ -70,7 +70,7 @@ export function MobileNav({ role }: { role: UserRole }) {
         aria-modal="true"
         aria-label="Main menu"
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex w-64 flex-col bg-[#0d2543] text-white shadow-xl",
+          "fixed inset-y-0 left-0 z-50 flex w-64 flex-col bg-sidebar text-sidebar-foreground shadow-xl",
           "transform transition-transform duration-200 ease-out",
           open ? "translate-x-0" : "-translate-x-full"
         )}

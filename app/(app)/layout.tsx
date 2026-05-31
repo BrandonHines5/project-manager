@@ -37,6 +37,14 @@ export default async function AppLayout({
 
   return (
     <div className="flex min-h-screen flex-1">
+      {/* Skip-to-main: invisible until focused. Keyboard users hit Tab on
+          load and get a way to bypass the long sidebar / topbar nav. */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:rounded-md focus:bg-brand-500 focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-white focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-brand-500/40"
+      >
+        Skip to main content
+      </a>
       <Sidebar role={profile.role} />
       <div className="flex flex-1 flex-col min-w-0">
         <Topbar
@@ -48,7 +56,9 @@ export default async function AppLayout({
         <ProjectContextShell
           sidebar={<ProjectListSidebar projects={projects ?? []} />}
         >
-          <main className="flex-1 overflow-y-auto">{children}</main>
+          <main id="main-content" className="flex-1 overflow-y-auto">
+            {children}
+          </main>
         </ProjectContextShell>
       </div>
     </div>
