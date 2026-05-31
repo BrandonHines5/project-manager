@@ -190,6 +190,75 @@ export async function getFileVersions(input: {
   return data ?? []
 }
 
+// ---- Media tagging -------------------------------------------------------
+//
+// The gallery aggregates four sources (project_files, daily_log_attachments,
+// decision_attachments, schedule_item_attachments). Each has its own tags
+// column (migration 0030). This single entry point dispatches by source so
+// the client doesn't have to know the storage shape — it just says "tag
+// this media row".
+
+const SourceEnum = z.enum([
+  "project_file",
+  "daily_log_attachment",
+  "decision_attachment",
+  "schedule_item_attachment",
+])
+type TagSource = z.infer<typeof SourceEnum>
+
+const TagUpdateInput = z.object({
+  project_id: z.string(),
+  source: SourceEnum,
+  id: z.string(),
+  // Per-tag normalization (lower + trim) is done in the action — but the
+  // DB trigger validate_media_tags will reject if we forget, so this is
+  // defence-in-depth, not the only line of defence.
+  tags: z
+    .array(z.string())
+    .max(20, "At most 20 tags per attachment")
+    .transform((arr) =>
+      Array.from(
+        new Set(
+          arr
+            .map((t) => t.trim().toLowerCase())
+            .filter((t) => t.length >= 1 && t.length <= 40)
+        )
+      ).sort()
+    ),
+})
+
+const TABLE_BY_SOURCE: Record<TagSource, string> = {
+  project_file: "project_files",
+  daily_log_attachment: "daily_log_attachments",
+  decision_attachment: "decision_attachments",
+  schedule_item_attachment: "schedule_item_attachments",
+}
+
+export async function setMediaTags(input: z.input<typeof TagUpdateInput>) {
+  await requireStaff()
+  const parsed = TagUpdateInput.safeParse(input)
+  if (!parsed.success) {
+    const first = parsed.error.issues[0]
+    throw new Error(
+      `Invalid tag payload at ${first.path.join(".") || "(root)"}: ${first.message}`
+    )
+  }
+  const table = TABLE_BY_SOURCE[parsed.data.source]
+  const supabase = await createSupabaseServerClient()
+  // Cast through `as any` because the table name is a runtime-resolved union;
+  // each member has the same { tags: string[] } shape so the runtime call is
+  // safe but the union of Update types is too wide for Supabase's overload.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const builder = (supabase.from(table as any) as any).update({
+    tags: parsed.data.tags,
+  })
+  const { error } = await builder.eq("id", parsed.data.id)
+  if (error) throw new Error(error.message)
+  // Files page is the only one that renders the unified gallery; daily-logs
+  // and decisions pages don't, so a single revalidatePath here is enough.
+  revalidatePath(`/projects/${parsed.data.project_id}/files`)
+}
+
 export async function getSignedUrlsForFiles(paths: string[]) {
   if (paths.length === 0) return {}
   const supabase = await createSupabaseServerClient()
