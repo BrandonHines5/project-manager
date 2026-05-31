@@ -633,6 +633,7 @@ export type Database = {
         Row: {
           body: string | null
           created_at: string
+          email_sent_at: string | null
           id: string
           link_url: string | null
           read_at: string | null
@@ -643,6 +644,7 @@ export type Database = {
         Insert: {
           body?: string | null
           created_at?: string
+          email_sent_at?: string | null
           id?: string
           link_url?: string | null
           read_at?: string | null
@@ -653,6 +655,7 @@ export type Database = {
         Update: {
           body?: string | null
           created_at?: string
+          email_sent_at?: string | null
           id?: string
           link_url?: string | null
           read_at?: string | null
@@ -720,8 +723,10 @@ export type Database = {
           company_id: string | null
           created_at: string
           email: string | null
+          email_digest_pref: Database["public"]["Enums"]["email_digest_pref"]
           full_name: string
           id: string
+          last_digest_at: string | null
           phone: string | null
           role: Database["public"]["Enums"]["user_role"]
         }
@@ -729,8 +734,10 @@ export type Database = {
           company_id?: string | null
           created_at?: string
           email?: string | null
+          email_digest_pref?: Database["public"]["Enums"]["email_digest_pref"]
           full_name?: string
           id: string
+          last_digest_at?: string | null
           phone?: string | null
           role?: Database["public"]["Enums"]["user_role"]
         }
@@ -738,8 +745,10 @@ export type Database = {
           company_id?: string | null
           created_at?: string
           email?: string | null
+          email_digest_pref?: Database["public"]["Enums"]["email_digest_pref"]
           full_name?: string
           id?: string
+          last_digest_at?: string | null
           phone?: string | null
           role?: Database["public"]["Enums"]["user_role"]
         }
@@ -1407,6 +1416,7 @@ export type Database = {
         | "permit"
         | "other"
       dependency_type: "FS" | "SS" | "FF" | "SF"
+      email_digest_pref: "immediate" | "daily" | "off"
       file_category:
         | "house_plans"
         | "plot_plan"
@@ -1590,6 +1600,7 @@ export const Constants = {
         "FF",
         "SF",
       ],
+      email_digest_pref: ["immediate", "daily", "off"],
       file_category: [
         "house_plans",
         "plot_plan",

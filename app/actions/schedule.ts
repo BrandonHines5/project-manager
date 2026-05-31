@@ -337,32 +337,48 @@ async function notifyScheduleAssignees(
   const profileIds = rows.map((r) => r.profile_id).filter(Boolean) as string[]
   const companyIds = rows.map((r) => r.company_id).filter(Boolean) as string[]
 
-  // In-app notifications for profile assignees
+  // In-app notifications for profile assignees. We capture the inserted
+  // ids so we can stamp email_sent_at after the immediate send succeeds —
+  // that keeps the digest cron from re-emailing rows we already covered.
+  const insertedNotifIds: string[] = []
   if (profileIds.length) {
-    await supabase.from("notifications").insert(
-      profileIds.map((id) => ({
-        recipient_id: id,
-        type: "schedule_assignment",
-        title: `Assigned: ${title}`,
-        body: "You were assigned to a schedule item",
-        link_url: `/projects/${projectId}/schedule`,
-      }))
-    )
+    const { data: insertedRows } = await supabase
+      .from("notifications")
+      .insert(
+        profileIds.map((id) => ({
+          recipient_id: id,
+          type: "schedule_assignment",
+          title: `Assigned: ${title}`,
+          body: "You were assigned to a schedule item",
+          link_url: `/projects/${projectId}/schedule`,
+        }))
+      )
+      .select("id")
+    for (const r of insertedRows ?? []) insertedNotifIds.push(r.id)
   }
 
-  // Email + SMS — best-effort, never blocks save. We collect the email and
-  // phone-bearing companies in one pass, then fan out in parallel so a slow
-  // Quo/Resend doesn't compound onto the schedule save latency.
+  // Email + SMS — best-effort, never blocks save. Profiles with
+  // email_digest_pref != 'immediate' are skipped here; their notification
+  // row stays unstamped and the cron picks it up. We collect the
+  // immediate-recipient emails and the phone-bearing companies in one
+  // pass, then fan out in parallel so a slow Quo/Resend doesn't compound
+  // onto the schedule save latency.
   try {
     const link = appUrl(`/projects/${projectId}/schedule`)
     const emails: string[] = []
+    const immediateProfileIds: string[] = []
     const phones: string[] = []
     if (profileIds.length) {
       const { data: profs } = await supabase
         .from("profiles")
-        .select("email")
+        .select("id, email, email_digest_pref")
         .in("id", profileIds)
-      for (const p of profs ?? []) if (p.email) emails.push(p.email)
+      for (const p of profs ?? []) {
+        if (p.email && p.email_digest_pref === "immediate") {
+          emails.push(p.email)
+          immediateProfileIds.push(p.id)
+        }
+      }
     }
     if (companyIds.length) {
       const { data: cos } = await supabase
@@ -385,7 +401,21 @@ async function notifyScheduleAssignees(
           to: emails,
           subject: `New assignment: ${title}`,
           text: `You were assigned to "${title}" on the project. Open: ${link}`,
-        }).catch((e) => console.warn("assignment email failed:", e))
+        })
+          .then(async (res) => {
+            // Stamp the notification rows for the profiles that just got an
+            // immediate email so the daily digest doesn't re-include them.
+            // We only stamp on a successful send so a transient Resend
+            // failure leaves them eligible for the next cron run.
+            if (res.sent && immediateProfileIds.length) {
+              await supabase
+                .from("notifications")
+                .update({ email_sent_at: new Date().toISOString() })
+                .in("recipient_id", immediateProfileIds)
+                .in("id", insertedNotifIds)
+            }
+          })
+          .catch((e) => console.warn("assignment email failed:", e))
       )
     }
     // SMS goes only to sub/vendor companies (profiles get email + in-app).
