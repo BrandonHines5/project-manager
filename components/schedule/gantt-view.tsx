@@ -8,7 +8,7 @@ import { CalendarDays, Zap } from "lucide-react"
 import { EmptyState } from "@/components/ui/empty"
 import { cn, todayISO, addDays } from "@/lib/utils"
 import { moveScheduleItem } from "@/app/actions/schedule"
-import { computeCriticalPath } from "@/lib/schedule/scheduling"
+import { computeScheduleAnalysis } from "@/lib/schedule/scheduling"
 import type { ScheduleData } from "@/app/(app)/projects/[id]/schedule/schedule-client"
 
 const DAY_PX = 28
@@ -28,10 +28,21 @@ export function GanttView({
   )
 
   const [showCritical, setShowCritical] = useState(true)
-  const criticalIds = useMemo(
-    () => computeCriticalPath(data.items, data.predecessors),
+  const analysis = useMemo(
+    () => computeScheduleAnalysis(data.items, data.predecessors),
     [data.items, data.predecessors]
   )
+  const criticalIds = analysis.critical
+  const floatDays = analysis.floatDays
+  const projectFinishLabel = useMemo(() => {
+    if (analysis.projectFinishEpochDay == null) return null
+    const d = new Date(analysis.projectFinishEpochDay * 86400000)
+    return d.toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    })
+  }, [analysis.projectFinishEpochDay])
 
   const { minDate, days } = useMemo(() => {
     if (items.length === 0) {
@@ -172,7 +183,23 @@ export function GanttView({
 
   return (
     <div className="space-y-2">
-    <div className="flex items-center justify-end gap-2 text-xs">
+    <div className="flex items-center justify-between gap-2 text-xs flex-wrap">
+      {projectFinishLabel ? (
+        <div className="inline-flex items-center gap-1.5 text-muted">
+          <span className="uppercase tracking-wide text-[10px]">
+            Project finish
+          </span>
+          <span className="font-medium text-foreground">
+            {projectFinishLabel}
+          </span>
+          <span className="text-muted">
+            · {criticalIds.size} critical item
+            {criticalIds.size === 1 ? "" : "s"}
+          </span>
+        </div>
+      ) : (
+        <span />
+      )}
       <label className="inline-flex items-center gap-1.5 cursor-pointer select-none text-muted hover:text-foreground">
         <input
           type="checkbox"
@@ -353,7 +380,16 @@ export function GanttView({
                   width: w,
                   height: ROW_PX - 12,
                 }}
-                title={`${item.title} · ${dur}d${isCritical ? " · critical path" : ""} · drag to reschedule`}
+                title={(() => {
+                  const f = floatDays.get(item.id)
+                  const slack =
+                    typeof f === "number" && f > 0
+                      ? ` · ${f}d float`
+                      : isCritical
+                        ? " · critical path"
+                        : ""
+                  return `${item.title} · ${dur}d${slack} · drag to reschedule`
+                })()}
               >
                 {isCritical && <Zap className="h-3 w-3 shrink-0" />}
                 <span className="truncate">{item.title}</span>
