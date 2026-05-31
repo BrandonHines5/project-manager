@@ -73,13 +73,18 @@ export async function GET(req: Request) {
   for (const p of profiles ?? []) {
     if (!p.email) continue
     const sinceISO = p.last_digest_at ?? "1970-01-01T00:00:00Z"
+    // Select includes id and orders by (created_at ASC, id ASC) so the
+    // cursor we advance to at the end is deterministic — ties on
+    // created_at are broken by id, which we also keep around for the
+    // stamp write (CodeRabbit #32).
     const { data: notifs, error: nErr } = await supabase
       .from("notifications")
-      .select("title, body, link_url, type, created_at")
+      .select("id, title, body, link_url, type, created_at")
       .eq("recipient_id", p.id)
       .is("email_sent_at", null)
       .gt("created_at", sinceISO)
       .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
       .limit(200)
     if (nErr) {
       summary.push({
@@ -135,33 +140,50 @@ export async function GET(req: Request) {
     })
 
     if (result.sent) {
-      // Stamp the notifications and bump the profile in two writes so
-      // a partial Resend failure doesn't leave a profile with new
-      // last_digest_at but un-stamped notifications (we'd skip them
-      // forever on the next run).
-      const ids = notifs.map((_, i) => i)
-      void ids
-      const idList = (
-        await supabase
-          .from("notifications")
-          .select("id")
-          .eq("recipient_id", p.id)
-          .is("email_sent_at", null)
-          .gt("created_at", sinceISO)
-          .order("created_at", { ascending: true })
-          .limit(200)
-      ).data?.map((r) => r.id) ?? []
-      const nowIso = new Date().toISOString()
-      if (idList.length) {
-        await supabase
-          .from("notifications")
-          .update({ email_sent_at: nowIso })
-          .in("id", idList)
+      // Stamp only the rows actually included in this digest — the
+      // earlier "re-select after composing" pattern (CodeRabbit #32)
+      // could pick up newer rows that landed between the two queries
+      // and skip them on the cursor advance below.
+      const processedIds = notifs.map((n) => n.id)
+      const stampIso = new Date().toISOString()
+      const { error: stampErr } = await supabase
+        .from("notifications")
+        .update({ email_sent_at: stampIso })
+        .in("id", processedIds)
+      if (stampErr) {
+        // If we can't stamp, do NOT advance the cursor — the user will
+        // get this batch again on the next run, but they won't be
+        // skipped entirely.
+        summary.push({
+          profile_id: p.id,
+          notifications: notifs.length,
+          sent: true,
+          reason: `email sent but stamp failed: ${stampErr.message}`,
+        })
+        continue
       }
-      await supabase
+      // Advance the cursor to the last processed notification's
+      // created_at (not now()), so any rows that were created AFTER our
+      // batch read but with created_at <= our last item still get
+      // picked up on the next run when their email_sent_at is null.
+      // The hit limit(200) guarantees this: if there's a backlog, this
+      // run only cleared the oldest 200 and the next run starts from
+      // exactly where this one stopped.
+      const lastProcessedAt =
+        notifs[notifs.length - 1]?.created_at ?? stampIso
+      const { error: cursorErr } = await supabase
         .from("profiles")
-        .update({ last_digest_at: nowIso })
+        .update({ last_digest_at: lastProcessedAt })
         .eq("id", p.id)
+      if (cursorErr) {
+        summary.push({
+          profile_id: p.id,
+          notifications: notifs.length,
+          sent: true,
+          reason: `email + stamp ok but cursor advance failed: ${cursorErr.message}`,
+        })
+        continue
+      }
       summary.push({
         profile_id: p.id,
         notifications: notifs.length,

@@ -408,11 +408,21 @@ async function notifyScheduleAssignees(
             // We only stamp on a successful send so a transient Resend
             // failure leaves them eligible for the next cron run.
             if (res.sent && immediateProfileIds.length) {
-              await supabase
+              const { error: stampErr } = await supabase
                 .from("notifications")
                 .update({ email_sent_at: new Date().toISOString() })
                 .in("recipient_id", immediateProfileIds)
                 .in("id", insertedNotifIds)
+              // If the stamp fails (CodeRabbit #32), the rows stay
+              // unstamped and the digest cron will re-email them next
+              // run. Log loudly so we can spot a chronic stamp failure
+              // before users get duplicate notifications.
+              if (stampErr) {
+                console.warn(
+                  "[assignment notify] email_sent_at stamp failed:",
+                  stampErr.message
+                )
+              }
             }
           })
           .catch((e) => console.warn("assignment email failed:", e))
