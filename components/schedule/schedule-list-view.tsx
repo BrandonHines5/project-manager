@@ -19,6 +19,7 @@ import { EmptyState } from "@/components/ui/empty"
 import { Button } from "@/components/ui/button"
 import { StatusBadge } from "./status-badge"
 import { PriorityBadge } from "./priority-badge"
+import { BulkActionsBar } from "./bulk-actions-bar"
 import {
   assigneeNamesFor,
   checklistFor,
@@ -31,10 +32,12 @@ import type { Tables } from "@/lib/db/types"
 
 export function ScheduleListView({
   data,
+  projectId,
   onEdit,
   onAddTodo,
 }: {
   data: ScheduleData
+  projectId: string
   onEdit: (id: string) => void
   onAddTodo: (parentId?: string) => void
 }) {
@@ -60,6 +63,20 @@ export function ScheduleListView({
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set())
   const allCollapsed =
     workItems.length > 0 && workItems.every((w) => collapsedIds.has(w.id))
+
+  // Bulk selection. Keyed by schedule_item.id; spans work items, their
+  // child to-dos, and unlinked to-dos so a PM can select e.g. "all framing
+  // tasks across both subsections" and shift them together. Clearing selects
+  // nothing and dismisses the bulk action bar.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const toggleSelected = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  const clearSelection = () => setSelectedIds(new Set())
 
   function setExpandedFor(id: string, expanded: boolean) {
     setCollapsedIds((prev) => {
@@ -126,6 +143,8 @@ export function ScheduleListView({
                 onAddTodo={onAddTodo}
                 expanded={!collapsedIds.has(item.id)}
                 onToggleExpanded={(next) => setExpandedFor(item.id, next)}
+                selectedIds={selectedIds}
+                onToggleSelected={toggleSelected}
               />
             ))}
           </ul>
@@ -151,12 +170,67 @@ export function ScheduleListView({
                 data={data}
                 onEdit={onEdit}
                 indent={false}
+                selected={selectedIds.has(todo.id)}
+                onToggleSelected={() => toggleSelected(todo.id)}
               />
             ))}
           </ul>
         </div>
       )}
+
+      <BulkActionsBar
+        projectId={projectId}
+        selectedIds={Array.from(selectedIds)}
+        onClear={clearSelection}
+      />
     </div>
+  )
+}
+
+/**
+ * Tiny pre-styled checkbox for the row "select" affordance. Click is
+ * stopPropagation'd so checking a row doesn't open its edit drawer.
+ */
+function SelectCheckbox({
+  checked,
+  onToggle,
+  size = "md",
+}: {
+  checked: boolean
+  onToggle: () => void
+  size?: "sm" | "md"
+}) {
+  const dim = size === "sm" ? "h-3.5 w-3.5" : "h-4 w-4"
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      aria-label={checked ? "Deselect" : "Select"}
+      onClick={(e) => {
+        e.stopPropagation()
+        onToggle()
+      }}
+      className={cn(
+        "shrink-0 rounded border flex items-center justify-center cursor-pointer transition-colors",
+        dim,
+        checked
+          ? "bg-brand-500 border-brand-500 text-white"
+          : "bg-surface border-border-strong hover:border-foreground"
+      )}
+    >
+      {checked && (
+        <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none">
+          <path
+            d="M3 8.5l3 3 7-7"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      )}
+    </button>
   )
 }
 
@@ -222,6 +296,8 @@ function WorkItemRow({
   onAddTodo,
   expanded,
   onToggleExpanded,
+  selectedIds,
+  onToggleSelected,
 }: {
   item: Tables<"schedule_items">
   data: ScheduleData
@@ -229,18 +305,30 @@ function WorkItemRow({
   onAddTodo: (parentId?: string) => void
   expanded: boolean
   onToggleExpanded: (next: boolean) => void
+  selectedIds: Set<string>
+  onToggleSelected: (id: string) => void
 }) {
   const children = childItemsOf(item.id, data.items)
   const assignees = assigneeNamesFor(item.id, data)
   const delays = delaysFor(item.id, data.delays)
+  const isSelected = selectedIds.has(item.id)
 
   return (
     <li>
       <div
-        className="px-4 py-3 hover:bg-background/40 cursor-pointer transition-colors group"
+        className={cn(
+          "px-4 py-3 hover:bg-background/40 cursor-pointer transition-colors group",
+          isSelected && "bg-brand-50/60"
+        )}
         onClick={() => onEdit(item.id)}
       >
         <div className="flex items-start gap-3">
+          <div className="mt-1.5">
+            <SelectCheckbox
+              checked={isSelected}
+              onToggle={() => onToggleSelected(item.id)}
+            />
+          </div>
           <button
             type="button"
             onClick={(e) => {
@@ -309,6 +397,8 @@ function WorkItemRow({
                 data={data}
                 onEdit={onEdit}
                 indent={true}
+                selected={selectedIds.has(c.id)}
+                onToggleSelected={() => onToggleSelected(c.id)}
               />
             ))}
             <li>
@@ -331,11 +421,15 @@ function TodoRow({
   data,
   onEdit,
   indent,
+  selected,
+  onToggleSelected,
 }: {
   item: Tables<"schedule_items">
   data: ScheduleData
   onEdit: (id: string) => void
   indent: boolean
+  selected: boolean
+  onToggleSelected: () => void
 }) {
   const assignees = assigneeNamesFor(item.id, data)
   const checklist = checklistFor(item.id, data.checklist)
@@ -349,10 +443,18 @@ function TodoRow({
     <li
       className={cn(
         "px-4 py-2.5 hover:bg-background/60 cursor-pointer transition-colors flex items-start gap-3",
-        indent && "pl-12"
+        indent && "pl-12",
+        selected && "bg-brand-50/60"
       )}
       onClick={() => onEdit(item.id)}
     >
+      <div className="mt-1">
+        <SelectCheckbox
+          checked={selected}
+          onToggle={onToggleSelected}
+          size="sm"
+        />
+      </div>
       <div className="mt-0.5">
         <CompleteCheckbox item={item} size="sm" />
       </div>
