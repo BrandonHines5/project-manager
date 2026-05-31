@@ -54,7 +54,7 @@ export default async function ProjectsPage() {
   const { data: projects } = await supabase
     .from("projects")
     .select(
-      "id, project_number, name, address, status, contract_price, retainage_percent, start_date, target_completion_date, dashboard_url"
+      "id, project_number, name, address, status, contract_price, start_date, target_completion_date, dashboard_url"
     )
     .order("created_at", { ascending: false })
 
@@ -153,7 +153,14 @@ export default async function ProjectsPage() {
       </div>
 
       {activeProjects.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        <div
+          className={cn(
+            "grid gap-3 mb-6",
+            profile.financial_access
+              ? "grid-cols-2 md:grid-cols-4"
+              : "grid-cols-2"
+          )}
+        >
           <PortfolioStat
             icon={<CheckCircle2 className="h-4 w-4" />}
             label="On track"
@@ -168,12 +175,15 @@ export default async function ProjectsPage() {
             sub={activeDelayed > 0 ? "delayed or past due" : "none — nice"}
             tone={activeDelayed > 0 ? "danger" : "success"}
           />
+          {profile.financial_access && (
           <PortfolioStat
             icon={<Activity className="h-4 w-4" />}
             label="Contract value"
             value={formatCurrency(totalContract)}
             sub="across all projects"
           />
+          )}
+          {profile.financial_access && (
           <PortfolioStat
             icon={<TrendingUp className="h-4 w-4" />}
             label="Cost growth"
@@ -188,6 +198,7 @@ export default async function ProjectsPage() {
             }
             tone={totalApprovedDelta > 0 ? "warning" : undefined}
           />
+          )}
         </div>
       )}
 
@@ -228,12 +239,16 @@ export default async function ProjectsPage() {
                 <th className="text-left font-medium px-4 py-2.5 hidden xl:table-cell">
                   Schedule
                 </th>
-                <th className="text-right font-medium px-4 py-2.5 hidden lg:table-cell">
-                  Contract
-                </th>
-                <th className="text-right font-medium px-4 py-2.5 hidden lg:table-cell">
-                  Changes
-                </th>
+                {profile.financial_access && (
+                  <th className="text-right font-medium px-4 py-2.5 hidden lg:table-cell">
+                    Contract
+                  </th>
+                )}
+                {profile.financial_access && (
+                  <th className="text-right font-medium px-4 py-2.5 hidden lg:table-cell">
+                    Changes
+                  </th>
+                )}
                 <th className="text-left font-medium px-4 py-2.5 hidden lg:table-cell">
                   Target
                 </th>
@@ -284,22 +299,26 @@ export default async function ProjectsPage() {
                     <td className="px-4 py-3 hidden xl:table-cell text-xs">
                       <ScheduleHealth metrics={m} status={p.status} />
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums hidden lg:table-cell">
-                      {formatCurrency(p.contract_price)}
-                    </td>
-                    <td className="px-4 py-3 text-right tabular-nums hidden lg:table-cell">
-                      {delta === 0 ? (
-                        <span className="text-muted">—</span>
-                      ) : (
-                        <span
-                          className={cn(
-                            delta > 0 ? "text-amber-900" : "text-success"
-                          )}
-                        >
-                          {(delta > 0 ? "+" : "") + formatCurrency(delta)}
-                        </span>
-                      )}
-                    </td>
+                    {profile.financial_access && (
+                      <td className="px-4 py-3 text-right tabular-nums hidden lg:table-cell">
+                        {formatCurrency(p.contract_price)}
+                      </td>
+                    )}
+                    {profile.financial_access && (
+                      <td className="px-4 py-3 text-right tabular-nums hidden lg:table-cell">
+                        {delta === 0 ? (
+                          <span className="text-muted">—</span>
+                        ) : (
+                          <span
+                            className={cn(
+                              delta > 0 ? "text-amber-900" : "text-success"
+                            )}
+                          >
+                            {(delta > 0 ? "+" : "") + formatCurrency(delta)}
+                          </span>
+                        )}
+                      </td>
+                    )}
                     <td className="px-4 py-3 text-muted hidden lg:table-cell">
                       {formatDate(p.target_completion_date)}
                     </td>

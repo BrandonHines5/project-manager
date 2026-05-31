@@ -200,6 +200,9 @@ function EditDialog({
   const [emailDigestPref, setEmailDigestPref] = useState<
     Enums<"email_digest_pref">
   >(profile.email_digest_pref ?? "immediate")
+  const [financialAccess, setFinancialAccess] = useState(
+    profile.financial_access ?? false
+  )
   const [confirmDelete, setConfirmDelete] = useState(false)
   // After a successful reset, the new temp password is shown inline so staff
   // can copy & share it. Stored only in component state — never persisted.
@@ -239,6 +242,7 @@ function EditDialog({
       company_id: companyId || null,
       phone: phone || null,
       email_digest_pref: emailDigestPref,
+      financial_access: financialAccess,
     }
     startTransition(async () => {
       try {
@@ -337,6 +341,25 @@ function EditDialog({
               <option value="off">Off</option>
             </Select>
           </Field>
+
+          {role === "staff" && (
+            <label className="flex items-start gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={financialAccess}
+                onChange={(e) => setFinancialAccess(e.target.checked)}
+                className="h-4 w-4 mt-0.5"
+              />
+              <span className="flex-1">
+                <span className="font-medium">Financial access</span>
+                <span className="block text-xs text-muted mt-0.5">
+                  Shows the Contract value, Cost growth, and per-row
+                  financial columns on the /projects dashboard. Keep off
+                  for staff who shouldn&rsquo;t see contract totals.
+                </span>
+              </span>
+            </label>
+          )}
 
           <div className="rounded-md border border-border-strong bg-background/40 p-3 space-y-2">
             <div className="flex items-center justify-between gap-2">

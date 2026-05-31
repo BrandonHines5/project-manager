@@ -19,6 +19,7 @@ const UpdateProfileInput = z
     email_digest_pref: z
       .enum(["immediate", "daily", "off"])
       .default("immediate"),
+    financial_access: z.boolean().default(false),
   })
   .passthrough()
 
@@ -80,6 +81,7 @@ export async function updateProfile(input: UpdateProfileInputT) {
       company_id: nz(parsed.company_id),
       phone: nz(parsed.phone),
       email_digest_pref: parsed.email_digest_pref,
+      financial_access: parsed.financial_access,
     })
     .eq("id", parsed.id)
   if (error) throw new Error(error.message)

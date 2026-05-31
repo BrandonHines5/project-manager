@@ -17,7 +17,7 @@ export default async function PricingPage({
 
   const { data: project } = await supabase
     .from("projects")
-    .select("id, name, project_number, contract_price, retainage_percent")
+    .select("id, name, project_number, contract_price")
     .eq("id", projectId)
     .maybeSingle()
   if (!project) notFound()
@@ -45,7 +45,6 @@ export default async function PricingPage({
     project_id: projectId,
     role: profile.role,
     contract_price: project.contract_price,
-    retainage_percent: Number(project.retainage_percent ?? 0),
     approved_decisions: decisions ?? [],
     payments: payments ?? [],
   }

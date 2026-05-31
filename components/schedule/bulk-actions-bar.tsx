@@ -2,16 +2,24 @@
 
 import { useState, useTransition } from "react"
 import { toast } from "sonner"
-import { X, Calendar, CheckCircle2, Trash2 } from "lucide-react"
+import { X, Calendar, CheckCircle2, Trash2, UserPlus, UserMinus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input, Select } from "@/components/ui/input"
 import {
   bulkSetScheduleStatus,
   bulkShiftScheduleDates,
   bulkDeleteScheduleItems,
+  bulkAssignProfileToScheduleItems,
+  bulkUnassignProfileFromScheduleItems,
 } from "@/app/actions/schedule"
 
 type StatusValue = "not_started" | "in_progress" | "complete" | "delayed"
+
+type ProfileOption = {
+  id: string
+  full_name: string
+  email: string | null
+}
 
 /**
  * Floating sticky bar that appears at the bottom of the schedule list view
@@ -19,6 +27,7 @@ type StatusValue = "not_started" | "in_progress" | "complete" | "delayed"
  *
  *  - Shift dates by ±N days (with cascade)
  *  - Set status (one of the four canonical states)
+ *  - Assign to / unassign from a person
  *  - Delete (refuses if any selected item is a predecessor of an unselected
  *    item — staff are pointed at the single-item delete flow for that case)
  *
@@ -28,18 +37,23 @@ type StatusValue = "not_started" | "in_progress" | "complete" | "delayed"
 export function BulkActionsBar({
   projectId,
   selectedIds,
+  profiles,
   onClear,
 }: {
   projectId: string
   selectedIds: string[]
+  profiles: ProfileOption[]
   onClear: () => void
 }) {
   const [pending, startTransition] = useTransition()
-  const [mode, setMode] = useState<"none" | "shift" | "status" | "delete">(
-    "none"
-  )
+  const [mode, setMode] = useState<
+    "none" | "shift" | "status" | "assign" | "unassign"
+  >("none")
   const [days, setDays] = useState("1")
   const [status, setStatus] = useState<StatusValue>("complete")
+  const [profileId, setProfileId] = useState<string>(
+    profiles[0]?.id ?? ""
+  )
 
   if (selectedIds.length === 0) return null
 
@@ -101,6 +115,50 @@ export function BulkActionsBar({
         if (r.ok > 0) onClear()
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Delete failed")
+      }
+    })
+  }
+
+  function runAssign() {
+    if (!profileId) {
+      toast.error("Pick a person to assign.")
+      return
+    }
+    const personName =
+      profiles.find((p) => p.id === profileId)?.full_name ?? "assignee"
+    startTransition(async () => {
+      try {
+        const r = await bulkAssignProfileToScheduleItems({
+          project_id: projectId,
+          ids: selectedIds,
+          profile_id: profileId,
+        })
+        summarize(r, `assigned to ${personName}`)
+        if (r.ok > 0) onClear()
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Assign failed")
+      }
+    })
+  }
+
+  function runUnassign() {
+    if (!profileId) {
+      toast.error("Pick a person to unassign.")
+      return
+    }
+    const personName =
+      profiles.find((p) => p.id === profileId)?.full_name ?? "assignee"
+    startTransition(async () => {
+      try {
+        const r = await bulkUnassignProfileFromScheduleItems({
+          project_id: projectId,
+          ids: selectedIds,
+          profile_id: profileId,
+        })
+        summarize(r, `unassigned from ${personName}`)
+        if (r.ok > 0) onClear()
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Unassign failed")
       }
     })
   }
@@ -178,6 +236,45 @@ export function BulkActionsBar({
               Cancel
             </Button>
           </div>
+        ) : mode === "assign" || mode === "unassign" ? (
+          <div className="flex items-center gap-1">
+            <Select
+              value={profileId}
+              onChange={(e) => setProfileId(e.target.value)}
+              className="h-7 w-48 bg-surface text-foreground"
+              aria-label={mode === "assign" ? "Person to assign" : "Person to unassign"}
+            >
+              {profiles.length === 0 ? (
+                <option value="">(no staff profiles)</option>
+              ) : (
+                profiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.full_name || p.email || p.id.slice(0, 8)}
+                  </option>
+                ))
+              )}
+            </Select>
+            <Button
+              size="sm"
+              onClick={mode === "assign" ? runAssign : runUnassign}
+              disabled={pending || profiles.length === 0}
+              variant="primary"
+            >
+              {pending
+                ? mode === "assign"
+                  ? "Assigning…"
+                  : "Removing…"
+                : "Apply"}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setMode("none")}
+              className="text-surface/80 hover:text-surface"
+            >
+              Cancel
+            </Button>
+          </div>
         ) : (
           <div className="flex flex-wrap items-center gap-1">
             <Button
@@ -197,6 +294,24 @@ export function BulkActionsBar({
             >
               <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
               Set status
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setMode("assign")}
+              className="text-surface/90 hover:text-surface hover:bg-surface/10"
+            >
+              <UserPlus className="h-3.5 w-3.5 mr-1" />
+              Assign to
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setMode("unassign")}
+              className="text-surface/90 hover:text-surface hover:bg-surface/10"
+            >
+              <UserMinus className="h-3.5 w-3.5 mr-1" />
+              Unassign
             </Button>
             <Button
               size="sm"

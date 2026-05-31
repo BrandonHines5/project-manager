@@ -31,7 +31,6 @@ export type PricingData = {
   project_id: string
   role: UserRole
   contract_price: number | null
-  retainage_percent: number
   approved_decisions: Pick<
     Tables<"decisions">,
     "id" | "number" | "title" | "kind" | "cost_delta" | "status" | "approved_at"
@@ -56,29 +55,8 @@ export function PricingClient({ data }: { data: PricingData }) {
       (sum, p) => sum + (Number(p.amount) || 0),
       0
     )
-    // Retainage is computed off the new contract total (contract +
-    // approved changes), held back until the PM zeroes the percent at
-    // punchlist completion. balanceBeforeRetainage shows the raw delta;
-    // balanceDueNow subtracts the retainage so the staff member sees the
-    // amount the client should remit today.
-    const retainagePct = Math.min(Math.max(data.retainage_percent, 0), 25)
-    const retainage = (newTotal * retainagePct) / 100
-    const balanceBeforeRetainage = newTotal - paid
-    const balanceDueNow = balanceBeforeRetainage - retainage
-    const waiversMissing = data.payments.filter(
-      (p) => !p.lien_waiver_received
-    ).length
-    return {
-      contract,
-      approvedDelta,
-      newTotal,
-      paid,
-      retainagePct,
-      retainage,
-      balanceBeforeRetainage,
-      balanceDueNow,
-      waiversMissing,
-    }
+    const balance = newTotal - paid
+    return { contract, approvedDelta, newTotal, paid, balance }
   }, [data])
 
   return (
@@ -101,39 +79,11 @@ export function PricingClient({ data }: { data: PricingData }) {
         />
         <SummaryCell label="Paid" value={formatCurrency(totals.paid)} tone="success" />
         <SummaryCell
-          label={
-            totals.retainagePct > 0
-              ? `Balance due (after ${totals.retainagePct}% retainage)`
-              : "Balance due"
-          }
-          value={formatCurrency(totals.balanceDueNow)}
-          tone={totals.balanceDueNow > 0 ? "danger" : "success"}
+          label="Balance due"
+          value={formatCurrency(totals.balance)}
+          tone={totals.balance > 0 ? "danger" : "success"}
         />
       </div>
-
-      {(totals.retainagePct > 0 || totals.waiversMissing > 0) && (
-        <div className="rounded-md border border-border bg-surface px-4 py-3 text-sm flex flex-wrap items-center gap-x-6 gap-y-1">
-          {totals.retainagePct > 0 && (
-            <span>
-              <span className="text-muted">Retainage held:</span>{" "}
-              <span className="font-medium">
-                {formatCurrency(totals.retainage)}
-              </span>{" "}
-              <span className="text-muted">
-                ({totals.retainagePct}% of new total · balance before
-                retainage {formatCurrency(totals.balanceBeforeRetainage)})
-              </span>
-            </span>
-          )}
-          {totals.waiversMissing > 0 && (
-            <span className="inline-flex items-center gap-1 text-amber-900">
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500" />
-              {totals.waiversMissing} payment
-              {totals.waiversMissing === 1 ? "" : "s"} missing a lien waiver
-            </span>
-          )}
-        </div>
-      )}
 
       {/* Approved decisions */}
       <Card>
@@ -366,12 +316,6 @@ function PaymentDialog({
   )
   const [reference, setReference] = useState(payment?.reference ?? "")
   const [notes, setNotes] = useState(payment?.notes ?? "")
-  const [waiverReceived, setWaiverReceived] = useState(
-    payment?.lien_waiver_received ?? false
-  )
-  const [waiverReference, setWaiverReference] = useState(
-    payment?.lien_waiver_reference ?? ""
-  )
 
   function submit() {
     if (!amount || Number(amount) <= 0) {
@@ -386,8 +330,6 @@ function PaymentDialog({
       method,
       reference: reference || null,
       notes: notes || null,
-      lien_waiver_received: waiverReceived,
-      lien_waiver_reference: waiverReceived ? waiverReference || null : null,
     }
     startTransition(async () => {
       try {
@@ -454,31 +396,6 @@ function PaymentDialog({
               rows={2}
             />
           </Field>
-          <div className="rounded-md border border-border bg-background/50 px-3 py-2">
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <input
-                type="checkbox"
-                checked={waiverReceived}
-                onChange={(e) => setWaiverReceived(e.target.checked)}
-                className="h-4 w-4"
-              />
-              <span>Lien waiver received</span>
-            </label>
-            {waiverReceived && (
-              <div className="mt-2">
-                <Field
-                  label="Waiver reference"
-                  hint="Check #, DocuSign envelope, file path — whatever proves it"
-                >
-                  <Input
-                    value={waiverReference}
-                    onChange={(e) => setWaiverReference(e.target.value)}
-                    placeholder="e.g. DocuSign env 8c2…"
-                  />
-                </Field>
-              </div>
-            )}
-          </div>
         </DialogBody>
         <DialogFooter>
           <Button type="button" variant="ghost" onClick={onClose}>
