@@ -16,6 +16,9 @@ const UpdateProfileInput = z
     role: z.enum(["staff", "trade", "client"]),
     company_id: optStr,
     phone: optStr,
+    email_digest_pref: z
+      .enum(["immediate", "daily", "off"])
+      .default("immediate"),
   })
   .passthrough()
 
@@ -76,6 +79,7 @@ export async function updateProfile(input: UpdateProfileInputT) {
       role: parsed.role,
       company_id: nz(parsed.company_id),
       phone: nz(parsed.phone),
+      email_digest_pref: parsed.email_digest_pref,
     })
     .eq("id", parsed.id)
   if (error) throw new Error(error.message)

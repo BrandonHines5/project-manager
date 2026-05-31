@@ -197,6 +197,9 @@ function EditDialog({
   const [role, setRole] = useState<Enums<"user_role">>(profile.role)
   const [companyId, setCompanyId] = useState(profile.company_id ?? "")
   const [phone, setPhone] = useState(profile.phone ?? "")
+  const [emailDigestPref, setEmailDigestPref] = useState<
+    Enums<"email_digest_pref">
+  >(profile.email_digest_pref ?? "immediate")
   const [confirmDelete, setConfirmDelete] = useState(false)
   // After a successful reset, the new temp password is shown inline so staff
   // can copy & share it. Stored only in component state — never persisted.
@@ -235,6 +238,7 @@ function EditDialog({
       role,
       company_id: companyId || null,
       phone: phone || null,
+      email_digest_pref: emailDigestPref,
     }
     startTransition(async () => {
       try {
@@ -317,6 +321,21 @@ function EditDialog({
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
             />
+          </Field>
+          <Field
+            label="Email notifications"
+            hint="Immediate: one email per event. Daily digest: a single roll-up each morning. Off: in-app bell only."
+          >
+            <Select
+              value={emailDigestPref}
+              onChange={(e) =>
+                setEmailDigestPref(e.target.value as Enums<"email_digest_pref">)
+              }
+            >
+              <option value="immediate">Immediate (per event)</option>
+              <option value="daily">Daily digest</option>
+              <option value="off">Off</option>
+            </Select>
           </Field>
 
           <div className="rounded-md border border-border-strong bg-background/40 p-3 space-y-2">
