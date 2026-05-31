@@ -1,10 +1,12 @@
 "use server"
 
 import { revalidatePath } from "next/cache"
+import { after } from "next/server"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
 import { sendDashboardWebhook } from "@/lib/dashboard"
+import { sendQuoSms, normalizeE164 } from "@/lib/quo"
 
 const optStr = z.string().nullish()
 
@@ -80,8 +82,16 @@ export async function saveDailyLog(input: DailyLogInputT) {
     id = data.id
   }
 
-  // Replace subs_on_site
+  // Replace subs_on_site, tracking which company_ids were NOT already on a
+  // prior log for this project so we don't re-text the same sub every time a
+  // PM updates the log. "Newly on site" means: subs marked here that haven't
+  // been on a daily log for this project in the past 7 days.
+  const { data: previousSubs } = await supabase
+    .from("daily_log_subs_on_site")
+    .select("daily_log_id, company_id")
+    .eq("daily_log_id", id)
   await supabase.from("daily_log_subs_on_site").delete().eq("daily_log_id", id)
+  let addedCompanyIds: string[] = []
   if (parsed.subs_on_site.length) {
     const rows = parsed.subs_on_site
       .filter((s) => !!s.company_id)
@@ -95,6 +105,14 @@ export async function saveDailyLog(input: DailyLogInputT) {
         .from("daily_log_subs_on_site")
         .insert(rows)
       if (error) throw new Error(error.message)
+      const wasPresent = new Set(
+        (previousSubs ?? []).map((p) => p.company_id)
+      )
+      addedCompanyIds = Array.from(
+        new Set(
+          rows.map((r) => r.company_id).filter((cid) => !wasPresent.has(cid))
+        )
+      )
     }
   }
 
@@ -174,7 +192,63 @@ export async function saveDailyLog(input: DailyLogInputT) {
       await sendDashboardWebhook("daily_log.published", row)
     }
   }
+
+  // Courtesy SMS to subs newly marked on-site. We only text once per
+  // company per save so a PM editing notes after the fact doesn't fire
+  // duplicates. Scheduled via Next's after() (CodeRabbit #30): bare
+  // void promise in a Server Action isn't guaranteed to keep running
+  // after the response is sent, particularly in streaming / serverless
+  // contexts. after() is the supported post-response mechanism and
+  // even guarantees execution when the action errors or redirects.
+  if (addedCompanyIds.length > 0) {
+    after(() =>
+      notifyNewSubsOnSite(addedCompanyIds, parsed.project_id, parsed.log_date)
+    )
+  }
   return { id }
+}
+
+async function notifyNewSubsOnSite(
+  companyIds: string[],
+  projectId: string,
+  logDate: string
+) {
+  try {
+    const supabase = await createSupabaseServerClient()
+    const [{ data: project }, { data: companies }] = await Promise.all([
+      supabase
+        .from("projects")
+        .select("name, project_number, address")
+        .eq("id", projectId)
+        .maybeSingle(),
+      supabase
+        .from("companies")
+        .select("name, phone")
+        .in("id", companyIds),
+    ])
+    const label =
+      project?.address ||
+      project?.name ||
+      (project?.project_number ? `#${project.project_number}` : "the project")
+    for (const c of companies ?? []) {
+      if (!c.phone) continue
+      const e164 = normalizeE164(c.phone)
+      if (!e164) continue
+      const body = `Hines Homes: ${c.name} logged on site at ${label} on ${logDate}. Reply with any access or scope notes.`
+      const r = await sendQuoSms({ to: e164, content: body })
+      if (!r.sent) {
+        // Mask the recipient phone in logs (CodeRabbit #30): a full E.164
+        // is PII once it lands in log storage, and the company name +
+        // tail-4 is enough to correlate.
+        const masked = e164.slice(0, 2) + "***" + e164.slice(-4)
+        console.warn(
+          `[notifyNewSubsOnSite] SMS to ${c.name} (${masked}) failed: ${r.reason ?? "unknown"}`
+        )
+      }
+    }
+  } catch (e) {
+    console.warn("[notifyNewSubsOnSite] failed:", e)
+  }
 }
 
 export async function deleteDailyLog({

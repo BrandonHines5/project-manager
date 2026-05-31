@@ -350,10 +350,13 @@ async function notifyScheduleAssignees(
     )
   }
 
-  // Email — best-effort, never blocks save
+  // Email + SMS — best-effort, never blocks save. We collect the email and
+  // phone-bearing companies in one pass, then fan out in parallel so a slow
+  // Quo/Resend doesn't compound onto the schedule save latency.
   try {
     const link = appUrl(`/projects/${projectId}/schedule`)
     const emails: string[] = []
+    const phones: string[] = []
     if (profileIds.length) {
       const { data: profs } = await supabase
         .from("profiles")
@@ -364,19 +367,47 @@ async function notifyScheduleAssignees(
     if (companyIds.length) {
       const { data: cos } = await supabase
         .from("companies")
-        .select("email")
+        .select("name, email, phone")
         .in("id", companyIds)
-      for (const c of cos ?? []) if (c.email) emails.push(c.email)
+      for (const c of cos ?? []) {
+        if (c.email) emails.push(c.email)
+        if (c.phone) {
+          const e164 = normalizeE164(c.phone)
+          if (e164) phones.push(e164)
+        }
+      }
     }
+
+    const sends: Promise<unknown>[] = []
     if (emails.length) {
-      await sendEmail({
-        to: emails,
-        subject: `New assignment: ${title}`,
-        text: `You were assigned to "${title}" on the project. Open: ${link}`,
-      })
+      sends.push(
+        sendEmail({
+          to: emails,
+          subject: `New assignment: ${title}`,
+          text: `You were assigned to "${title}" on the project. Open: ${link}`,
+        }).catch((e) => console.warn("assignment email failed:", e))
+      )
     }
+    // SMS goes only to sub/vendor companies (profiles get email + in-app).
+    // Message is intentionally terse — texts charge per segment and busy
+    // subs scan, not read.
+    if (phones.length) {
+      const smsBody = `Hines Homes: you were assigned to "${title}". Details: ${link}`
+      for (const to of phones) {
+        sends.push(
+          sendQuoSms({ to, content: smsBody }).then((r) => {
+            if (!r.sent) {
+              console.warn(
+                `assignment SMS to ${to} failed: ${r.reason ?? "unknown"}`
+              )
+            }
+          })
+        )
+      }
+    }
+    await Promise.allSettled(sends)
   } catch (e) {
-    console.warn("schedule assignment email failed:", e)
+    console.warn("schedule assignment notify failed:", e)
   }
   void scheduleItemId
 }
@@ -391,31 +422,82 @@ async function applyCascade(
   projectId: string,
   movedId: string
 ): Promise<string[]> {
+  return applyCascadeBatch(projectId, [movedId])
+}
+
+/**
+ * Batched cascade for bulk moves. Loads the project graph ONCE, walks the
+ * cascade for every seed id against the same in-memory map, and writes
+ * each updated row exactly once. The single-id path is the trivial wrapper
+ * above; the bulk-shift action calls this directly with the full seed
+ * set so a 500-id shift doesn't trigger 500 round-trips for the same
+ * `schedule_items.*` and `schedule_predecessors.*` data
+ * (CodeRabbit #30 finding 7).
+ *
+ * Per-seed cascade results merge into a single Map keyed by item id, so
+ * when two seeds independently push a successor's start_date, the later
+ * (later in iteration order) one wins. With the cascade algorithm being
+ * monotone-forward — successor dates only ever move LATER — this matches
+ * the previous "loop applyCascade per seed" behaviour: the last write
+ * wins, which is correct because each iteration is computed against the
+ * updated graph the previous one left behind.
+ */
+async function applyCascadeBatch(
+  projectId: string,
+  seedIds: string[]
+): Promise<string[]> {
+  if (seedIds.length === 0) return []
   const supabase = await createSupabaseServerClient()
-  const { data: items } = await supabase
+  const { data: items, error: itemsErr } = await supabase
     .from("schedule_items")
     .select("*")
     .eq("project_id", projectId)
-  const { data: preds } = await supabase
+  if (itemsErr) throw new Error(itemsErr.message)
+  const { data: preds, error: predsErr } = await supabase
     .from("schedule_predecessors")
     .select("*")
-  if (!items || !preds) return [movedId]
-  const updates = cascadeFromPredecessors(items, preds, movedId)
-  for (const u of updates) {
+  if (predsErr) throw new Error(predsErr.message)
+  if (!items || !preds) return seedIds
+
+  // Mutable copy keyed by id so successive seeds see the cascade updates
+  // from prior seeds. cascadeFromPredecessors is pure — we have to
+  // splice the updates back into the list ourselves.
+  const itemMap = new Map(items.map((it) => [it.id, { ...it }]))
+  const allUpdates = new Map<string, { start_date: string; end_date: string }>()
+  const touched = new Set<string>()
+  for (const seed of seedIds) {
+    touched.add(seed)
+    const currentItems = Array.from(itemMap.values())
+    const updates = cascadeFromPredecessors(currentItems, preds, seed)
+    for (const u of updates) {
+      allUpdates.set(u.id, {
+        start_date: u.start_date,
+        end_date: u.end_date,
+      })
+      const prior = itemMap.get(u.id)
+      if (prior) {
+        itemMap.set(u.id, {
+          ...prior,
+          start_date: u.start_date,
+          end_date: u.end_date,
+        })
+      }
+      touched.add(u.id)
+    }
+  }
+
+  for (const [id, dates] of allUpdates) {
     const { error } = await supabase
       .from("schedule_items")
-      .update({ start_date: u.start_date, end_date: u.end_date })
-      .eq("id", u.id)
+      .update(dates)
+      .eq("id", id)
     if (error) {
-      // Cascade failed partway. Surface so the caller can investigate; the
-      // earlier updates have already persisted (no transaction is available
-      // via the JS client).
       throw new Error(
-        `Cascade failed at ${u.id}: ${error.message}. Some successor dates may be partially updated.`
+        `Cascade failed at ${id}: ${error.message}. Some successor dates may be partially updated.`
       )
     }
   }
-  return [movedId, ...updates.map((u) => u.id)]
+  return Array.from(touched)
 }
 
 /**
@@ -904,4 +986,188 @@ export async function toggleChecklistItem({
     .eq("id", id)
   if (error) throw new Error(error.message)
   revalidatePath(`/projects/${project_id}/schedule`)
+}
+
+// ============================================================================
+// Bulk operations
+// ============================================================================
+//
+// The schedule UI lets a PM pick N items via checkboxes and apply a single
+// action (shift dates, change status, delete). Each action lives behind its
+// own server function because they have different validation rules and
+// different cascade behaviour. They all share these traits:
+//
+//  - Scoped to a single project_id so RLS catches cross-project leakage.
+//  - Cap at 500 ids per call so a runaway "select all" can't lock the table.
+//  - Return a typed result with successes / failures rather than throwing,
+//    so the UI can surface partial-failure detail (e.g. "12 shifted, 3 had
+//    cycle conflicts").
+//
+// Cascade behaviour matches the single-item path: predecessor cascade +
+// anchored-child cascade run after every bulk move so successor dates stay
+// consistent.
+
+const BulkIdsInput = z.object({
+  project_id: z.string().uuid(),
+  ids: z.array(z.string().uuid()).min(1).max(500),
+})
+
+const BulkStatusInput = BulkIdsInput.extend({
+  status: z.enum(["not_started", "in_progress", "complete", "delayed"]),
+})
+
+const BulkShiftInput = BulkIdsInput.extend({
+  // ±N days. Cap at ±365 so a fat-finger doesn't push the schedule into
+  // year-2099 territory.
+  days: z.coerce.number().int().min(-365).max(365),
+})
+
+export type BulkScheduleResult = {
+  ok: number
+  skipped: { id: string; reason: string }[]
+}
+
+export async function bulkSetScheduleStatus(input: {
+  project_id: string
+  ids: string[]
+  status: "not_started" | "in_progress" | "complete" | "delayed"
+}): Promise<BulkScheduleResult> {
+  await requireStaff()
+  const parsed = BulkStatusInput.parse(input)
+  const supabase = await createSupabaseServerClient()
+  // Single batched UPDATE — RLS will silently drop rows the user can't write,
+  // so we compare returned-vs-requested to detect that case.
+  const { data, error } = await supabase
+    .from("schedule_items")
+    .update({ status: parsed.status })
+    .in("id", parsed.ids)
+    .eq("project_id", parsed.project_id)
+    .select("id")
+  if (error) throw new Error(error.message)
+  const updated = new Set((data ?? []).map((r) => r.id))
+  const skipped = parsed.ids
+    .filter((id) => !updated.has(id))
+    .map((id) => ({ id, reason: "not found in project (or RLS denied)" }))
+  revalidatePath(`/projects/${parsed.project_id}/schedule`)
+  return { ok: updated.size, skipped }
+}
+
+export async function bulkShiftScheduleDates(input: {
+  project_id: string
+  ids: string[]
+  days: number
+}): Promise<BulkScheduleResult> {
+  await requireStaff()
+  const parsed = BulkShiftInput.parse(input)
+  if (parsed.days === 0) {
+    return { ok: 0, skipped: parsed.ids.map((id) => ({ id, reason: "zero days" })) }
+  }
+  const supabase = await createSupabaseServerClient()
+  const { data: items, error: selErr } = await supabase
+    .from("schedule_items")
+    .select("id, start_date, end_date, due_date")
+    .in("id", parsed.ids)
+    .eq("project_id", parsed.project_id)
+  if (selErr) throw new Error(selErr.message)
+
+  const skipped: { id: string; reason: string }[] = []
+  const movedIds: string[] = []
+  const shift = (d: string | null) =>
+    d
+      ? new Date(new Date(d).getTime() + parsed.days * 86400000)
+          .toISOString()
+          .slice(0, 10)
+      : null
+
+  // Per-row UPDATE because each row's new dates depend on its existing dates;
+  // a single SQL CASE would work too but is harder to reason about under RLS.
+  for (const item of items ?? []) {
+    const hasAny = item.start_date || item.end_date || item.due_date
+    if (!hasAny) {
+      skipped.push({ id: item.id, reason: "no dates to shift" })
+      continue
+    }
+    const { error: uErr } = await supabase
+      .from("schedule_items")
+      .update({
+        start_date: shift(item.start_date),
+        end_date: shift(item.end_date),
+        due_date: shift(item.due_date),
+      })
+      .eq("id", item.id)
+    if (uErr) {
+      skipped.push({ id: item.id, reason: uErr.message })
+      continue
+    }
+    movedIds.push(item.id)
+  }
+
+  // Batched cascade: load the project graph once, walk every seed
+  // against the same in-memory copy, write each affected row exactly
+  // once. The previous per-seed loop reloaded the full graph for every
+  // moved item, which got expensive at the 500-id selection cap.
+  const cascadeMoved = new Set<string>(
+    await applyCascadeBatch(parsed.project_id, movedIds)
+  )
+  await applyAnchoredChildrenCascade(Array.from(cascadeMoved))
+
+  // For any IDs that weren't returned by the SELECT (RLS / wrong project),
+  // record them as skipped too.
+  const seen = new Set((items ?? []).map((i) => i.id))
+  for (const id of parsed.ids) {
+    if (!seen.has(id))
+      skipped.push({ id, reason: "not found in project (or RLS denied)" })
+  }
+  revalidatePath(`/projects/${parsed.project_id}/schedule`)
+  return { ok: movedIds.length, skipped }
+}
+
+export async function bulkDeleteScheduleItems(input: {
+  project_id: string
+  ids: string[]
+}): Promise<BulkScheduleResult> {
+  await requireStaff()
+  const parsed = BulkIdsInput.parse(input)
+  const supabase = await createSupabaseServerClient()
+
+  // Defensive: refuse if any selected item is a predecessor of an item that
+  // ISN'T also being deleted. Otherwise the FK cascade silently drops the
+  // dependency and the surviving successor's schedule shifts unexpectedly.
+  // For an explicit reassignment flow, the single-item deleteScheduleItem
+  // already exists — point staff there.
+  const idSet = new Set(parsed.ids)
+  const { data: preds, error: pErr } = await supabase
+    .from("schedule_predecessors")
+    .select("item_id, predecessor_id")
+    .in("predecessor_id", parsed.ids)
+  if (pErr) throw new Error(pErr.message)
+  const externalDependencies = (preds ?? []).filter(
+    (p) => !idSet.has(p.item_id)
+  )
+  if (externalDependencies.length > 0) {
+    // Report all blocking ids in the skip list so the UI can highlight them.
+    const blockingIds = new Set(
+      externalDependencies.map((p) => p.predecessor_id)
+    )
+    const skipped = Array.from(blockingIds).map((id) => ({
+      id,
+      reason:
+        "is a predecessor of an item not in the selection — delete individually with reassignment",
+    }))
+    return { ok: 0, skipped }
+  }
+
+  const { data, error } = await supabase
+    .from("schedule_items")
+    .delete()
+    .in("id", parsed.ids)
+    .eq("project_id", parsed.project_id)
+    .select("id")
+  if (error) throw new Error(error.message)
+  const deleted = new Set((data ?? []).map((r) => r.id))
+  const skipped = parsed.ids
+    .filter((id) => !deleted.has(id))
+    .map((id) => ({ id, reason: "not found in project (or RLS denied)" }))
+  revalidatePath(`/projects/${parsed.project_id}/schedule`)
+  return { ok: deleted.size, skipped }
 }

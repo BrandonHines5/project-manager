@@ -120,6 +120,7 @@ export function ScheduleClient({ data }: { data: ScheduleData }) {
       {view === "list" && (
         <ScheduleListView
           data={data}
+          projectId={data.project_id}
           onEdit={(id) => setDialogState({ mode: "edit", itemId: id })}
           onAddTodo={(parentId) =>
             setDialogState({ mode: "create", kind: "todo", parentId })

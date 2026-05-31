@@ -6,6 +6,7 @@ import { toast } from "sonner"
 import { Plus, Building2, Trash2, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { cn } from "@/lib/utils"
 import { EmptyState } from "@/components/ui/empty"
 import { Field, Input, Select, Textarea } from "@/components/ui/input"
 import {
@@ -21,17 +22,25 @@ import {
   deleteCompany,
   type CompanyInputT,
 } from "@/app/actions/companies"
+import { TradeChipsEditor } from "@/components/companies/trade-chips-editor"
 import type { Tables, Enums } from "@/lib/db/types"
 
 export function CompaniesClient({
   companies,
+  tradesByCompany,
+  allTrades,
 }: {
   companies: Tables<"companies">[]
+  tradesByCompany: Record<string, string[]>
+  allTrades: string[]
 }) {
   const [search, setSearch] = useState("")
   const [typeFilter, setTypeFilter] = useState<"all" | Enums<"company_type">>(
     "all"
   )
+  // Trade filter chip: click a trade chip in the toolbar to constrain the
+  // list to companies tagged with it. Clear by clicking again.
+  const [tradeFilter, setTradeFilter] = useState<string | null>(null)
   const [editing, setEditing] = useState<
     Tables<"companies"> | "new" | null
   >(null)
@@ -41,15 +50,21 @@ export function CompaniesClient({
     return companies
       .filter((c) => typeFilter === "all" || c.type === typeFilter)
       .filter((c) => {
+        if (!tradeFilter) return true
+        return (tradesByCompany[c.id] ?? []).includes(tradeFilter)
+      })
+      .filter((c) => {
         if (!q) return true
+        const trades = (tradesByCompany[c.id] ?? []).join(" ")
         return (
           c.name.toLowerCase().includes(q) ||
           (c.trade_category ?? "").toLowerCase().includes(q) ||
+          trades.includes(q) ||
           (c.email ?? "").toLowerCase().includes(q) ||
           (c.phone ?? "").toLowerCase().includes(q)
         )
       })
-  }, [companies, search, typeFilter])
+  }, [companies, search, typeFilter, tradeFilter, tradesByCompany])
 
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-6 py-6">
@@ -88,6 +103,41 @@ export function CompaniesClient({
         </div>
       </div>
 
+      {allTrades.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] uppercase tracking-wide text-muted mr-1">
+            Trade
+          </span>
+          {allTrades.map((t) => {
+            const active = tradeFilter === t
+            return (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setTradeFilter(active ? null : t)}
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] cursor-pointer transition-colors",
+                  active
+                    ? "bg-brand-500 text-white"
+                    : "bg-surface text-muted border border-border-strong hover:text-foreground hover:bg-background"
+                )}
+              >
+                {t}
+              </button>
+            )
+          })}
+          {tradeFilter && (
+            <button
+              type="button"
+              onClick={() => setTradeFilter(null)}
+              className="text-[11px] text-muted hover:text-foreground underline cursor-pointer"
+            >
+              clear
+            </button>
+          )}
+        </div>
+      )}
+
       {filtered.length === 0 ? (
         <EmptyState
           icon={<Building2 className="h-10 w-10" />}
@@ -119,24 +169,42 @@ export function CompaniesClient({
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {filtered.map((c) => (
-                <tr
-                  key={c.id}
-                  onClick={() => setEditing(c)}
-                  className="hover:bg-background/40 cursor-pointer"
-                >
-                  <td className="px-4 py-3 font-medium">{c.name}</td>
-                  <td className="px-4 py-3">
-                    <TypeBadge type={c.type} />
-                  </td>
-                  <td className="px-4 py-3 text-muted">
-                    {c.trade_category || "—"}
-                  </td>
-                  <td className="px-4 py-3 hidden md:table-cell text-muted">
-                    {c.email || c.phone || "—"}
-                  </td>
-                </tr>
-              ))}
+              {filtered.map((c) => {
+                const companyTrades = tradesByCompany[c.id] ?? []
+                return (
+                  <tr
+                    key={c.id}
+                    onClick={() => setEditing(c)}
+                    className="hover:bg-background/40 cursor-pointer"
+                  >
+                    <td className="px-4 py-3 font-medium">{c.name}</td>
+                    <td className="px-4 py-3">
+                      <TypeBadge type={c.type} />
+                    </td>
+                    <td className="px-4 py-3 text-muted">
+                      {companyTrades.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {companyTrades.map((t) => (
+                            <span
+                              key={t}
+                              className="inline-flex rounded-full bg-brand-100 text-brand-700 text-[11px] px-1.5 py-0.5"
+                            >
+                              {t}
+                            </span>
+                          ))}
+                        </div>
+                      ) : c.trade_category ? (
+                        <span>{c.trade_category}</span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="px-4 py-3 hidden md:table-cell text-muted">
+                      {c.email || c.phone || "—"}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -148,6 +216,10 @@ export function CompaniesClient({
           // from the new prop instead of keeping the previous row's values.
           key={editing === "new" ? "new" : editing.id}
           company={editing === "new" ? null : editing}
+          initialTrades={
+            editing === "new" ? [] : tradesByCompany[editing.id] ?? []
+          }
+          allTrades={allTrades}
           onClose={() => setEditing(null)}
         />
       )}
@@ -165,18 +237,20 @@ function TypeBadge({ type }: { type: Enums<"company_type"> }) {
 
 function CompanyDialog({
   company,
+  initialTrades,
+  allTrades,
   onClose,
 }: {
   company: Tables<"companies"> | null
+  initialTrades: string[]
+  allTrades: string[]
   onClose: () => void
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [name, setName] = useState(company?.name ?? "")
   const [type, setType] = useState<Enums<"company_type">>(company?.type ?? "sub")
-  const [tradeCategory, setTradeCategory] = useState(
-    company?.trade_category ?? ""
-  )
+  const [trades, setTrades] = useState<string[]>(initialTrades)
   const [address, setAddress] = useState(company?.address ?? "")
   const [phone, setPhone] = useState(company?.phone ?? "")
   const [email, setEmail] = useState(company?.email ?? "")
@@ -191,7 +265,10 @@ function CompanyDialog({
       id: company?.id,
       name: name.trim(),
       type,
-      trade_category: tradeCategory || null,
+      // Legacy trade_category kept in sync server-side (mirrors the first
+      // trade). We send empty here so the server picks the first trade.
+      trade_category: null,
+      trades,
       address: address || null,
       phone: phone || null,
       email: email || null,
@@ -246,13 +323,13 @@ function CompanyDialog({
                 <option value="client">Client household</option>
               </Select>
             </Field>
-            <Field label="Trade / category">
-              <Input
-                value={tradeCategory}
-                onChange={(e) => setTradeCategory(e.target.value)}
-                placeholder="Electrical, Plumbing, Cabinets…"
+            <div className="sm:col-span-2">
+              <TradeChipsEditor
+                value={trades}
+                onChange={setTrades}
+                suggestions={allTrades}
               />
-            </Field>
+            </div>
             <Field label="Phone">
               <Input
                 type="tel"
