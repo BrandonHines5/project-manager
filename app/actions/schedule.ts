@@ -350,10 +350,13 @@ async function notifyScheduleAssignees(
     )
   }
 
-  // Email — best-effort, never blocks save
+  // Email + SMS — best-effort, never blocks save. We collect the email and
+  // phone-bearing companies in one pass, then fan out in parallel so a slow
+  // Quo/Resend doesn't compound onto the schedule save latency.
   try {
     const link = appUrl(`/projects/${projectId}/schedule`)
     const emails: string[] = []
+    const phones: string[] = []
     if (profileIds.length) {
       const { data: profs } = await supabase
         .from("profiles")
@@ -364,19 +367,47 @@ async function notifyScheduleAssignees(
     if (companyIds.length) {
       const { data: cos } = await supabase
         .from("companies")
-        .select("email")
+        .select("name, email, phone")
         .in("id", companyIds)
-      for (const c of cos ?? []) if (c.email) emails.push(c.email)
+      for (const c of cos ?? []) {
+        if (c.email) emails.push(c.email)
+        if (c.phone) {
+          const e164 = normalizeE164(c.phone)
+          if (e164) phones.push(e164)
+        }
+      }
     }
+
+    const sends: Promise<unknown>[] = []
     if (emails.length) {
-      await sendEmail({
-        to: emails,
-        subject: `New assignment: ${title}`,
-        text: `You were assigned to "${title}" on the project. Open: ${link}`,
-      })
+      sends.push(
+        sendEmail({
+          to: emails,
+          subject: `New assignment: ${title}`,
+          text: `You were assigned to "${title}" on the project. Open: ${link}`,
+        }).catch((e) => console.warn("assignment email failed:", e))
+      )
     }
+    // SMS goes only to sub/vendor companies (profiles get email + in-app).
+    // Message is intentionally terse — texts charge per segment and busy
+    // subs scan, not read.
+    if (phones.length) {
+      const smsBody = `Hines Homes: you were assigned to "${title}". Details: ${link}`
+      for (const to of phones) {
+        sends.push(
+          sendQuoSms({ to, content: smsBody }).then((r) => {
+            if (!r.sent) {
+              console.warn(
+                `assignment SMS to ${to} failed: ${r.reason ?? "unknown"}`
+              )
+            }
+          })
+        )
+      }
+    }
+    await Promise.allSettled(sends)
   } catch (e) {
-    console.warn("schedule assignment email failed:", e)
+    console.warn("schedule assignment notify failed:", e)
   }
   void scheduleItemId
 }
