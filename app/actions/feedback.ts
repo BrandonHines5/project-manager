@@ -36,6 +36,8 @@ export async function submitFeedback(input: SubmitFeedbackInput) {
   })
   if (error) throw new Error(error.message)
   revalidatePath("/feedback")
+  // Keeps the staff "new requests" surface on the dashboard in sync.
+  revalidatePath("/projects")
 }
 
 const StatusInput = z.object({
@@ -87,4 +89,5 @@ export async function deleteFeedback(input: { id: string }) {
     .eq("id", id)
   if (error) throw new Error(error.message)
   revalidatePath("/feedback")
+  revalidatePath("/projects")
 }

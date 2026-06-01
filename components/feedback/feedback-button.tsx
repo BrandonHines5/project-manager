@@ -115,6 +115,7 @@ function FeedbackDialog({ onClose }: { onClose: () => void }) {
               id="fb-desc"
               value={description}
               rows={4}
+              maxLength={5000}
               placeholder="What would you like changed or added?"
               onChange={(e) => setDescription(e.target.value)}
             />

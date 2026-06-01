@@ -16,11 +16,11 @@ export function FeedbackNotification() {
     let cancelled = false
 
     async function load() {
-      const { count } = await supabase
+      const { count: newCount } = await supabase
         .from("feedback_requests")
         .select("id", { count: "exact", head: true })
         .eq("status", "New")
-      if (!cancelled) setCount(count ?? 0)
+      if (!cancelled) setCount(newCount ?? 0)
     }
 
     load()

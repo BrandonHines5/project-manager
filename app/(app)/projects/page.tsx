@@ -135,11 +135,14 @@ export default async function ProjectsPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-6 py-6">
-      {profile.role === "staff" && <FeedbackNotification />}
-      <MyFeedbackNotification
-        userId={profile.id}
-        email={profile.email ?? ""}
-      />
+      {profile.role === "staff" ? (
+        <FeedbackNotification />
+      ) : (
+        <MyFeedbackNotification
+          userId={profile.id}
+          email={profile.email ?? ""}
+        />
+      )}
       <div className="flex items-center justify-between gap-3 mb-5">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Projects</h1>

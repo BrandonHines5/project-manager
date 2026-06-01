@@ -111,7 +111,13 @@ export function FeedbackTable({
           </thead>
           <tbody className="divide-y divide-border">
             {visible.map((row) => (
-              <FeedbackTableRow key={row.id} row={row} isStaff={isStaff} />
+              // Key includes updated_at so the row remounts when staff edits
+              // land server-side, re-seeding the notes editor with fresh data.
+              <FeedbackTableRow
+                key={`${row.id}-${row.updated_at}`}
+                row={row}
+                isStaff={isStaff}
+              />
             ))}
           </tbody>
         </table>

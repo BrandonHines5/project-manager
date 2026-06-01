@@ -13,10 +13,11 @@ export default async function FeedbackPage() {
 
   // RLS scopes this automatically: staff see every request, everyone else sees
   // only the rows they submitted.
-  const { data: rows } = await supabase
+  const { data: rows, error } = await supabase
     .from("feedback_requests")
     .select("*")
     .order("created_at", { ascending: false })
+  if (error) console.error("[feedback] failed to load requests:", error.message)
 
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-6 py-6">
