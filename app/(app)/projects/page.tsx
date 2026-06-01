@@ -13,6 +13,8 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { EmptyState } from "@/components/ui/empty"
 import { Card, CardBody } from "@/components/ui/card"
+import { FeedbackNotification } from "@/components/feedback/feedback-notification"
+import { MyFeedbackNotification } from "@/components/feedback/my-feedback-notification"
 import { cn, formatCurrency, formatDate } from "@/lib/utils"
 import type { Enums } from "@/lib/db/types"
 
@@ -133,6 +135,11 @@ export default async function ProjectsPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-6 py-6">
+      {profile.role === "staff" ? (
+        <FeedbackNotification />
+      ) : (
+        <MyFeedbackNotification userId={profile.id} />
+      )}
       <div className="flex items-center justify-between gap-3 mb-5">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Projects</h1>

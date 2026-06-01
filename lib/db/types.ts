@@ -635,6 +635,56 @@ export type Database = {
           },
         ]
       }
+      feedback_requests: {
+        Row: {
+          admin_notes: string | null
+          created_at: string
+          description: string | null
+          id: string
+          request_type: string
+          status: string
+          submitted_by: string
+          submitted_by_email: string | null
+          submitted_by_id: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          admin_notes?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          request_type?: string
+          status?: string
+          submitted_by: string
+          submitted_by_email?: string | null
+          submitted_by_id?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          admin_notes?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          request_type?: string
+          status?: string
+          submitted_by?: string
+          submitted_by_email?: string | null
+          submitted_by_id?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "feedback_requests_submitted_by_id_fkey"
+            columns: ["submitted_by_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       notifications: {
         Row: {
           body: string | null
