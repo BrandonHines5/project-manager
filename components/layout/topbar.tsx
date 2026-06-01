@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
 import { GlobalSearch } from "@/components/layout/global-search"
 import { AIAgent } from "@/components/layout/ai-agent"
+import { FeedbackButton } from "@/components/feedback/feedback-button"
 import { MobileNav } from "@/components/layout/mobile-nav"
 import type { UserRole } from "@/lib/auth"
 
@@ -33,6 +34,7 @@ export function Topbar({
       </div>
       <div className="ml-auto flex items-center gap-2">
         <GlobalSearch />
+        <FeedbackButton />
         <AIAgent />
         <Link
           href="/notifications"

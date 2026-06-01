@@ -9,6 +9,7 @@ import {
   BarChart3,
   Users,
   Hammer,
+  MessageSquarePlus,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { UserRole } from "@/lib/auth"
@@ -27,6 +28,7 @@ const ITEMS: Item[] = [
   { href: "/companies", label: "Companies", icon: Building2, roles: ["staff"] },
   { href: "/team", label: "Team", icon: Users, roles: ["staff"] },
   { href: "/reports", label: "Reports", icon: BarChart3, roles: ["staff"] },
+  { href: "/feedback", label: "Feedback", icon: MessageSquarePlus },
 ]
 
 // Visible nav items for a role. Exported so MobileNav can reuse the same list.
