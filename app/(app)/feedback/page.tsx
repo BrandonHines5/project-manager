@@ -17,7 +17,9 @@ export default async function FeedbackPage() {
     .from("feedback_requests")
     .select("*")
     .order("created_at", { ascending: false })
-  if (error) console.error("[feedback] failed to load requests:", error.message)
+  // Surface real failures via the error boundary rather than rendering a
+  // misleading "no requests" empty state.
+  if (error) throw new Error(`Failed to load feedback requests: ${error.message}`)
 
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-6 py-6">
@@ -31,7 +33,7 @@ export default async function FeedbackPage() {
             : "Submit requests and track their status here."}
         </p>
       </div>
-      <FeedbackTable rows={(rows ?? []) as FeedbackRow[]} isStaff={isStaff} />
+      <FeedbackTable rows={rows as FeedbackRow[]} isStaff={isStaff} />
     </div>
   )
 }

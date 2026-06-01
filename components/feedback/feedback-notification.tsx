@@ -16,11 +16,13 @@ export function FeedbackNotification() {
     let cancelled = false
 
     async function load() {
-      const { count: newCount } = await supabase
+      const { count: newCount, error } = await supabase
         .from("feedback_requests")
         .select("id", { count: "exact", head: true })
         .eq("status", "New")
-      if (!cancelled) setCount(newCount ?? 0)
+      // Don't let a transient failure zero out the badge and hide the banner —
+      // keep the last good count until the next successful poll.
+      if (!cancelled && !error) setCount(newCount ?? 0)
     }
 
     load()
@@ -36,7 +38,7 @@ export function FeedbackNotification() {
   return (
     <Link
       href="/feedback"
-      className="mb-6 flex items-center gap-3 rounded-lg border border-danger/30 bg-red-50 px-4 py-3 text-sm text-red-800 hover:bg-red-100 transition-colors"
+      className="mb-6 flex items-center gap-3 rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger hover:bg-danger/15 transition-colors"
     >
       <Inbox className="h-4 w-4 shrink-0" />
       <span className="font-medium">

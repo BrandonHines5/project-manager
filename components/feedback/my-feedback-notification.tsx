@@ -20,14 +20,10 @@ type SeenMap = Record<string, string>
 // hasn't looked at yet — tracked per-user in localStorage so it survives
 // reloads — and opening the panel marks everything seen. Renders nothing until
 // at least one request has a response.
-export function MyFeedbackNotification({
-  userId,
-  email,
-}: {
-  userId: string
-  email: string
-}) {
-  const storageKey = `feedbackSeen:${email || userId}`
+export function MyFeedbackNotification({ userId }: { userId: string }) {
+  // Key on the (non-PII) profile id rather than the email so we don't persist
+  // an address into browser storage on shared devices.
+  const storageKey = `feedbackSeen:${userId}`
 
   const [rows, setRows] = useState<FeedbackRow[]>([])
   const [open, setOpen] = useState(false)

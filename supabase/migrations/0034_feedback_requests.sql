@@ -35,21 +35,31 @@ create trigger trg_feedback_updated_at before update on public.feedback_requests
 
 alter table public.feedback_requests enable row level security;
 
--- Staff (the admin role in this app) get full access: read every request,
--- triage status/notes, and delete.
+-- Staff (the admin role in this app) can read every request and triage it
+-- (status / notes) or delete it. Note: NOT `for all` — INSERT is governed by
+-- feedback_insert_self below so even staff-filed requests are self-attributed
+-- (submitted_by_id = the caller), keeping the audit trail honest.
 drop policy if exists feedback_staff_all on public.feedback_requests;
-create policy feedback_staff_all on public.feedback_requests
-  for all using (public.is_staff()) with check (public.is_staff());
+drop policy if exists feedback_staff_read on public.feedback_requests;
+drop policy if exists feedback_staff_update on public.feedback_requests;
+drop policy if exists feedback_staff_delete on public.feedback_requests;
+create policy feedback_staff_read on public.feedback_requests
+  for select using (public.is_staff());
+create policy feedback_staff_update on public.feedback_requests
+  for update using (public.is_staff()) with check (public.is_staff());
+create policy feedback_staff_delete on public.feedback_requests
+  for delete using (public.is_staff());
 
 -- Any signed-in user may file a request, but only as themselves — the snapshot
--- id must match the caller so a row can't be attributed to someone else.
+-- id must match the caller so a row can't be attributed to someone else. This
+-- is the ONLY insert path, for staff and non-staff alike.
 drop policy if exists feedback_insert_self on public.feedback_requests;
 create policy feedback_insert_self on public.feedback_requests
   for insert to authenticated
   with check (submitted_by_id = (select auth.uid()));
 
 -- Submitters can read the status / admin reply on their own requests. (Staff
--- already read everything via feedback_staff_all.) Note there is deliberately
+-- already read everything via feedback_staff_read.) Note there is deliberately
 -- no client/trade UPDATE or DELETE policy — only staff can triage.
 drop policy if exists feedback_read_own on public.feedback_requests;
 create policy feedback_read_own on public.feedback_requests

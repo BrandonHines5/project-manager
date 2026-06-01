@@ -138,10 +138,7 @@ export default async function ProjectsPage() {
       {profile.role === "staff" ? (
         <FeedbackNotification />
       ) : (
-        <MyFeedbackNotification
-          userId={profile.id}
-          email={profile.email ?? ""}
-        />
+        <MyFeedbackNotification userId={profile.id} />
       )}
       <div className="flex items-center justify-between gap-3 mb-5">
         <div>
