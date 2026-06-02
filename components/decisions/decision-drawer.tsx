@@ -1259,7 +1259,7 @@ function ChoiceCostBreakdownEditor({
                         <option value="">— Select —</option>
                         {costCodes.map((c) => (
                           <option key={c.id} value={c.id}>
-                            {c.code} · {c.name}
+                            {c.name}
                           </option>
                         ))}
                       </Select>
@@ -1396,7 +1396,7 @@ function AllowanceEditor({
           <option value="">— Cost code (optional) —</option>
           {costCodes.map((c) => (
             <option key={c.id} value={c.id}>
-              {c.code} · {c.name}
+              {c.name}
             </option>
           ))}
         </Select>
@@ -1513,7 +1513,7 @@ function ClientChoicePicker({
           {allowanceCostCode && (
             <span className="text-blue-800/70">
               {" "}
-              · {allowanceCostCode.code} {allowanceCostCode.name}
+              · {allowanceCostCode.name}
             </span>
           )}
           <span className="text-blue-800/80">
@@ -2106,7 +2106,7 @@ function CostBreakdownEditor({
                         <option value="">— Select —</option>
                         {costCodes.map((c) => (
                           <option key={c.id} value={c.id}>
-                            {c.code} · {c.name}
+                            {c.name}
                           </option>
                         ))}
                       </Select>

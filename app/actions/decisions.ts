@@ -820,7 +820,7 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
     textLines.push("Cost breakdown:")
     for (const ci of costItems) {
       const code = ci.cost_codes
-        ? `[${ci.cost_codes.code} ${ci.cost_codes.name}] `
+        ? `[${ci.cost_codes.name}] `
         : ""
       const lineTotal = ci.quantity * ci.unit_cost
       const unit = ci.unit ? ` ${ci.unit}` : ""
@@ -911,8 +911,8 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
           .map((ci) => {
             const code = ci.cost_codes
               ? `<span style="color:#888">[${escapeHtml(
-                  ci.cost_codes.code
-                )} ${escapeHtml(ci.cost_codes.name)}]</span> `
+                  ci.cost_codes.name
+                )}]</span> `
               : ""
             const lineTotal = ci.quantity * ci.unit_cost
             const unit = ci.unit ? ` ${escapeHtml(ci.unit)}` : ""
