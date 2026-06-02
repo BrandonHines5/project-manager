@@ -659,7 +659,12 @@ function escapeHtml(s: string): string {
  */
 async function notifyStaffOfApprovedDecision(decisionId: string) {
   const admin = createSupabaseAdminClient()
-  if (!admin) return
+  if (!admin) {
+    console.warn(
+      "[approved-decision email] skipped — admin client unavailable (SUPABASE_SERVICE_ROLE_KEY unset)"
+    )
+    return
+  }
 
   const { data: decision } = await admin
     .from("decisions")
@@ -690,7 +695,15 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
   const emails = (staff ?? [])
     .map((p) => p.email)
     .filter((e): e is string => !!e)
-  if (!emails.length) return
+  if (!emails.length) {
+    console.warn(
+      "[approved-decision email] skipped — no staff with notifications_enabled + an email on file"
+    )
+    return
+  }
+  console.log(
+    `[approved-decision email] sending decision ${decisionId} to ${emails.length} staff`
+  )
 
   type Project = { name: string; project_number: string; address: string | null }
   type Choice = {
