@@ -16,19 +16,31 @@ const Followup = z
   .object({
     id: optStr,
     title: z.string().min(1),
+    // 'todo' (default) or 'work' — a follow-up can now materialize a work
+    // bar on the schedule, not just a to-do.
+    kind: z.enum(["todo", "work"]).default("todo"),
     assignee_profile_id: optStr,
     assignee_company_id: optStr,
+    // Fixed offset from the approval date. For a to-do it's the due date; for
+    // a work item it's the start date. Ignored when anchored to a schedule item.
     due_offset_days: z.coerce.number().int().min(0).default(7),
+    // Work-item length (days). Ignored for to-dos.
+    duration_days: z.coerce.number().int().min(1).nullish(),
+    // Optional anchor to an existing schedule item: due/start date is computed
+    // from the anchor's start or end date + a signed offset. All three travel
+    // together or none of them do (enforced/normalized in saveDecision).
+    anchor_schedule_item_id: optStr,
+    parent_anchor: z.enum(["start", "end"]).nullish(),
+    parent_offset_days: z.coerce.number().int().nullish(),
     notes: optStr,
   })
-  .refine(
-    (f) => Boolean(f.assignee_profile_id) !== Boolean(f.assignee_company_id),
-    {
-      message:
-        "A follow-up must target exactly one: a profile (staff) OR a company (sub/vendor).",
-      path: ["assignee_profile_id"],
-    }
-  )
+  // A follow-up targets at most one assignee. Both-set is a programming error;
+  // none-set is allowed (an unassigned follow-up just lands on the schedule).
+  .refine((f) => !(f.assignee_profile_id && f.assignee_company_id), {
+    message:
+      "A follow-up can target at most one: a profile (staff) OR a company (sub/vendor), not both.",
+    path: ["assignee_profile_id"],
+  })
 
 const Attachment = z.object({
   id: optStr,
@@ -450,15 +462,27 @@ export async function saveDecision(input: DecisionInputT) {
     .delete()
     .eq("decision_id", id)
   if (parsed.followups.length) {
-    const rows = parsed.followups.map((f, i) => ({
-      decision_id: id!,
-      title: f.title,
-      assignee_profile_id: f.assignee_profile_id ?? null,
-      assignee_company_id: f.assignee_company_id ?? null,
-      due_offset_days: f.due_offset_days,
-      notes: f.notes ?? null,
-      position: i,
-    }))
+    const rows = parsed.followups.map((f, i) => {
+      // The anchor triple is all-or-nothing — match the DB check constraint
+      // and the schedule_items anchoring convention.
+      const anchorId = nz(f.anchor_schedule_item_id)
+      const anchored =
+        !!anchorId && !!f.parent_anchor && f.parent_offset_days != null
+      return {
+        decision_id: id!,
+        title: f.title,
+        kind: f.kind,
+        assignee_profile_id: f.assignee_profile_id ?? null,
+        assignee_company_id: f.assignee_company_id ?? null,
+        due_offset_days: f.due_offset_days,
+        duration_days: f.kind === "work" ? f.duration_days ?? 1 : null,
+        anchor_schedule_item_id: anchored ? anchorId : null,
+        parent_anchor: anchored ? f.parent_anchor : null,
+        parent_offset_days: anchored ? Math.trunc(f.parent_offset_days!) : null,
+        notes: f.notes ?? null,
+        position: i,
+      }
+    })
     const { error } = await supabase
       .from("decision_followup_templates")
       .insert(rows)
@@ -591,13 +615,21 @@ async function notifyClientOfDecision(
   const supabase = await createSupabaseServerClient()
   const { data: clients } = await supabase
     .from("project_members")
-    .select("profile_id, profiles!inner(email, role)")
+    .select("profile_id, profiles!inner(email, role, notifications_enabled)")
     .eq("project_id", projectId)
   const emails: string[] = []
   for (const m of clients ?? []) {
-    const prof = (m as unknown as { profiles: { email: string; role: string } })
-      .profiles
-    if (prof.role === "client" && prof.email) emails.push(prof.email)
+    const prof = (
+      m as unknown as {
+        profiles: {
+          email: string
+          role: string
+          notifications_enabled: boolean
+        }
+      }
+    ).profiles
+    if (prof.role === "client" && prof.email && prof.notifications_enabled)
+      emails.push(prof.email)
   }
   if (!emails.length) return
   const link = appUrl(`/projects/${projectId}/decisions`)
@@ -654,6 +686,7 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
     .from("profiles")
     .select("email")
     .eq("role", "staff")
+    .eq("notifications_enabled", true)
   const emails = (staff ?? [])
     .map((p) => p.email)
     .filter((e): e is string => !!e)
@@ -938,6 +971,92 @@ async function materializeFollowups(
   const newTemplates = templates.filter((t) => !materializedTemplateIds.has(t.id))
   if (newTemplates.length === 0) return 0
 
+  // Pre-load the start/end dates of every schedule item an anchored template
+  // points at, so we can compute each follow-up's date without a per-template
+  // round trip. Anchored to-dos also copy parent_id/anchor/offset onto the new
+  // schedule_item so the existing schedule cascade keeps them in sync.
+  const anchorIds = Array.from(
+    new Set(
+      newTemplates
+        .map((t) => t.anchor_schedule_item_id)
+        .filter((x): x is string => !!x)
+    )
+  )
+  const anchorDates = new Map<
+    string,
+    { start_date: string | null; end_date: string | null }
+  >()
+  if (anchorIds.length) {
+    const { data: anchors } = await supabase
+      .from("schedule_items")
+      .select("id, start_date, end_date")
+      .in("id", anchorIds)
+    for (const a of anchors ?? []) {
+      anchorDates.set(a.id, {
+        start_date: a.start_date,
+        end_date: a.end_date,
+      })
+    }
+  }
+
+  // Translate a template's scheduling recipe (kind, fixed offset, or anchor)
+  // into the concrete schedule_items columns. Mirrors the SQL in the
+  // client_decide_decision RPC (migration 0035) — keep the two in step.
+  function followupScheduleFields(t: (typeof newTemplates)[number]) {
+    const anchored =
+      !!t.anchor_schedule_item_id &&
+      !!t.parent_anchor &&
+      t.parent_offset_days != null
+    const basis = anchored
+      ? (() => {
+          const a = anchorDates.get(t.anchor_schedule_item_id!)
+          if (!a) return null
+          return t.parent_anchor === "start" ? a.start_date : a.end_date
+        })()
+      : null
+
+    if (t.kind === "work") {
+      const start = anchored
+        ? basis
+          ? addDays(basis, t.parent_offset_days!)
+          : null
+        : addDays(approvedDate, t.due_offset_days)
+      const dur = t.duration_days ?? 1
+      const end = start ? addDays(start, dur - 1) : null
+      return {
+        parent_id: null as string | null,
+        start_date: start,
+        end_date: end,
+        due_date: null as string | null,
+        duration_days: start && end ? dur : null,
+        parent_anchor: null as "start" | "end" | null,
+        parent_offset_days: null as number | null,
+      }
+    }
+
+    // to-do
+    if (anchored) {
+      return {
+        parent_id: t.anchor_schedule_item_id!,
+        start_date: null as string | null,
+        end_date: null as string | null,
+        due_date: basis ? addDays(basis, t.parent_offset_days!) : null,
+        duration_days: null as number | null,
+        parent_anchor: t.parent_anchor as "start" | "end",
+        parent_offset_days: t.parent_offset_days!,
+      }
+    }
+    return {
+      parent_id: null as string | null,
+      start_date: null as string | null,
+      end_date: null as string | null,
+      due_date: addDays(approvedDate, t.due_offset_days),
+      duration_days: null as number | null,
+      parent_anchor: null as "start" | "end" | null,
+      parent_offset_days: null as number | null,
+    }
+  }
+
   // Claim-then-insert pattern (CodeRabbit #29). The earlier flow inserted
   // the schedule_item first and only recorded the materialization row at
   // the end — two concurrent approvals could both insert a schedule_item
@@ -965,14 +1084,21 @@ async function materializeFollowups(
       throw new Error(claimErr.message)
     }
 
+    const sched = followupScheduleFields(t)
     const { data: si, error: siErr } = await supabase
       .from("schedule_items")
       .insert({
         project_id: projectId,
-        kind: "todo" as const,
+        parent_id: sched.parent_id,
+        kind: t.kind,
         title: t.title,
         description: t.notes,
-        due_date: addDays(approvedDate, t.due_offset_days),
+        start_date: sched.start_date,
+        end_date: sched.end_date,
+        due_date: sched.due_date,
+        duration_days: sched.duration_days,
+        parent_anchor: sched.parent_anchor,
+        parent_offset_days: sched.parent_offset_days,
         source_decision_id: decisionId,
         created_by: createdBy,
       })
@@ -1060,6 +1186,282 @@ export async function deleteDecision({
     await supabase.storage.from("project-files").remove(paths)
   }
   revalidatePath(`/projects/${project_id}/decisions`)
+}
+
+/**
+ * Reset an approved change order / selection back to `draft` so staff can edit
+ * and re-run the workflow. Undoes the approval: clears approval metadata + the
+ * client's chosen option, and removes the follow-up schedule items this
+ * decision auto-created (plus their materialization rows) so a later
+ * re-approval recreates them cleanly. cost_delta is cleared for selections
+ * (it's derived from the chosen choice on approval); change orders keep their
+ * breakdown-derived cost.
+ */
+export async function resetDecision({
+  id,
+  project_id,
+}: {
+  id: string
+  project_id: string
+}) {
+  await requireStaff()
+  const supabase = await createSupabaseServerClient()
+
+  const { data: cur, error: curErr } = await supabase
+    .from("decisions")
+    .select("status, kind")
+    .eq("id", id)
+    .maybeSingle()
+  if (curErr) throw new Error(curErr.message)
+  if (!cur) throw new Error("Decision not found")
+  if (cur.status !== "approved") {
+    throw new Error("Only approved decisions can be reset.")
+  }
+
+  // Remove the follow-up schedule items this decision created so re-approval
+  // doesn't leave duplicates. The junction rows go too (FK would null the
+  // schedule_item_id on delete, but we want the template free to re-materialize).
+  const { data: mats } = await supabase
+    .from("decision_followup_materializations")
+    .select("schedule_item_id")
+    .eq("decision_id", id)
+  const scheduleItemIds = (mats ?? [])
+    .map((m) => m.schedule_item_id)
+    .filter((x): x is string => !!x)
+  if (scheduleItemIds.length) {
+    const { error: delSiErr } = await supabase
+      .from("schedule_items")
+      .delete()
+      .in("id", scheduleItemIds)
+    if (delSiErr) throw new Error(delSiErr.message)
+  }
+  const { error: delMatErr } = await supabase
+    .from("decision_followup_materializations")
+    .delete()
+    .eq("decision_id", id)
+  if (delMatErr) throw new Error(delMatErr.message)
+
+  const updateRow: TablesUpdate<"decisions"> = {
+    status: "draft",
+    approved_at: null,
+    approved_by_client_id: null,
+    selected_choice_id: null,
+  }
+  if (cur.kind === "selection") updateRow.cost_delta = null
+
+  // Atomic guard: only flip a row that's still approved, so two concurrent
+  // resets don't both run the followup cleanup.
+  const { error } = await supabase
+    .from("decisions")
+    .update(updateRow)
+    .eq("id", id)
+    .eq("status", "approved")
+  if (error) throw new Error(error.message)
+
+  revalidatePath(`/projects/${project_id}/decisions`)
+  revalidatePath(`/projects/${project_id}/schedule`)
+  return { id }
+}
+
+/**
+ * Duplicate a decision into the same project or another one. The copy lands as
+ * a fresh `draft` with a new per-project number and no approval state. Copies
+ * the cost breakdown, choices (selections), follow-up templates, and
+ * attachments (blob + row). When copying across projects, schedule-item
+ * anchors on follow-ups are dropped (they'd reference items in the source
+ * project) and fall back to the fixed "days after approval" offset.
+ */
+export async function copyDecision({
+  id,
+  target_project_id,
+}: {
+  id: string
+  target_project_id: string
+}) {
+  const profile = await requireStaff()
+  const supabase = await createSupabaseServerClient()
+
+  const { data: src, error: srcErr } = await supabase
+    .from("decisions")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle()
+  if (srcErr) throw new Error(srcErr.message)
+  if (!src) throw new Error("Decision not found")
+
+  // Confirm the target project is one the caller can write to (RLS would block
+  // the insert anyway, but this gives a clearer error).
+  const { data: targetProject, error: tgtErr } = await supabase
+    .from("projects")
+    .select("id")
+    .eq("id", target_project_id)
+    .maybeSingle()
+  if (tgtErr) throw new Error(tgtErr.message)
+  if (!targetProject) throw new Error("Target project not found.")
+
+  const sameProject = src.project_id === target_project_id
+
+  // Allocate a number in the target project, retrying on the unique race the
+  // same way saveDecision does.
+  let newId: string | null = null
+  for (let attempt = 0; attempt < 5 && !newId; attempt++) {
+    const { data: nextNum, error: rpcErr } = await supabase.rpc(
+      "next_decision_number",
+      { p_project: target_project_id }
+    )
+    if (rpcErr) throw new Error(rpcErr.message)
+    const number = Number(nextNum)
+    const { data, error } = await supabase
+      .from("decisions")
+      .insert({
+        project_id: target_project_id,
+        kind: src.kind,
+        title: src.title,
+        description: src.description,
+        cost_delta: src.kind === "selection" ? null : src.cost_delta,
+        markup_percent: src.markup_percent,
+        allowance_amount: src.allowance_amount,
+        allowance_cost_code_id: src.allowance_cost_code_id,
+        status: "draft",
+        due_date: src.due_date,
+        number,
+        created_by: profile.id,
+      })
+      .select("id")
+      .single()
+    if (!error) {
+      newId = data.id
+      break
+    }
+    if (error.code !== "23505") throw new Error(error.message)
+    await new Promise((r) => setTimeout(r, 25 + Math.random() * 50))
+  }
+  if (!newId) {
+    throw new Error("Could not allocate a decision number after 5 attempts.")
+  }
+
+  // Choices first — we need the old→new id map to remap per-choice cost items
+  // and attachments.
+  const choiceIdMap = new Map<string, string>()
+  const { data: srcChoices } = await supabase
+    .from("decision_choices")
+    .select("*")
+    .eq("decision_id", id)
+    .order("position", { ascending: true })
+  for (const c of srcChoices ?? []) {
+    const { data: ins, error: cErr } = await supabase
+      .from("decision_choices")
+      .insert({
+        decision_id: newId,
+        title: c.title,
+        description: c.description,
+        price_delta: c.price_delta,
+        position: c.position,
+      })
+      .select("id")
+      .single()
+    if (cErr) throw new Error(cErr.message)
+    choiceIdMap.set(c.id, ins.id)
+  }
+
+  // Cost items (decision-level + per-choice).
+  const { data: srcCostItems } = await supabase
+    .from("decision_cost_items")
+    .select("*")
+    .eq("decision_id", id)
+    .order("position", { ascending: true })
+  if (srcCostItems?.length) {
+    const rows = srcCostItems.map((ci) => ({
+      decision_id: newId!,
+      choice_id: ci.choice_id ? choiceIdMap.get(ci.choice_id) ?? null : null,
+      cost_code_id: ci.cost_code_id,
+      description: ci.description,
+      quantity: ci.quantity,
+      unit: ci.unit,
+      unit_cost: ci.unit_cost,
+      position: ci.position,
+    }))
+    const { error: ciErr } = await supabase
+      .from("decision_cost_items")
+      .insert(rows)
+    if (ciErr) throw new Error(ciErr.message)
+  }
+
+  // Follow-up templates. Drop schedule-item anchors when copying to another
+  // project — the anchor would point at the source project's schedule.
+  const { data: srcFollowups } = await supabase
+    .from("decision_followup_templates")
+    .select("*")
+    .eq("decision_id", id)
+    .order("position", { ascending: true })
+  if (srcFollowups?.length) {
+    const rows = srcFollowups.map((f) => {
+      const keepAnchor = sameProject && !!f.anchor_schedule_item_id
+      return {
+        decision_id: newId!,
+        title: f.title,
+        kind: f.kind,
+        assignee_profile_id: f.assignee_profile_id,
+        assignee_company_id: f.assignee_company_id,
+        due_offset_days: f.due_offset_days,
+        duration_days: f.duration_days,
+        anchor_schedule_item_id: keepAnchor ? f.anchor_schedule_item_id : null,
+        parent_anchor: keepAnchor ? f.parent_anchor : null,
+        parent_offset_days: keepAnchor ? f.parent_offset_days : null,
+        notes: f.notes,
+        position: f.position,
+      }
+    })
+    const { error: fErr } = await supabase
+      .from("decision_followup_templates")
+      .insert(rows)
+    if (fErr) throw new Error(fErr.message)
+  }
+
+  // Attachments — copy the storage blob into a fresh key under the target
+  // project, then record the row. A failed blob copy is non-fatal (skip that
+  // attachment) so one missing file doesn't abort the whole duplicate.
+  const { data: srcAtts } = await supabase
+    .from("decision_attachments")
+    .select("*")
+    .eq("decision_id", id)
+    .order("position", { ascending: true })
+  for (const a of srcAtts ?? []) {
+    const ext = a.file_name.split(".").pop()?.toLowerCase() ?? "bin"
+    const newPath = `projects/${target_project_id}/decisions/${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}.${ext}`
+    const { error: copyErr } = await supabase.storage
+      .from("project-files")
+      .copy(a.storage_path, newPath)
+    if (copyErr) {
+      console.warn(
+        "[copyDecision] attachment blob copy failed (skipping):",
+        copyErr.message
+      )
+      continue
+    }
+    const { error: aErr } = await supabase.from("decision_attachments").insert({
+      decision_id: newId,
+      choice_id: a.choice_id ? choiceIdMap.get(a.choice_id) ?? null : null,
+      storage_bucket: a.storage_bucket,
+      storage_path: newPath,
+      file_name: a.file_name,
+      file_type: a.file_type,
+      file_size: a.file_size,
+      caption: a.caption,
+      position: a.position,
+    })
+    if (aErr) {
+      // Row insert failed after the blob copied — clean up the orphan blob.
+      await supabase.storage.from("project-files").remove([newPath])
+      throw new Error(aErr.message)
+    }
+  }
+
+  revalidatePath(`/projects/${target_project_id}/decisions`)
+  if (!sameProject) revalidatePath(`/projects/${src.project_id}/decisions`)
+  return { id: newId, project_id: target_project_id, sameProject }
 }
 
 export async function postComment({

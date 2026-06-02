@@ -88,6 +88,36 @@ export async function updateProfile(input: UpdateProfileInputT) {
   revalidatePath("/team")
 }
 
+const SetNotificationsInput = z.object({
+  id: z.string().uuid(),
+  enabled: z.boolean(),
+})
+
+/**
+ * Master on/off switch for a team member's site notifications. When off, the
+ * `trg_skip_muted_notifications` trigger drops their in-app + digest rows and
+ * the direct-email paths skip them (migration 0036).
+ */
+export async function setMemberNotifications(input: {
+  id: string
+  enabled: boolean
+}) {
+  await requireStaff()
+  const parsed = SetNotificationsInput.parse(input)
+  const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase
+    .from("profiles")
+    .update({ notifications_enabled: parsed.enabled })
+    .eq("id", parsed.id)
+    .select("id")
+    .maybeSingle()
+  if (error) throw new Error(error.message)
+  // A successful request that matched no rows (stale/deleted id, or RLS) would
+  // otherwise toast success without changing anything — surface it instead.
+  if (!data) throw new Error("Team member not found.")
+  revalidatePath("/team")
+}
+
 export async function inviteTeamMember(input: InviteTeamMemberInputT) {
   await requireStaff()
   const parsed = InviteTeamMemberInput.parse(input)

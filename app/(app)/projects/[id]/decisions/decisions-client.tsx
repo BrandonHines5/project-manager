@@ -34,6 +34,13 @@ export type DecisionsData = {
   cost_items: Tables<"decision_cost_items">[]
   cost_codes: Pick<Tables<"cost_codes">, "id" | "code" | "name" | "position" | "is_active">[]
   choices: Tables<"decision_choices">[]
+  // Work items in this project — follow-ups can anchor their date to one.
+  work_items: Pick<
+    Tables<"schedule_items">,
+    "id" | "title" | "start_date" | "end_date"
+  >[]
+  // Projects the caller can see — copy destinations.
+  projects: Pick<Tables<"projects">, "id" | "name" | "project_number">[]
   signed_urls: Record<string, string>
 }
 

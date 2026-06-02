@@ -11,7 +11,10 @@ import {
   Copy,
   RefreshCw,
   KeyRound,
+  Bell,
+  BellOff,
 } from "lucide-react"
+import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { EmptyState } from "@/components/ui/empty"
@@ -31,6 +34,7 @@ import {
   inviteTeamMember,
   deleteTeamMember,
   resetTeamMemberPassword,
+  setMemberNotifications,
   type UpdateProfileInputT,
   type InviteTeamMemberInputT,
 } from "@/app/actions/team"
@@ -121,6 +125,7 @@ export function TeamClient({
                 <th className="text-left px-4 py-2.5">Email</th>
                 <th className="text-left px-4 py-2.5 w-24">Role</th>
                 <th className="text-left px-4 py-2.5">Company</th>
+                <th className="text-right px-4 py-2.5 w-36">Notifications</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -149,6 +154,9 @@ export function TeamClient({
                     <td className="px-4 py-3 text-muted">
                       {company?.name || "—"}
                     </td>
+                    <td className="px-4 py-3 text-right">
+                      <NotifyToggle profile={p} />
+                    </td>
                   </tr>
                 )
               })}
@@ -176,6 +184,62 @@ function RoleBadge({ role }: { role: Enums<"user_role"> }) {
   if (role === "staff") return <Badge tone="brand">Staff</Badge>
   if (role === "trade") return <Badge tone="warning">Trade</Badge>
   return <Badge tone="info">Client</Badge>
+}
+
+// Per-member master switch for all site notifications (in-app + email). Lives
+// in its own column so staff can flip it without opening the edit dialog —
+// stopPropagation keeps the row's click-to-edit from firing.
+function NotifyToggle({ profile }: { profile: Tables<"profiles"> }) {
+  const router = useRouter()
+  const [pending, startTransition] = useTransition()
+  const enabled = profile.notifications_enabled
+  const who = profile.full_name || profile.email || "team member"
+
+  function toggle(e: React.MouseEvent) {
+    e.stopPropagation()
+    startTransition(async () => {
+      try {
+        await setMemberNotifications({ id: profile.id, enabled: !enabled })
+        toast.success(
+          enabled
+            ? `Notifications muted for ${profile.full_name || profile.email}`
+            : `Notifications on for ${profile.full_name || profile.email}`
+        )
+        router.refresh()
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Update failed")
+      }
+    })
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      disabled={pending}
+      role="switch"
+      aria-checked={enabled}
+      aria-label={`Notifications for ${who}: ${enabled ? "on" : "off"}`}
+      title={
+        enabled
+          ? "All notifications on — click to mute this person"
+          : "Notifications muted — click to turn back on"
+      }
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium cursor-pointer transition-colors disabled:opacity-50",
+        enabled
+          ? "border-border-strong text-foreground hover:bg-background"
+          : "border-danger/40 bg-danger/5 text-danger hover:bg-danger/10"
+      )}
+    >
+      {enabled ? (
+        <Bell className="h-3.5 w-3.5" />
+      ) : (
+        <BellOff className="h-3.5 w-3.5" />
+      )}
+      {enabled ? "On" : "Off"}
+    </button>
+  )
 }
 
 function EditDialog({

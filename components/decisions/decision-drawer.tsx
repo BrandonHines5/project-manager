@@ -19,6 +19,9 @@ import {
   CheckCircle2,
   Circle,
   XCircle,
+  RotateCcw,
+  Copy,
+  CalendarClock,
 } from "lucide-react"
 import { formatCurrency } from "@/lib/utils"
 import {
@@ -34,10 +37,12 @@ import { Field, Input, Textarea, Select, Label } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Avatar } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
-import { cn, formatDate } from "@/lib/utils"
+import { cn, formatDate, addDays } from "@/lib/utils"
 import {
   saveDecision,
   deleteDecision,
+  resetDecision,
+  copyDecision,
   postComment,
   clientDecideDecision,
   type DecisionInputT,
@@ -54,9 +59,14 @@ import type { DecisionsData } from "@/app/(app)/projects/[id]/decisions/decision
 type Followup = {
   id?: string
   title: string
+  kind: "todo" | "work"
   assignee_profile_id?: string | null
   assignee_company_id?: string | null
   due_offset_days: number
+  duration_days?: number | null
+  anchor_schedule_item_id?: string | null
+  parent_anchor?: "start" | "end" | null
+  parent_offset_days?: number | null
   notes?: string | null
 }
 
@@ -167,9 +177,14 @@ export function DecisionDrawer({
       .map((f) => ({
         id: f.id,
         title: f.title,
+        kind: f.kind,
         assignee_profile_id: f.assignee_profile_id,
         assignee_company_id: f.assignee_company_id,
         due_offset_days: f.due_offset_days,
+        duration_days: f.duration_days,
+        anchor_schedule_item_id: f.anchor_schedule_item_id,
+        parent_anchor: f.parent_anchor,
+        parent_offset_days: f.parent_offset_days,
         notes: f.notes,
       }))
   })
@@ -235,6 +250,7 @@ export function DecisionDrawer({
   >(decision?.selected_choice_id ?? null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [copyOpen, setCopyOpen] = useState(false)
 
   const isClient = data.role === "client"
   const canEdit = data.role === "staff"
@@ -352,14 +368,28 @@ export function DecisionDrawer({
       due_date: dueDate || null,
       followups: followups
         .filter((f) => f.title.trim() !== "")
-        .map((f) => ({
-          id: f.id,
-          title: f.title,
-          assignee_profile_id: f.assignee_profile_id || null,
-          assignee_company_id: f.assignee_company_id || null,
-          due_offset_days: f.due_offset_days,
-          notes: f.notes,
-        })),
+        .map((f) => {
+          const anchored =
+            !!f.anchor_schedule_item_id &&
+            !!f.parent_anchor &&
+            f.parent_offset_days != null
+          return {
+            id: f.id,
+            title: f.title,
+            kind: f.kind,
+            assignee_profile_id: f.assignee_profile_id || null,
+            assignee_company_id: f.assignee_company_id || null,
+            due_offset_days: f.due_offset_days,
+            duration_days:
+              f.kind === "work" ? f.duration_days ?? 1 : null,
+            anchor_schedule_item_id: anchored
+              ? f.anchor_schedule_item_id
+              : null,
+            parent_anchor: anchored ? f.parent_anchor : null,
+            parent_offset_days: anchored ? f.parent_offset_days : null,
+            notes: f.notes,
+          }
+        }),
       attachments: attachments.map((a) => ({
         id: a.id,
         choice_id: a.choice_id ?? null,
@@ -432,6 +462,57 @@ export function DecisionDrawer({
         onClose()
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Delete failed")
+      }
+    })
+  }
+
+  function handleReset() {
+    if (!decision) return
+    if (
+      !confirm(
+        "Reset this approved item back to draft? Follow-up to-dos and work items it created on the schedule will be removed, and the client's choice (for selections) will be cleared."
+      )
+    )
+      return
+    startTransition(async () => {
+      try {
+        await resetDecision({ id: decision.id, project_id: data.project_id })
+        setStatus("draft")
+        toast.success("Reset to draft")
+        router.refresh()
+        onClose()
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Reset failed")
+      }
+    })
+  }
+
+  function handleCopy(targetProjectId: string) {
+    if (!decision) return
+    startTransition(async () => {
+      try {
+        const r = await copyDecision({
+          id: decision.id,
+          target_project_id: targetProjectId,
+        })
+        const targetProject = data.projects.find(
+          (p) => p.id === targetProjectId
+        )
+        toast.success(
+          r.sameProject
+            ? "Copied — new draft created in this project"
+            : `Copied to ${
+                targetProject?.project_number ?? "the selected project"
+              }`
+        )
+        router.refresh()
+        // Navigate to the copy's project so the new draft is visible.
+        if (!r.sameProject) {
+          router.push(`/projects/${targetProjectId}/decisions`)
+        }
+        onClose()
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Copy failed")
       }
     })
   }
@@ -762,6 +843,7 @@ export function DecisionDrawer({
               onChange={setFollowups}
               profiles={data.profiles}
               companies={data.companies}
+              workItems={data.work_items}
               alreadyApproved={status === "approved"}
             />
           )}
@@ -777,22 +859,51 @@ export function DecisionDrawer({
             isClient={isClient}
           />
         </DialogBody>
-        {canEdit && (
+        {canEdit && copyOpen && decision && (
+          <CopyDecisionFooter
+            projects={data.projects}
+            currentProjectId={data.project_id}
+            pending={pending}
+            onCancel={() => setCopyOpen(false)}
+            onCopy={handleCopy}
+          />
+        )}
+        {canEdit && !copyOpen && (
           <DialogFooter>
             {mode === "edit" && decision && (
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={handleDelete}
-                disabled={pending}
-                className="mr-auto text-danger hover:bg-red-50"
-              >
-                <Trash2 className="h-4 w-4" /> Delete
-              </Button>
+              <div className="mr-auto flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={handleDelete}
+                  disabled={pending}
+                  className="text-danger hover:bg-red-50"
+                >
+                  <Trash2 className="h-4 w-4" /> Delete
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setCopyOpen(true)}
+                  disabled={pending}
+                >
+                  <Copy className="h-4 w-4" /> Copy
+                </Button>
+              </div>
             )}
             <Button type="button" variant="ghost" onClick={onClose}>
               Cancel
             </Button>
+            {status === "approved" && (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={handleReset}
+                disabled={pending}
+              >
+                <RotateCcw className="h-4 w-4" /> Reset to draft
+              </Button>
+            )}
             {status !== "approved" && status !== "rejected" && (
               <>
                 {status === "draft" && (
@@ -824,7 +935,7 @@ export function DecisionDrawer({
                   <Check className="h-4 w-4" />
                   Approve
                   {followups.length > 0
-                    ? ` & create ${followups.length} to-do${
+                    ? ` & create ${followups.length} follow-up${
                         followups.length === 1 ? "" : "s"
                       }`
                     : ""}
@@ -1527,130 +1638,276 @@ function FollowupsEditor({
   onChange,
   profiles,
   companies,
+  workItems,
   alreadyApproved,
 }: {
   value: Followup[]
   onChange: (v: Followup[]) => void
   profiles: DecisionsData["profiles"]
   companies: DecisionsData["companies"]
+  workItems: DecisionsData["work_items"]
   alreadyApproved: boolean
 }) {
   function add() {
-    onChange([
-      ...value,
-      { title: "", due_offset_days: 7 },
-    ])
+    onChange([...value, { title: "", kind: "todo", due_offset_days: 7 }])
+  }
+  function update(i: number, patch: Partial<Followup>) {
+    onChange(value.map((f, idx) => (idx === i ? { ...f, ...patch } : f)))
   }
   return (
     <div>
       <div className="flex items-center justify-between">
         <Label>
           <Sparkles className="inline h-3 w-3 mr-1 text-brand-500" />
-          Follow-up to-dos
+          Follow-up schedule items
         </Label>
         {alreadyApproved && (
           <span className="text-xs text-muted">
-            (already approved — new templates will be created on the schedule
-            on the next save)
+            (already approved — new ones are added to the schedule on the next
+            save)
           </span>
         )}
       </div>
       <p className="text-xs text-muted mt-0.5">
-        When this decision is approved, these to-dos will be auto-created on the
-        Schedule, assigned to the chosen person.
+        When this decision is approved, these are auto-created on the Schedule
+        and assigned to the chosen person. A to-do gets a due date; a work item
+        gets a start date + duration. Link the date to an existing schedule
+        item to have it move automatically when that item shifts.
       </p>
       {value.length > 0 && (
         <ul className="mt-2 space-y-2">
-          {value.map((f, i) => (
-            <li
-              key={i}
-              className="rounded-md border border-border p-2 grid grid-cols-1 sm:grid-cols-[1fr_180px_90px_auto] gap-2 items-center bg-background/50"
-            >
-              <Input
-                value={f.title}
-                onChange={(e) => {
-                  const next = [...value]
-                  next[i] = { ...f, title: e.target.value }
-                  onChange(next)
-                }}
-                placeholder="E.g. Update plans / Issue PO"
-              />
-              <Select
-                value={
-                  f.assignee_profile_id
-                    ? `p:${f.assignee_profile_id}`
-                    : f.assignee_company_id
-                    ? `c:${f.assignee_company_id}`
-                    : ""
-                }
-                onChange={(e) => {
-                  const v = e.target.value
-                  const next = [...value]
-                  if (v.startsWith("p:")) {
-                    next[i] = {
-                      ...f,
-                      assignee_profile_id: v.slice(2),
-                      assignee_company_id: null,
-                    }
-                  } else if (v.startsWith("c:")) {
-                    next[i] = {
-                      ...f,
-                      assignee_profile_id: null,
-                      assignee_company_id: v.slice(2),
-                    }
-                  } else {
-                    next[i] = {
-                      ...f,
-                      assignee_profile_id: null,
-                      assignee_company_id: null,
-                    }
-                  }
-                  onChange(next)
-                }}
+          {value.map((f, i) => {
+            const anchored = !!f.anchor_schedule_item_id
+            const isWork = f.kind === "work"
+            return (
+              <li
+                key={i}
+                className="rounded-md border border-border p-2.5 bg-background/50 space-y-2"
               >
-                <option value="">— Assign to —</option>
-                <optgroup label="Staff">
-                  {profiles
-                    .filter((p) => p.role === "staff")
-                    .map((p) => (
-                      <option key={p.id} value={`p:${p.id}`}>
-                        {p.full_name || p.email}
-                      </option>
-                    ))}
-                </optgroup>
-                <optgroup label="Subs / vendors">
-                  {companies
-                    .filter((c) => c.type !== "client")
-                    .map((c) => (
-                      <option key={c.id} value={`c:${c.id}`}>
-                        {c.name}
-                      </option>
-                    ))}
-                </optgroup>
-              </Select>
-              <Input
-                type="number"
-                min={0}
-                value={f.due_offset_days}
-                onChange={(e) => {
-                  const next = [...value]
-                  next[i] = {
-                    ...f,
-                    due_offset_days: Math.max(0, Number(e.target.value) || 0),
-                  }
-                  onChange(next)
-                }}
-                title="Days after approval"
-              />
-              <button
-                type="button"
-                onClick={() => onChange(value.filter((_, idx) => idx !== i))}
-                className="text-muted hover:text-danger p-1 cursor-pointer"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </li>
-          ))}
+                <div className="grid grid-cols-1 sm:grid-cols-[1fr_120px_180px_auto] gap-2 items-center">
+                  <Input
+                    value={f.title}
+                    onChange={(e) => update(i, { title: e.target.value })}
+                    placeholder={
+                      isWork
+                        ? "E.g. Frame the addition"
+                        : "E.g. Update plans / Issue PO"
+                    }
+                  />
+                  <Select
+                    value={f.kind}
+                    onChange={(e) =>
+                      update(i, {
+                        kind: e.target.value as "todo" | "work",
+                        // Seed a sensible duration when switching to work.
+                        duration_days:
+                          e.target.value === "work"
+                            ? f.duration_days ?? 1
+                            : f.duration_days,
+                      })
+                    }
+                    title="Schedule item type"
+                  >
+                    <option value="todo">To-do</option>
+                    <option value="work">Work item</option>
+                  </Select>
+                  <Select
+                    value={
+                      f.assignee_profile_id
+                        ? `p:${f.assignee_profile_id}`
+                        : f.assignee_company_id
+                        ? `c:${f.assignee_company_id}`
+                        : ""
+                    }
+                    onChange={(e) => {
+                      const v = e.target.value
+                      if (v.startsWith("p:")) {
+                        update(i, {
+                          assignee_profile_id: v.slice(2),
+                          assignee_company_id: null,
+                        })
+                      } else if (v.startsWith("c:")) {
+                        update(i, {
+                          assignee_profile_id: null,
+                          assignee_company_id: v.slice(2),
+                        })
+                      } else {
+                        update(i, {
+                          assignee_profile_id: null,
+                          assignee_company_id: null,
+                        })
+                      }
+                    }}
+                  >
+                    <option value="">— Assign to —</option>
+                    <optgroup label="Staff">
+                      {profiles
+                        .filter((p) => p.role === "staff")
+                        .map((p) => (
+                          <option key={p.id} value={`p:${p.id}`}>
+                            {p.full_name || p.email}
+                          </option>
+                        ))}
+                    </optgroup>
+                    <optgroup label="Subs / vendors">
+                      {companies
+                        .filter((c) => c.type !== "client")
+                        .map((c) => (
+                          <option key={c.id} value={`c:${c.id}`}>
+                            {c.name}
+                          </option>
+                        ))}
+                    </optgroup>
+                  </Select>
+                  <button
+                    type="button"
+                    onClick={() => onChange(value.filter((_, idx) => idx !== i))}
+                    className="text-muted hover:text-danger p-1 cursor-pointer justify-self-end"
+                    aria-label="Remove follow-up"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                {/* Scheduling: fixed offset from approval, or anchored to a
+                    schedule item (start/end ± offset). */}
+                <div className="flex flex-wrap items-end gap-2 pl-0.5">
+                  <Select
+                    value={anchored ? "anchored" : "fixed"}
+                    onChange={(e) => {
+                      if (e.target.value === "anchored") {
+                        update(i, {
+                          anchor_schedule_item_id: workItems[0]?.id ?? "",
+                          parent_anchor: "end",
+                          parent_offset_days: f.parent_offset_days ?? 0,
+                        })
+                      } else {
+                        update(i, {
+                          anchor_schedule_item_id: null,
+                          parent_anchor: null,
+                          parent_offset_days: null,
+                        })
+                      }
+                    }}
+                    className="w-auto text-xs"
+                    disabled={workItems.length === 0 && !anchored}
+                    title={
+                      workItems.length === 0
+                        ? "No work items in this project to anchor to"
+                        : undefined
+                    }
+                  >
+                    <option value="fixed">
+                      {isWork ? "Start: days after approval" : "Due: days after approval"}
+                    </option>
+                    <option value="anchored">Link to a schedule item</option>
+                  </Select>
+
+                  {anchored ? (
+                    <>
+                      <Field label="Schedule item" className="min-w-[150px]">
+                        <Select
+                          value={f.anchor_schedule_item_id ?? ""}
+                          onChange={(e) =>
+                            update(i, {
+                              anchor_schedule_item_id: e.target.value || null,
+                            })
+                          }
+                        >
+                          {workItems.length === 0 && (
+                            <option value="">— none —</option>
+                          )}
+                          {workItems.map((w) => (
+                            <option key={w.id} value={w.id}>
+                              {w.title}
+                            </option>
+                          ))}
+                        </Select>
+                      </Field>
+                      <Field label="Anchor">
+                        <Select
+                          value={f.parent_anchor ?? "end"}
+                          onChange={(e) =>
+                            update(i, {
+                              parent_anchor: e.target.value as "start" | "end",
+                            })
+                          }
+                          className="w-auto"
+                        >
+                          <option value="start">Start</option>
+                          <option value="end">End</option>
+                        </Select>
+                      </Field>
+                      <Field
+                        label="Offset (days)"
+                        hint="− before / + after"
+                      >
+                        <Input
+                          type="number"
+                          step={1}
+                          value={f.parent_offset_days ?? 0}
+                          onChange={(e) =>
+                            update(i, {
+                              parent_offset_days: Math.trunc(
+                                Number(e.target.value) || 0
+                              ),
+                            })
+                          }
+                          className="w-24 text-right tabular-nums"
+                        />
+                      </Field>
+                      <FollowupAnchorPreview
+                        item={
+                          workItems.find(
+                            (w) => w.id === f.anchor_schedule_item_id
+                          ) ?? null
+                        }
+                        anchor={f.parent_anchor ?? "end"}
+                        offsetDays={f.parent_offset_days ?? 0}
+                        label={isWork ? "Starts" : "Due"}
+                      />
+                    </>
+                  ) : (
+                    <Field label="Days after approval">
+                      <Input
+                        type="number"
+                        min={0}
+                        value={f.due_offset_days}
+                        onChange={(e) =>
+                          update(i, {
+                            due_offset_days: Math.max(
+                              0,
+                              Number(e.target.value) || 0
+                            ),
+                          })
+                        }
+                        className="w-24 text-right tabular-nums"
+                      />
+                    </Field>
+                  )}
+
+                  {isWork && (
+                    <Field label="Duration (days)">
+                      <Input
+                        type="number"
+                        min={1}
+                        value={f.duration_days ?? 1}
+                        onChange={(e) =>
+                          update(i, {
+                            duration_days: Math.max(
+                              1,
+                              Number(e.target.value) || 1
+                            ),
+                          })
+                        }
+                        className="w-24 text-right tabular-nums"
+                      />
+                    </Field>
+                  )}
+                </div>
+              </li>
+            )
+          })}
         </ul>
       )}
       <button
@@ -2004,5 +2261,81 @@ function AttachmentTile({
         className="mt-1 text-[11px] h-7 px-2"
       />
     </div>
+  )
+}
+
+// Live preview of the date a schedule-anchored follow-up will land on. Mirrors
+// the AnchoredDuePreview in the schedule dialog.
+function FollowupAnchorPreview({
+  item,
+  anchor,
+  offsetDays,
+  label,
+}: {
+  item: DecisionsData["work_items"][number] | null
+  anchor: "start" | "end"
+  offsetDays: number
+  label: string
+}) {
+  let text: string
+  if (!item) {
+    text = "Pick a schedule item"
+  } else {
+    const basis = anchor === "start" ? item.start_date : item.end_date
+    text = basis
+      ? `${label} ${formatDate(addDays(basis, offsetDays))}`
+      : `${label} once parent has a ${anchor} date`
+  }
+  return (
+    <div className="flex items-center gap-1 text-xs text-muted h-9 px-1">
+      <CalendarClock className="h-3.5 w-3.5 text-brand-500 shrink-0" />
+      <span className="font-mono tabular-nums">{text}</span>
+    </div>
+  )
+}
+
+// Inline footer shown in place of the normal action row while the staff is
+// choosing a copy destination. Rendered inline (not as a nested Dialog) to
+// avoid two focus-traps fighting over Tab.
+function CopyDecisionFooter({
+  projects,
+  currentProjectId,
+  pending,
+  onCancel,
+  onCopy,
+}: {
+  projects: DecisionsData["projects"]
+  currentProjectId: string
+  pending: boolean
+  onCancel: () => void
+  onCopy: (targetProjectId: string) => void
+}) {
+  const [target, setTarget] = useState(currentProjectId)
+  const sorted = [...projects].sort((a, b) =>
+    a.project_number.localeCompare(b.project_number)
+  )
+  return (
+    <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+      <div className="flex-1 min-w-0">
+        <Label className="mb-1">Copy this item to…</Label>
+        <Select value={target} onChange={(e) => setTarget(e.target.value)}>
+          {sorted.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.project_number} — {p.name}
+              {p.id === currentProjectId ? " (this project)" : ""}
+            </option>
+          ))}
+        </Select>
+      </div>
+      <div className="flex items-center gap-2 sm:self-end">
+        <Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>
+          Cancel
+        </Button>
+        <Button type="button" onClick={() => onCopy(target)} disabled={pending}>
+          <Copy className="h-4 w-4" />
+          {pending ? "Copying…" : "Create copy"}
+        </Button>
+      </div>
+    </DialogFooter>
   )
 }

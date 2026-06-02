@@ -371,10 +371,14 @@ async function notifyScheduleAssignees(
     if (profileIds.length) {
       const { data: profs } = await supabase
         .from("profiles")
-        .select("id, email, email_digest_pref")
+        .select("id, email, email_digest_pref, notifications_enabled")
         .in("id", profileIds)
       for (const p of profs ?? []) {
-        if (p.email && p.email_digest_pref === "immediate") {
+        if (
+          p.email &&
+          p.email_digest_pref === "immediate" &&
+          p.notifications_enabled
+        ) {
           emails.push(p.email)
           immediateProfileIds.push(p.id)
         }
