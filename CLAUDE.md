@@ -57,6 +57,10 @@
 - Commit early, push to `claude/buildertrend-replacement-JsF4R`.
 - **Pull requests**: open as ready-for-review (not draft) so CodeRabbit reviews immediately, and subscribe to PR activity right after opening.
 
+## User environment
+
+- Brandon develops on Windows and runs all local commands in **PowerShell**. When suggesting terminal commands the user will run locally, use PowerShell syntax (`Resolve-DnsName` not `dig`, `$env:FOO="bar"` not `export FOO=bar`, `Copy-Item` not `cp`, etc.) rather than bash.
+
 ## Not included
 
 Purchase Orders (Adaptive.build), client invoicing (QuickBooks), sales, warranty, time clock. If asked for these, push back politely — they're out of scope.
