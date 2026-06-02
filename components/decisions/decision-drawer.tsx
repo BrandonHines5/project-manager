@@ -1868,9 +1868,7 @@ function FollowupsEditor({
                       />
                     </>
                   ) : (
-                    <Field
-                      label={isWork ? "Days after approval" : "Days after approval"}
-                    >
+                    <Field label="Days after approval">
                       <Input
                         type="number"
                         min={0}
