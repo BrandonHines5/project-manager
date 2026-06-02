@@ -615,13 +615,21 @@ async function notifyClientOfDecision(
   const supabase = await createSupabaseServerClient()
   const { data: clients } = await supabase
     .from("project_members")
-    .select("profile_id, profiles!inner(email, role)")
+    .select("profile_id, profiles!inner(email, role, notifications_enabled)")
     .eq("project_id", projectId)
   const emails: string[] = []
   for (const m of clients ?? []) {
-    const prof = (m as unknown as { profiles: { email: string; role: string } })
-      .profiles
-    if (prof.role === "client" && prof.email) emails.push(prof.email)
+    const prof = (
+      m as unknown as {
+        profiles: {
+          email: string
+          role: string
+          notifications_enabled: boolean
+        }
+      }
+    ).profiles
+    if (prof.role === "client" && prof.email && prof.notifications_enabled)
+      emails.push(prof.email)
   }
   if (!emails.length) return
   const link = appUrl(`/projects/${projectId}/decisions`)
@@ -678,6 +686,7 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
     .from("profiles")
     .select("email")
     .eq("role", "staff")
+    .eq("notifications_enabled", true)
   const emails = (staff ?? [])
     .map((p) => p.email)
     .filter((e): e is string => !!e)

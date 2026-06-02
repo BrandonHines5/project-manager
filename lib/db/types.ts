@@ -812,6 +812,7 @@ export type Database = {
           full_name: string
           id: string
           last_digest_at: string | null
+          notifications_enabled: boolean
           phone: string | null
           role: Database["public"]["Enums"]["user_role"]
         }
@@ -824,6 +825,7 @@ export type Database = {
           full_name?: string
           id: string
           last_digest_at?: string | null
+          notifications_enabled?: boolean
           phone?: string | null
           role?: Database["public"]["Enums"]["user_role"]
         }
@@ -836,6 +838,7 @@ export type Database = {
           full_name?: string
           id?: string
           last_digest_at?: string | null
+          notifications_enabled?: boolean
           phone?: string | null
           role?: Database["public"]["Enums"]["user_role"]
         }
