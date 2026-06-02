@@ -13,7 +13,16 @@ export async function sendEmail(opts: {
 }): Promise<{ sent: boolean; reason?: string }> {
   const key = process.env.RESEND_API_KEY
   const from = process.env.RESEND_FROM_EMAIL
+  // One-line, non-sensitive breadcrumb so prod logs show whether email is
+  // even configured (we never print the key/recipients). Without this a
+  // missing env var is a silent no-op that's impossible to diagnose remotely.
+  const recipientCount = Array.isArray(opts.to) ? opts.to.length : 1
   if (!key || !from) {
+    console.warn(
+      `[sendEmail] skipped "${opts.subject}" — missing ${
+        !key ? "RESEND_API_KEY" : ""
+      }${!key && !from ? " + " : ""}${!from ? "RESEND_FROM_EMAIL" : ""}`
+    )
     return { sent: false, reason: "RESEND_API_KEY or RESEND_FROM_EMAIL not set" }
   }
 
@@ -30,6 +39,9 @@ export async function sendEmail(opts: {
       console.error("Resend send error:", error)
       return { sent: false, reason: error.message }
     }
+    console.log(
+      `[sendEmail] sent "${opts.subject}" to ${recipientCount} recipient(s)`
+    )
     return { sent: true }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
