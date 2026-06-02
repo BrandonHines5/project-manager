@@ -666,7 +666,14 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
     return
   }
 
-  const { data: decision } = await admin
+  // Disambiguate decision_choices: there are TWO relationships between
+  // decisions and decision_choices (the choices list via
+  // decision_choices.decision_id, and the chosen one via
+  // decisions.selected_choice_id). Without the explicit FK hint PostgREST
+  // raises PGRST201 and the whole query returns null — which previously made
+  // this email silently never send. Capture the error too so a future schema
+  // change can't re-hide it.
+  const { data: decision, error: decisionErr } = await admin
     .from("decisions")
     .select(
       `id, number, kind, title, description, cost_delta, markup_percent,
@@ -675,7 +682,7 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
        projects:project_id (id, name, project_number, address),
        creator:created_by (full_name, email),
        client_approver:approved_by_client_id (full_name, email),
-       decision_choices (id, title, description, price_delta, position),
+       decision_choices!decision_choices_decision_id_fkey (id, title, description, price_delta, position),
        decision_cost_items (description, quantity, unit, unit_cost, position,
          cost_codes:cost_code_id (code, name)),
        decision_followup_templates (title, due_offset_days, notes, position,
@@ -685,6 +692,13 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
     )
     .eq("id", decisionId)
     .maybeSingle()
+  if (decisionErr) {
+    console.warn(
+      "[approved-decision email] decision query failed:",
+      decisionErr.message
+    )
+    return
+  }
   if (!decision) return
 
   const { data: staff } = await admin
