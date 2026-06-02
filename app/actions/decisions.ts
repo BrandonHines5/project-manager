@@ -148,6 +148,29 @@ function nz(v: string | null | undefined) {
   return v && v !== "" ? v : null
 }
 
+// [trace] Temporary helper to write a breadcrumb row to public.notify_debug
+// (not in the generated types — cast through unknown). Never throws.
+type TraceClient = {
+  from: (t: string) => {
+    insert: (v: Record<string, unknown>) => Promise<unknown>
+  }
+}
+async function trace(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  decisionId: string | null,
+  stage: string,
+  detail?: string
+) {
+  if (!admin) return
+  try {
+    await (admin as unknown as TraceClient)
+      .from("notify_debug")
+      .insert({ decision_id: decisionId, stage, detail: detail ?? null })
+  } catch {
+    /* ignore */
+  }
+}
+
 function round2(n: number) {
   return Math.round(n * 100) / 100
 }
@@ -573,6 +596,15 @@ export async function saveDecision(input: DecisionInputT) {
     )
   }
 
+  // [trace] record the approval decision-point so we can see, in the DB,
+  // whether saveDecision even reaches the notify call. Temporary.
+  await trace(
+    createSupabaseAdminClient(),
+    id,
+    "save:checkpoint",
+    `newlyApproved=${newlyApproved} status=${parsed.status} prev=${prevStatus}`
+  )
+
   // Notify the dashboard ONCE per approval (not on every re-save of an
   // already-approved decision). The dashboard mirrors approved decisions
   // into the client's progress view.
@@ -586,9 +618,16 @@ export async function saveDecision(input: DecisionInputT) {
       await sendDashboardWebhook("decision.approved", decisionRow)
     }
     try {
+      await trace(createSupabaseAdminClient(), id, "save:calling_notify")
       await notifyStaffOfApprovedDecision(id!)
     } catch (e) {
       console.warn("staff approved-decision email failed:", e)
+      await trace(
+        createSupabaseAdminClient(),
+        id,
+        "save:notify_threw",
+        e instanceof Error ? e.message : String(e)
+      )
     }
   }
 
@@ -665,6 +704,10 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
     )
     return
   }
+  // [trace] temporary DB breadcrumbs so we can see exactly where this bails.
+  const dbg = (stage: string, detail?: string) =>
+    trace(admin, decisionId, stage, detail)
+  await dbg("notify:entry")
 
   // Disambiguate decision_choices: there are TWO relationships between
   // decisions and decision_choices (the choices list via
@@ -692,6 +735,10 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
     )
     .eq("id", decisionId)
     .maybeSingle()
+  await dbg(
+    "notify:after_query",
+    decisionErr ? `error[${(decisionErr as { code?: string }).code}]: ${decisionErr.message}` : `found=${!!decision}`
+  )
   if (decisionErr) {
     console.warn(
       "[approved-decision email] decision query failed:",
@@ -699,9 +746,12 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
     )
     return
   }
-  if (!decision) return
+  if (!decision) {
+    await dbg("notify:bail_no_decision")
+    return
+  }
 
-  const { data: staff } = await admin
+  const { data: staff, error: staffErr } = await admin
     .from("profiles")
     .select("email")
     .eq("role", "staff")
@@ -709,6 +759,10 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
   const emails = (staff ?? [])
     .map((p) => p.email)
     .filter((e): e is string => !!e)
+  await dbg(
+    "notify:after_staff",
+    `count=${emails.length}${staffErr ? ` error: ${staffErr.message}` : ""}`
+  )
   if (!emails.length) {
     console.warn(
       "[approved-decision email] skipped — no staff with notifications_enabled + an email on file"
@@ -964,12 +1018,14 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
     .filter(Boolean)
     .join("")
 
+  await dbg("notify:before_send")
   const res = await sendEmail({
     to: emails,
     subject: `${kindLabel} #${d.number} approved — ${d.title}`,
     text,
     html,
   })
+  await dbg("notify:after_send", `sent=${res.sent} reason=${res.reason ?? ""}`)
   if (res.sent) {
     console.log(
       `[approved-decision email] sent to ${emails.length} staff for decision ${decisionId}`
@@ -980,6 +1036,7 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
     )
   }
   } catch (e) {
+    await dbg("notify:rich_threw", e instanceof Error ? e.message : String(e))
     // Last-resort fallback: the rich build threw (helpers are null-safe, so
     // this should be unreachable, but we never want an approval to produce no
     // email). Send a minimal plain-text notice instead.
@@ -1001,6 +1058,7 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
         `/projects/${dd.project_id ?? ""}/decisions`
       )}`,
     })
+    await dbg("notify:after_fallback", `sent=${fb.sent} reason=${fb.reason ?? ""}`)
     if (!fb.sent) {
       console.warn(
         `[approved-decision email] fallback send also failed: ${fb.reason}`
