@@ -122,7 +122,36 @@ update public.decision_cost_items
    set cost_code_id = (select id from public.cost_codes where code = '40')   -- Cabinets
  where cost_code_id = (select id from public.cost_codes where code = '90-200');
 
--- 3. Remove the old seed codes. They all use the NN-NNN format (e.g. 10-100,
+-- 3. Fail-fast guard. The remaps in step 2 only cover the legacy codes that
+--    were in use in the live database. Both FKs to cost_codes
+--    (decision_cost_items.cost_code_id and decisions.allowance_cost_code_id)
+--    are `on delete set null`, so if any OTHER environment still references a
+--    legacy code we did not remap, the delete below would silently null those
+--    links. Abort loudly instead so the stale references can be remapped by hand.
+do $$
+declare
+  orphan_items int;
+  orphan_allowances int;
+begin
+  select count(*) into orphan_items
+  from public.decision_cost_items dci
+  join public.cost_codes cc on cc.id = dci.cost_code_id
+  where cc.code ~ '^\d+-\d+$';
+
+  select count(*) into orphan_allowances
+  from public.decisions d
+  join public.cost_codes cc on cc.id = d.allowance_cost_code_id
+  where cc.code ~ '^\d+-\d+$';
+
+  if orphan_items > 0 or orphan_allowances > 0 then
+    raise exception
+      'Unmapped legacy cost codes still referenced (% line items, % allowances). Remap them before deleting legacy codes.',
+      orphan_items, orphan_allowances;
+  end if;
+end $$;
+
+-- 4. Remove the old seed codes. They all use the NN-NNN format (e.g. 10-100,
 --    999-999); the new codes are plain digits, so this pattern only matches the
---    legacy rows. Any references they had were remapped in step 2.
+--    legacy rows. Any references they had were remapped in step 2; the guard
+--    above guarantees none remain.
 delete from public.cost_codes where code ~ '^\d+-\d+$';
