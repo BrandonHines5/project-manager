@@ -57,6 +57,17 @@
 - Commit early, push to `claude/buildertrend-replacement-JsF4R`.
 - **Pull requests**: open as ready-for-review (not draft) so CodeRabbit reviews immediately, and subscribe to PR activity right after opening.
 
+## User environment
+
+- Brandon does **not** have a local development environment — no `git clone`, no Node.js, no `npm`, no local editor running the project. All code edits happen either via the GitHub web UI or through this remote Claude Code session (which commits + pushes from its ephemeral container). All testing happens on Vercel preview / production deploys, not localhost.
+- Skip these patterns when giving instructions:
+  - "open VS Code" / "edit `.env.local`" / "run `npm run dev`" / "git clone" / "git checkout"
+- Use these patterns instead:
+  - Code changes: tell Brandon what you're about to change, edit the file from this session, commit + push, and Vercel auto-deploys a preview.
+  - Env vars: set in the **Vercel dashboard** (Settings → Environment Variables), then redeploy. Don't reference `.env.local`.
+  - Testing: have Brandon visit the Vercel preview URL (for branch deploys) or production URL.
+- Brandon runs ad-hoc shell commands (like DNS lookups) in **PowerShell** on Windows. Use PowerShell syntax for those (`Resolve-DnsName` not `dig`, `$env:FOO="bar"` not `export FOO=bar`, `Copy-Item` not `cp`).
+
 ## Not included
 
 Purchase Orders (Adaptive.build), client invoicing (QuickBooks), sales, warranty, time clock. If asked for these, push back politely — they're out of scope.

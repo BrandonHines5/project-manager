@@ -3,8 +3,9 @@
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { requireSession, requireStaff } from "@/lib/auth"
-import { addDays, todayISO } from "@/lib/utils"
+import { addDays, formatCurrency, formatDate, todayISO } from "@/lib/utils"
 import { sendEmail, appUrl } from "@/lib/email"
 import { sendDashboardWebhook } from "@/lib/dashboard"
 import type { TablesInsert, TablesUpdate } from "@/lib/db/types"
@@ -560,6 +561,11 @@ export async function saveDecision(input: DecisionInputT) {
     if (decisionRow) {
       await sendDashboardWebhook("decision.approved", decisionRow)
     }
+    try {
+      await notifyStaffOfApprovedDecision(id!)
+    } catch (e) {
+      console.warn("staff approved-decision email failed:", e)
+    }
   }
 
   if (newlyPendingClient) {
@@ -601,6 +607,304 @@ async function notifyClientOfDecision(
     text: `A new item is awaiting your review on the project portal. Open: ${link}`,
   })
   void decisionId
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+}
+
+/**
+ * Email every staff user when a decision (selection or change order) is
+ * approved. Uses the admin client to read the full decision detail because the
+ * client-portal approval path runs under a client session that can't read
+ * staff-only tables like decision_cost_items. Falls back gracefully when
+ * RESEND or SERVICE_ROLE env vars are absent.
+ */
+async function notifyStaffOfApprovedDecision(decisionId: string) {
+  const admin = createSupabaseAdminClient()
+  if (!admin) return
+
+  const { data: decision } = await admin
+    .from("decisions")
+    .select(
+      `id, number, kind, title, description, cost_delta, markup_percent,
+       status, due_date, approved_at, selected_choice_id,
+       project_id, created_by, approved_by_client_id,
+       projects:project_id (id, name, project_number, address),
+       creator:created_by (full_name, email),
+       client_approver:approved_by_client_id (full_name, email),
+       decision_choices (id, title, description, price_delta, position),
+       decision_cost_items (description, quantity, unit, unit_cost, position,
+         cost_codes:cost_code_id (code, name)),
+       decision_followup_templates (title, due_offset_days, notes, position,
+         assignee:assignee_profile_id (full_name),
+         company:assignee_company_id (name)),
+       decision_attachments (file_name, caption)`
+    )
+    .eq("id", decisionId)
+    .maybeSingle()
+  if (!decision) return
+
+  const { data: staff } = await admin
+    .from("profiles")
+    .select("email")
+    .eq("role", "staff")
+  const emails = (staff ?? [])
+    .map((p) => p.email)
+    .filter((e): e is string => !!e)
+  if (!emails.length) return
+
+  type Project = { name: string; project_number: string; address: string | null }
+  type Choice = {
+    id: string
+    title: string
+    description: string | null
+    price_delta: number | null
+    position: number
+  }
+  type CostItem = {
+    description: string | null
+    quantity: number
+    unit: string | null
+    unit_cost: number
+    position: number
+    cost_codes: { code: string; name: string } | null
+  }
+  type Followup = {
+    title: string
+    due_offset_days: number
+    notes: string | null
+    position: number
+    assignee: { full_name: string | null } | null
+    company: { name: string } | null
+  }
+  type Attachment = { file_name: string; caption: string | null }
+  type Person = { full_name: string | null; email: string | null } | null
+
+  const d = decision as unknown as {
+    number: number
+    kind: "selection" | "change_order"
+    title: string
+    description: string | null
+    cost_delta: number | null
+    markup_percent: number | null
+    due_date: string | null
+    approved_at: string | null
+    selected_choice_id: string | null
+    project_id: string
+    projects: Project | null
+    creator: Person
+    client_approver: Person
+    decision_choices: Choice[]
+    decision_cost_items: CostItem[]
+    decision_followup_templates: Followup[]
+    decision_attachments: Attachment[]
+  }
+
+  const kindLabel = d.kind === "selection" ? "Selection" : "Change Order"
+  const project = d.projects
+  const projectLabel = project
+    ? `${project.project_number} — ${project.name}`
+    : "(unknown project)"
+  const approver = d.client_approver?.full_name || d.client_approver?.email
+    ? `${d.client_approver?.full_name ?? d.client_approver?.email} (client)`
+    : "Staff"
+  const creatorLabel =
+    d.creator?.full_name || d.creator?.email || "(unknown)"
+
+  const choices = [...d.decision_choices].sort((a, b) => a.position - b.position)
+  const costItems = [...d.decision_cost_items].sort(
+    (a, b) => a.position - b.position
+  )
+  const followups = [...d.decision_followup_templates].sort(
+    (a, b) => a.position - b.position
+  )
+
+  const link = appUrl(`/projects/${d.project_id}/decisions`)
+
+  const textLines: string[] = []
+  textLines.push(`${kindLabel} #${d.number} approved`)
+  textLines.push("")
+  textLines.push(`Title:    ${d.title}`)
+  textLines.push(`Project:  ${projectLabel}`)
+  if (project?.address) textLines.push(`Address:  ${project.address}`)
+  textLines.push(`Approved: ${formatDate(d.approved_at)} by ${approver}`)
+  textLines.push(`Created by: ${creatorLabel}`)
+  if (d.due_date) textLines.push(`Due date: ${formatDate(d.due_date)}`)
+  textLines.push(`Cost impact: ${formatCurrency(d.cost_delta)}`)
+  if (d.markup_percent && Number(d.markup_percent) !== 0) {
+    textLines.push(`Markup: ${d.markup_percent}%`)
+  }
+  if (d.description) {
+    textLines.push("")
+    textLines.push("Description:")
+    textLines.push(d.description)
+  }
+  if (d.kind === "selection" && choices.length) {
+    textLines.push("")
+    textLines.push("Choices:")
+    for (const c of choices) {
+      const tag = c.id === d.selected_choice_id ? " ← SELECTED" : ""
+      const price = c.price_delta != null ? ` (${formatCurrency(c.price_delta)})` : ""
+      textLines.push(`  - ${c.title}${price}${tag}`)
+      if (c.description) textLines.push(`      ${c.description}`)
+    }
+  }
+  if (costItems.length) {
+    textLines.push("")
+    textLines.push("Cost breakdown:")
+    for (const ci of costItems) {
+      const code = ci.cost_codes
+        ? `[${ci.cost_codes.code} ${ci.cost_codes.name}] `
+        : ""
+      const lineTotal = ci.quantity * ci.unit_cost
+      const unit = ci.unit ? ` ${ci.unit}` : ""
+      textLines.push(
+        `  - ${code}${ci.description ?? ""} — ${ci.quantity}${unit} × ${formatCurrency(
+          ci.unit_cost
+        )} = ${formatCurrency(lineTotal)}`
+      )
+    }
+  }
+  if (followups.length) {
+    textLines.push("")
+    textLines.push("Follow-up tasks:")
+    for (const f of followups) {
+      const who = f.assignee?.full_name ?? f.company?.name ?? "(unassigned)"
+      textLines.push(
+        `  - ${f.title} — assigned to ${who}, due +${f.due_offset_days}d`
+      )
+      if (f.notes) textLines.push(`      ${f.notes}`)
+    }
+  }
+  if (d.decision_attachments.length) {
+    textLines.push("")
+    textLines.push("Attachments:")
+    for (const a of d.decision_attachments) {
+      const cap = a.caption ? ` — ${a.caption}` : ""
+      textLines.push(`  - ${a.file_name}${cap}`)
+    }
+  }
+  textLines.push("")
+  textLines.push(`Open in app: ${link}`)
+  const text = textLines.join("\n")
+
+  const row = (label: string, value: string) =>
+    `<tr><td style="padding:4px 12px 4px 0;color:#555;vertical-align:top">${escapeHtml(
+      label
+    )}</td><td style="padding:4px 0">${value}</td></tr>`
+
+  const html = [
+    `<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;color:#111;max-width:640px">`,
+    `<h2 style="margin:0 0 4px">${escapeHtml(kindLabel)} #${d.number} approved</h2>`,
+    `<p style="margin:0 0 16px;color:#555">${escapeHtml(d.title)}</p>`,
+    `<table style="border-collapse:collapse;margin-bottom:16px">`,
+    row("Project", escapeHtml(projectLabel)),
+    project?.address ? row("Address", escapeHtml(project.address)) : "",
+    row(
+      "Approved",
+      `${escapeHtml(formatDate(d.approved_at))} by ${escapeHtml(approver)}`
+    ),
+    row("Created by", escapeHtml(creatorLabel)),
+    d.due_date ? row("Due date", escapeHtml(formatDate(d.due_date))) : "",
+    row("Cost impact", escapeHtml(formatCurrency(d.cost_delta))),
+    d.markup_percent && Number(d.markup_percent) !== 0
+      ? row("Markup", `${escapeHtml(String(d.markup_percent))}%`)
+      : "",
+    `</table>`,
+    d.description
+      ? `<h3 style="margin:16px 0 4px;font-size:14px">Description</h3><div style="white-space:pre-wrap;color:#222">${escapeHtml(
+          d.description
+        )}</div>`
+      : "",
+    d.kind === "selection" && choices.length
+      ? `<h3 style="margin:16px 0 4px;font-size:14px">Choices</h3><ul style="margin:0;padding-left:20px">${choices
+          .map((c) => {
+            const isSel = c.id === d.selected_choice_id
+            const price =
+              c.price_delta != null
+                ? ` <span style="color:#555">(${escapeHtml(
+                    formatCurrency(c.price_delta)
+                  )})</span>`
+                : ""
+            const tag = isSel
+              ? ` <strong style="color:#0a7d32">SELECTED</strong>`
+              : ""
+            const desc = c.description
+              ? `<div style="color:#555;font-size:13px">${escapeHtml(
+                  c.description
+                )}</div>`
+              : ""
+            return `<li style="margin:4px 0">${escapeHtml(
+              c.title
+            )}${price}${tag}${desc}</li>`
+          })
+          .join("")}</ul>`
+      : "",
+    costItems.length
+      ? `<h3 style="margin:16px 0 4px;font-size:14px">Cost breakdown</h3><table style="border-collapse:collapse;width:100%;font-size:13px"><thead><tr style="text-align:left;border-bottom:1px solid #ddd"><th style="padding:4px 8px 4px 0">Item</th><th style="padding:4px 8px;text-align:right">Qty</th><th style="padding:4px 8px;text-align:right">Unit cost</th><th style="padding:4px 0;text-align:right">Total</th></tr></thead><tbody>${costItems
+          .map((ci) => {
+            const code = ci.cost_codes
+              ? `<span style="color:#888">[${escapeHtml(
+                  ci.cost_codes.code
+                )} ${escapeHtml(ci.cost_codes.name)}]</span> `
+              : ""
+            const lineTotal = ci.quantity * ci.unit_cost
+            const unit = ci.unit ? ` ${escapeHtml(ci.unit)}` : ""
+            return `<tr><td style="padding:4px 8px 4px 0">${code}${escapeHtml(
+              ci.description ?? ""
+            )}</td><td style="padding:4px 8px;text-align:right">${ci.quantity}${unit}</td><td style="padding:4px 8px;text-align:right">${escapeHtml(
+              formatCurrency(ci.unit_cost)
+            )}</td><td style="padding:4px 0;text-align:right">${escapeHtml(
+              formatCurrency(lineTotal)
+            )}</td></tr>`
+          })
+          .join("")}</tbody></table>`
+      : "",
+    followups.length
+      ? `<h3 style="margin:16px 0 4px;font-size:14px">Follow-up tasks</h3><ul style="margin:0;padding-left:20px">${followups
+          .map((f) => {
+            const who = f.assignee?.full_name ?? f.company?.name ?? "(unassigned)"
+            const notes = f.notes
+              ? `<div style="color:#555;font-size:13px">${escapeHtml(
+                  f.notes
+                )}</div>`
+              : ""
+            return `<li style="margin:4px 0">${escapeHtml(
+              f.title
+            )} — <span style="color:#555">${escapeHtml(
+              who
+            )}, due +${f.due_offset_days}d</span>${notes}</li>`
+          })
+          .join("")}</ul>`
+      : "",
+    d.decision_attachments.length
+      ? `<h3 style="margin:16px 0 4px;font-size:14px">Attachments</h3><ul style="margin:0;padding-left:20px">${d.decision_attachments
+          .map((a) => {
+            const cap = a.caption
+              ? ` <span style="color:#555">— ${escapeHtml(a.caption)}</span>`
+              : ""
+            return `<li style="margin:2px 0">${escapeHtml(a.file_name)}${cap}</li>`
+          })
+          .join("")}</ul>`
+      : "",
+    `<p style="margin:20px 0 0"><a href="${link}" style="color:#1d4ed8">Open in app →</a></p>`,
+    `</div>`,
+  ]
+    .filter(Boolean)
+    .join("")
+
+  await sendEmail({
+    to: emails,
+    subject: `${kindLabel} #${d.number} approved — ${d.title}`,
+    text,
+    html,
+  })
 }
 
 async function materializeFollowups(
@@ -821,6 +1125,11 @@ export async function clientDecideDecision({
       .maybeSingle()
     if (decisionRow) {
       await sendDashboardWebhook("decision.approved", decisionRow)
+    }
+    try {
+      await notifyStaffOfApprovedDecision(decision_id)
+    } catch (e) {
+      console.warn("staff approved-decision email failed:", e)
     }
     if ((result.created_followups ?? 0) > 0) {
       revalidatePath(`/projects/${project_id}/schedule`)
