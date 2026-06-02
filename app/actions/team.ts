@@ -105,11 +105,16 @@ export async function setMemberNotifications(input: {
   await requireStaff()
   const parsed = SetNotificationsInput.parse(input)
   const supabase = await createSupabaseServerClient()
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("profiles")
     .update({ notifications_enabled: parsed.enabled })
     .eq("id", parsed.id)
+    .select("id")
+    .maybeSingle()
   if (error) throw new Error(error.message)
+  // A successful request that matched no rows (stale/deleted id, or RLS) would
+  // otherwise toast success without changing anything — surface it instead.
+  if (!data) throw new Error("Team member not found.")
   revalidatePath("/team")
 }
 

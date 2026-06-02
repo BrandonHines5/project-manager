@@ -193,6 +193,7 @@ function NotifyToggle({ profile }: { profile: Tables<"profiles"> }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const enabled = profile.notifications_enabled
+  const who = profile.full_name || profile.email || "team member"
 
   function toggle(e: React.MouseEvent) {
     e.stopPropagation()
@@ -218,6 +219,7 @@ function NotifyToggle({ profile }: { profile: Tables<"profiles"> }) {
       disabled={pending}
       role="switch"
       aria-checked={enabled}
+      aria-label={`Notifications for ${who}: ${enabled ? "on" : "off"}`}
       title={
         enabled
           ? "All notifications on — click to mute this person"
