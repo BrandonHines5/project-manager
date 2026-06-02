@@ -35,7 +35,7 @@ export async function GET() {
        decision_choices!decision_choices_decision_id_fkey (id, title, description, price_delta, position),
        decision_cost_items (description, quantity, unit, unit_cost, position,
          cost_codes:cost_code_id (code, name)),
-       decision_followup_templates (title, due_offset_days, notes, position,
+       decision_followup_templates!decision_followup_templates_decision_id_fkey (title, due_offset_days, notes, position,
          assignee:assignee_profile_id (full_name),
          company:assignee_company_id (name)),
        decision_attachments (file_name, caption)`
