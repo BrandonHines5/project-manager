@@ -480,39 +480,67 @@ export type Database = {
       }
       decision_followup_templates: {
         Row: {
+          anchor_schedule_item_id: string | null
           assignee_company_id: string | null
           assignee_profile_id: string | null
           created_at: string
           decision_id: string
           due_offset_days: number
+          duration_days: number | null
           id: string
+          kind: Database["public"]["Enums"]["schedule_item_kind"]
           notes: string | null
+          parent_anchor:
+            | Database["public"]["Enums"]["schedule_parent_anchor"]
+            | null
+          parent_offset_days: number | null
           position: number
           title: string
         }
         Insert: {
+          anchor_schedule_item_id?: string | null
           assignee_company_id?: string | null
           assignee_profile_id?: string | null
           created_at?: string
           decision_id: string
           due_offset_days?: number
+          duration_days?: number | null
           id?: string
+          kind?: Database["public"]["Enums"]["schedule_item_kind"]
           notes?: string | null
+          parent_anchor?:
+            | Database["public"]["Enums"]["schedule_parent_anchor"]
+            | null
+          parent_offset_days?: number | null
           position?: number
           title: string
         }
         Update: {
+          anchor_schedule_item_id?: string | null
           assignee_company_id?: string | null
           assignee_profile_id?: string | null
           created_at?: string
           decision_id?: string
           due_offset_days?: number
+          duration_days?: number | null
           id?: string
+          kind?: Database["public"]["Enums"]["schedule_item_kind"]
           notes?: string | null
+          parent_anchor?:
+            | Database["public"]["Enums"]["schedule_parent_anchor"]
+            | null
+          parent_offset_days?: number | null
           position?: number
           title?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "decision_followup_templates_anchor_schedule_item_id_fkey"
+            columns: ["anchor_schedule_item_id"]
+            isOneToOne: false
+            referencedRelation: "schedule_items"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "decision_followup_templates_assignee_company_id_fkey"
             columns: ["assignee_company_id"]

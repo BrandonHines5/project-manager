@@ -33,6 +33,8 @@ export default async function DecisionsPage({
     { data: costItems },
     { data: costCodes },
     { data: choices },
+    { data: workItems },
+    { data: projects },
   ] = await Promise.all([
     supabase
       .from("decisions")
@@ -73,6 +75,20 @@ export default async function DecisionsPage({
       .select("*, decisions!inner(project_id)")
       .eq("decisions.project_id", projectId)
       .order("position", { ascending: true }),
+    // Work items in this project — follow-up to-dos can anchor their due date
+    // to one of these (start/end ± offset), same as standalone to-dos.
+    supabase
+      .from("schedule_items")
+      .select("id, title, start_date, end_date")
+      .eq("project_id", projectId)
+      .eq("kind", "work")
+      .order("start_date", { ascending: true, nullsFirst: false }),
+    // Projects the caller can see — destinations for "copy to another job".
+    // RLS scopes this to the staff's accessible projects.
+    supabase
+      .from("projects")
+      .select("id, name, project_number")
+      .order("project_number", { ascending: true }),
   ])
 
   const strip = <T extends { decisions?: unknown }>(rows: T[] | null) =>
@@ -101,6 +117,8 @@ export default async function DecisionsPage({
     cost_items: strip(costItems) as DecisionsData["cost_items"],
     cost_codes: costCodes ?? [],
     choices: strip(choices) as DecisionsData["choices"],
+    work_items: workItems ?? [],
+    projects: projects ?? [],
     signed_urls: signedUrls,
   }
 
