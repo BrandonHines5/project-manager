@@ -746,6 +746,11 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
   type Attachment = { file_name: string; caption: string | null }
   type Person = { full_name: string | null; email: string | null } | null
 
+  // Build + send inside a try so a formatting edge case in the rich HTML can
+  // never silently swallow the whole notification — on failure we fall back to
+  // a plain-text email so staff are still told. The send result is logged
+  // either way for observability.
+  try {
   const d = decision as unknown as {
     number: number
     kind: "selection" | "change_order"
@@ -959,12 +964,49 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
     .filter(Boolean)
     .join("")
 
-  await sendEmail({
+  const res = await sendEmail({
     to: emails,
     subject: `${kindLabel} #${d.number} approved — ${d.title}`,
     text,
     html,
   })
+  if (res.sent) {
+    console.log(
+      `[approved-decision email] sent to ${emails.length} staff for decision ${decisionId}`
+    )
+  } else {
+    console.warn(
+      `[approved-decision email] Resend did not send: ${res.reason}`
+    )
+  }
+  } catch (e) {
+    // Last-resort fallback: the rich build threw (helpers are null-safe, so
+    // this should be unreachable, but we never want an approval to produce no
+    // email). Send a minimal plain-text notice instead.
+    console.warn(
+      "[approved-decision email] rich email failed; sending plain fallback:",
+      e instanceof Error ? e.message : e
+    )
+    const dd = decision as {
+      number?: number
+      title?: string | null
+      project_id?: string
+    }
+    const fb = await sendEmail({
+      to: emails,
+      subject: `Decision${dd.number ? ` #${dd.number}` : ""} approved${
+        dd.title ? ` — ${dd.title}` : ""
+      }`,
+      text: `A decision was approved on the project portal. Open it in the app: ${appUrl(
+        `/projects/${dd.project_id ?? ""}/decisions`
+      )}`,
+    })
+    if (!fb.sent) {
+      console.warn(
+        `[approved-decision email] fallback send also failed: ${fb.reason}`
+      )
+    }
+  }
 }
 
 async function materializeFollowups(
