@@ -485,7 +485,14 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
       .order("position", { ascending: true }),
     supabase
       .from("decision_followup_templates")
-      .select("*, decisions!inner(project_id)")
+      // Disambiguate the embed: decision_followup_templates relates to
+      // decisions both directly (decision_id) AND through the
+      // decision_followup_materializations junction, so PostgREST needs the
+      // FK name or it errors with PGRST201 (same fix as #48, this read was
+      // missed).
+      .select(
+        "*, decisions!decision_followup_templates_decision_id_fkey!inner(project_id)"
+      )
       .eq("decisions.project_id", parsed.source_project_id)
       .order("position", { ascending: true }),
     supabase
