@@ -236,14 +236,46 @@ export async function syncProjectFromDashboard(input: {
     }
   }
 
-  const dashboardUrl = dashboardUrlForProject(remote)
+  // Only overwrite fields the dashboard actually gave us. The dashboard's
+  // /api/projects endpoint currently doesn't return the internal id or the
+  // project manager, so without these guards a Sync would clobber a
+  // correct stored link (built from the id) with the project_number route
+  // that 500s, and wipe a known PM back to null. Build the update set
+  // conditionally instead.
+  const update: {
+    dashboard_pulled_at: string
+    dashboard_url?: string | null
+    project_manager?: string | null
+  } = { dashboard_pulled_at: new Date().toISOString() }
+  // Only persist a link that actually resolves the job. dashboardUrlForProject
+  // returns the project_number route (which 500s) when there's no id and no
+  // ABSOLUTE url, and null when the dashboard base is unconfigured — neither
+  // should clobber a good stored link. Gate on the computed value, requiring
+  // an id or a genuinely absolute url first.
+  const candidateUrl =
+    remote.id || (remote.url && /^https?:\/\//i.test(remote.url))
+      ? dashboardUrlForProject(remote)
+      : null
+  if (candidateUrl) {
+    update.dashboard_url = candidateUrl
+  }
+  if (remote.project_manager) {
+    update.project_manager = remote.project_manager
+  }
+
+  // Nothing useful came back beyond the timestamp — tell the user rather than
+  // silently "succeeding" with no visible change.
+  if (update.dashboard_url === undefined && update.project_manager === undefined) {
+    return {
+      ok: false,
+      error:
+        "The dashboard didn't return a project manager or a job link for this project. (The dashboard's API needs to expose those fields.)",
+    }
+  }
+
   const { error: uErr } = await supabase
     .from("projects")
-    .update({
-      dashboard_url: dashboardUrl,
-      project_manager: remote.project_manager,
-      dashboard_pulled_at: new Date().toISOString(),
-    })
+    .update(update)
     .eq("id", project.id)
   if (uErr) return { ok: false, error: uErr.message }
 
@@ -485,7 +517,14 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
       .order("position", { ascending: true }),
     supabase
       .from("decision_followup_templates")
-      .select("*, decisions!inner(project_id)")
+      // Disambiguate the embed: decision_followup_templates relates to
+      // decisions both directly (decision_id) AND through the
+      // decision_followup_materializations junction, so PostgREST needs the
+      // FK name or it errors with PGRST201 (same fix as #48, this read was
+      // missed).
+      .select(
+        "*, decisions!decision_followup_templates_decision_id_fkey!inner(project_id)"
+      )
       .eq("decisions.project_id", parsed.source_project_id)
       .order("position", { ascending: true }),
     supabase
