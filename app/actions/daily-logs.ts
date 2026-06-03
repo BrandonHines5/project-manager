@@ -220,18 +220,27 @@ export async function saveDailyLog(input: DailyLogInputT) {
         continue
       }
       if (pid || cid) {
-        const { error: aErr } = await supabase
-          .from("schedule_assignments")
-          .insert({
-            schedule_item_id: todoRow.id,
-            profile_id: pid,
-            company_id: cid,
-          })
-        if (aErr) {
+        // Enforce the same profile-XOR-company rule saveScheduleItem uses.
+        // The UI only ever sends one, so a both-set row means a malformed
+        // client — skip just the assignment (keep the to-do) and log it.
+        if (pid && cid) {
           console.warn(
-            "[saveDailyLog] to-do assignment failed:",
-            aErr.message
+            "[saveDailyLog] to-do assignee skipped: must be a profile or a company, not both"
           )
+        } else {
+          const { error: aErr } = await supabase
+            .from("schedule_assignments")
+            .insert({
+              schedule_item_id: todoRow.id,
+              profile_id: pid,
+              company_id: cid,
+            })
+          if (aErr) {
+            console.warn(
+              "[saveDailyLog] to-do assignment failed:",
+              aErr.message
+            )
+          }
         }
       }
     }

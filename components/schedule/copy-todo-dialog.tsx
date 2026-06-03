@@ -38,6 +38,7 @@ export function CopyTodoDialog({
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [data, setData] = useState<CopyTodoData | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   // Per-project parent + due overrides, keyed by project id. Only required for
@@ -54,8 +55,11 @@ export function CopyTodoDialog({
         if (active) setData(d)
       })
       .catch((e) => {
-        if (active)
-          toast.error(e instanceof Error ? e.message : "Could not load projects")
+        if (active) {
+          const msg = e instanceof Error ? e.message : "Could not load projects"
+          setLoadError(msg)
+          toast.error(msg)
+        }
       })
       .finally(() => {
         if (active) setLoading(false)
@@ -183,6 +187,10 @@ export function CopyTodoDialog({
             <div className="flex items-center justify-center py-10 text-muted">
               <Loader2 className="h-5 w-5 animate-spin" />
             </div>
+          ) : loadError ? (
+            <p className="text-sm text-danger py-6 text-center">
+              Couldn&apos;t load jobs: {loadError}
+            </p>
           ) : !data || data.projects.length === 0 ? (
             <p className="text-sm text-muted py-6 text-center">
               No jobs available to copy into.
@@ -230,7 +238,7 @@ export function CopyTodoDialog({
 
                     {isSel && res.kind === "ask" && (
                       <div className="mt-2 pl-6 space-y-2">
-                        <div className="flex items-start gap-1.5 text-[11px] text-amber-700">
+                        <div className="flex items-start gap-1.5 text-[11px] text-warning">
                           <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                           <span>
                             No matching parent here. Pick a parent work item and

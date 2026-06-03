@@ -426,6 +426,7 @@ function TodosEditor({
                 value={t.title}
                 onChange={(e) => update(i, { title: e.target.value })}
                 placeholder="What needs doing?"
+                aria-label="To-do title"
               />
               <Input
                 type="date"

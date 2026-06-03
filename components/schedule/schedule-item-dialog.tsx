@@ -230,17 +230,19 @@ export function ScheduleItemDialog({
     (i) => i.kind === "work" && i.id !== item?.id
   )
 
-  async function handleSave() {
+  // Validates the form and assembles the server payload. Returns null (after
+  // toasting the reason) when the form isn't valid, so callers can bail.
+  function buildPayload(): ScheduleItemInputT | null {
     if (!title.trim()) {
       toast.error("Title is required")
-      return
+      return null
     }
     if (kind === "work" && startDate && endDate && endDate < startDate) {
       toast.error("End date must be on or after start date")
-      return
+      return null
     }
     const anchored = kind === "todo" && !!parentId && anchorEnabled
-    const payload: ScheduleItemInputT = {
+    return {
       id: item?.id,
       project_id: data.project_id,
       parent_id: kind === "todo" ? (parentId || null) : null,
@@ -265,12 +267,35 @@ export function ScheduleItemDialog({
       checklist: kind === "todo" ? checklist : [],
       predecessors: kind === "work" ? predecessors : [],
     }
+  }
+
+  async function handleSave() {
+    const payload = buildPayload()
+    if (!payload) return
     startTransition(async () => {
       try {
         await saveScheduleItem(payload)
         toast.success(mode === "edit" ? "Saved" : "Created")
         router.refresh()
         onClose()
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Save failed")
+      }
+    })
+  }
+
+  // Save first, then open the copy dialog — without this, the copy would
+  // duplicate the last-persisted row and silently drop any unsaved edits the
+  // user made in this drawer. We keep the drawer open so they land back here
+  // after copying.
+  function handleSaveAndCopy() {
+    const payload = buildPayload()
+    if (!payload) return
+    startTransition(async () => {
+      try {
+        await saveScheduleItem(payload)
+        router.refresh()
+        setShowCopy(true)
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Save failed")
       }
@@ -657,8 +682,9 @@ export function ScheduleItemDialog({
             <Button
               type="button"
               variant="ghost"
-              onClick={() => setShowCopy(true)}
+              onClick={handleSaveAndCopy}
               disabled={pending}
+              title="Saves your changes, then opens the copy dialog"
             >
               <Copy className="h-4 w-4" /> Copy to job
             </Button>
