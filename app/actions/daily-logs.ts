@@ -37,6 +37,20 @@ const DailyLogInput = z
         })
       )
       .default([]),
+    // Quick to-dos captured alongside the log. These create standalone
+    // schedule_items (kind='todo') in the same project. Optional assignee is
+    // a profile XOR company. Only applied on create-time entries with a
+    // non-empty title; editing an existing log ignores this array.
+    todos: z
+      .array(
+        z.object({
+          title: z.string(),
+          due_date: optStr,
+          assignee_profile_id: optStr,
+          assignee_company_id: optStr,
+        })
+      )
+      .default([]),
   })
   .passthrough()
 
@@ -176,6 +190,61 @@ export async function saveDailyLog(input: DailyLogInputT) {
       // a same-staff cross-log accident.
       .eq("daily_log_id", id)
     if (capErr) throw new Error(capErr.message)
+  }
+
+  // Create any quick to-dos captured on the log. These are standalone
+  // schedule_items in the same project — we don't tie the rows to the log
+  // (there's no source_daily_log_id column), they just give the PM a fast
+  // way to jot follow-ups while writing the log. Empty-title rows are
+  // dropped. Failures here must not roll back the saved log, so we collect
+  // errors and surface them without throwing past the log save.
+  const newTodos = parsed.todos.filter((t) => t.title.trim() !== "")
+  if (newTodos.length) {
+    for (const t of newTodos) {
+      const pid = nz(t.assignee_profile_id)
+      const cid = nz(t.assignee_company_id)
+      const { data: todoRow, error: todoErr } = await supabase
+        .from("schedule_items")
+        .insert({
+          project_id: parsed.project_id,
+          kind: "todo",
+          title: t.title.trim(),
+          due_date: nz(t.due_date),
+          status: "not_started",
+          created_by: profile.id,
+        })
+        .select("id")
+        .single()
+      if (todoErr) {
+        console.warn("[saveDailyLog] to-do create failed:", todoErr.message)
+        continue
+      }
+      if (pid || cid) {
+        // Enforce the same profile-XOR-company rule saveScheduleItem uses.
+        // The UI only ever sends one, so a both-set row means a malformed
+        // client — skip just the assignment (keep the to-do) and log it.
+        if (pid && cid) {
+          console.warn(
+            "[saveDailyLog] to-do assignee skipped: must be a profile or a company, not both"
+          )
+        } else {
+          const { error: aErr } = await supabase
+            .from("schedule_assignments")
+            .insert({
+              schedule_item_id: todoRow.id,
+              profile_id: pid,
+              company_id: cid,
+            })
+          if (aErr) {
+            console.warn(
+              "[saveDailyLog] to-do assignment failed:",
+              aErr.message
+            )
+          }
+        }
+      }
+    }
+    revalidatePath(`/projects/${parsed.project_id}/schedule`)
   }
 
   revalidatePath(`/projects/${parsed.project_id}/daily-logs`)

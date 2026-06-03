@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils"
 
 const TABS = [
   { slug: "schedule", label: "Schedule", icon: Calendar },
-  { slug: "daily-logs", label: "Daily Logs", icon: ScrollText },
+  { slug: "daily-logs", label: "Job Logs", icon: ScrollText },
   { slug: "decisions", label: "Decisions", icon: ClipboardList },
 ] as const
 

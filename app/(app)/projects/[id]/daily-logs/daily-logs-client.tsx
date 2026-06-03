@@ -51,7 +51,7 @@ export function DailyLogsClient({ data }: { data: DailyLogsData }) {
         </div>
         {canEdit && (
           <Button onClick={() => setDrawerState({ mode: "create" })}>
-            <Plus className="h-4 w-4" /> New daily log
+            <Plus className="h-4 w-4" /> New job log
           </Button>
         )}
       </div>
@@ -59,16 +59,16 @@ export function DailyLogsClient({ data }: { data: DailyLogsData }) {
       {data.logs.length === 0 ? (
         <EmptyState
           icon={<NotebookPen className="h-10 w-10" />}
-          title="No daily logs yet"
+          title="No job logs yet"
           description={
             canEdit
-              ? "Daily logs capture what happened on site each day, with photos and which subs were there. Mark each one as internal-only or client-visible."
+              ? "Job logs capture what happened on site each day, with photos and which subs were there. Mark each one as internal-only or client-visible."
               : "No logs are visible to you yet."
           }
           action={
             canEdit ? (
               <Button onClick={() => setDrawerState({ mode: "create" })}>
-                <Plus className="h-4 w-4" /> New daily log
+                <Plus className="h-4 w-4" /> New job log
               </Button>
             ) : null
           }

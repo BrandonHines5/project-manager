@@ -317,11 +317,11 @@ export async function globalSearch(input: SearchInput): Promise<SearchResult[]> 
       project_id: d.project_id,
       project_name: p?.name ?? null,
       project_number: p?.project_number ?? null,
-      title: `Daily log · ${d.log_date}`,
+      title: `Job log · ${d.log_date}`,
       snippet: snippet(d.notes, query),
       href: `/projects/${d.project_id}/daily-logs`,
       meta:
-        d.visibility === "client" ? "Daily log · client-visible" : "Daily log",
+        d.visibility === "client" ? "Job log · client-visible" : "Job log",
     })
   }
 

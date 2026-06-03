@@ -37,6 +37,11 @@ const ChecklistItem = z.object({
   id: optStr,
   label: z.string().default(""),
   is_done: z.boolean().default(false),
+  // Optional per-item assignee — exactly one of profile/company, or neither.
+  // When set, the assignee is also rolled up onto the parent to-do's
+  // assignments so the to-do shows in their queue (see saveScheduleItem).
+  assignee_profile_id: optStr,
+  assignee_company_id: optStr,
 })
 
 const Predecessor = z.object({
@@ -112,6 +117,30 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
       throw new Error(
         "An assignment must reference exactly one of profile or company, not both."
       )
+    }
+  }
+
+  // Roll checklist-item assignees up onto the to-do's assignments. Assigning
+  // someone to a checklist item implicitly makes them responsible for the
+  // to-do, so we de-dupe them into the assignment set. Only meaningful for
+  // todos (work items don't carry a checklist).
+  if (parsed.kind === "todo") {
+    const seen = new Set(
+      cleanedAssignments.map((a) => `${a.profile_id ?? ""}|${a.company_id ?? ""}`)
+    )
+    for (const c of parsed.checklist) {
+      const pid = nz(c.assignee_profile_id)
+      const cid = nz(c.assignee_company_id)
+      if (pid && cid) {
+        throw new Error(
+          "A checklist item assignee must be a profile or a company, not both."
+        )
+      }
+      if (!pid && !cid) continue
+      const key = `${pid ?? ""}|${cid ?? ""}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      cleanedAssignments.push({ profile_id: pid, company_id: cid })
     }
   }
 
@@ -265,6 +294,8 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
         label: c.label,
         is_done: c.is_done,
         position: i,
+        assignee_profile_id: nz(c.assignee_profile_id),
+        assignee_company_id: nz(c.assignee_company_id),
       }))
     if (rows.length) {
       const { error: chErr } = await supabase
@@ -1030,6 +1061,321 @@ export async function toggleChecklistItem({
     .eq("id", id)
   if (error) throw new Error(error.message)
   revalidatePath(`/projects/${project_id}/schedule`)
+}
+
+// ============================================================================
+// Copy a to-do to the same job or to other jobs
+// ============================================================================
+//
+// "Copy to job" duplicates a to-do (title, description, priority, recurrence,
+// checklist + assignees, and direct assignments) into one or more target
+// projects. When the source to-do nests under a work item, we try to re-link
+// it under a work item with the SAME TITLE in the target project. If no such
+// parent exists ("parent not obvious"), the caller must supply a parent_id
+// and due_date for that target — the UI prompts for them.
+
+export type CopyTodoData = {
+  source: {
+    title: string
+    parent_title: string | null
+    due_date: string | null
+    has_anchor: boolean
+  }
+  projects: {
+    id: string
+    label: string
+    work_items: { id: string; title: string }[]
+  }[]
+}
+
+function projectLabel(p: {
+  name: string | null
+  project_number: string | number | null
+  address: string | null
+}): string {
+  return (
+    p.name ||
+    p.address ||
+    (p.project_number != null ? `Project #${p.project_number}` : "Untitled")
+  )
+}
+
+/**
+ * Loads the data the "Copy to job" dialog needs: the source to-do's shape and
+ * every project (with its work items) the staff member can copy into. RLS
+ * scopes the project + work-item reads to what the caller may see.
+ */
+export async function getCopyTodoData(input: {
+  source_item_id: string
+}): Promise<CopyTodoData> {
+  await requireStaff()
+  const parsed = z.object({ source_item_id: z.string() }).parse(input)
+  const supabase = await createSupabaseServerClient()
+
+  const { data: source, error: srcErr } = await supabase
+    .from("schedule_items")
+    .select(
+      "id, kind, title, parent_id, due_date, parent_anchor, parent_offset_days"
+    )
+    .eq("id", parsed.source_item_id)
+    .maybeSingle()
+  if (srcErr) throw new Error(srcErr.message)
+  if (!source) throw new Error("To-do not found.")
+  if (source.kind !== "todo") throw new Error("Only to-dos can be copied.")
+
+  let parentTitle: string | null = null
+  if (source.parent_id) {
+    const { data: parent } = await supabase
+      .from("schedule_items")
+      .select("title")
+      .eq("id", source.parent_id)
+      .maybeSingle()
+    parentTitle = parent?.title ?? null
+  }
+
+  const [{ data: projects, error: projErr }, { data: workItems, error: wiErr }] =
+    await Promise.all([
+      supabase
+        .from("projects")
+        .select("id, name, project_number, address")
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("schedule_items")
+        .select("id, project_id, title")
+        .eq("kind", "work")
+        .order("position", { ascending: true }),
+    ])
+  if (projErr) throw new Error(projErr.message)
+  if (wiErr) throw new Error(wiErr.message)
+
+  const byProject = new Map<string, { id: string; title: string }[]>()
+  for (const w of workItems ?? []) {
+    const arr = byProject.get(w.project_id) ?? []
+    arr.push({ id: w.id, title: w.title })
+    byProject.set(w.project_id, arr)
+  }
+
+  return {
+    source: {
+      title: source.title,
+      parent_title: parentTitle,
+      due_date: source.due_date,
+      has_anchor: source.parent_anchor != null,
+    },
+    projects: (projects ?? []).map((p) => ({
+      id: p.id,
+      label: projectLabel(p),
+      work_items: byProject.get(p.id) ?? [],
+    })),
+  }
+}
+
+const CopyTodoInput = z.object({
+  source_item_id: z.string(),
+  targets: z
+    .array(
+      z.object({
+        project_id: z.string(),
+        // Explicit parent chosen in the UI. When absent, the action tries to
+        // auto-match a work item by the source parent's title.
+        parent_id: optStr,
+        // Explicit due date chosen in the UI (used when the parent isn't
+        // anchored / not auto-resolved). When absent, falls back to the
+        // source's due date.
+        due_date: optStr,
+      })
+    )
+    .min(1)
+    .max(50),
+})
+
+export type CopyTodoResult = {
+  created: number
+  skipped: { project_id: string; reason: string }[]
+}
+
+export async function copyTodoToTargets(input: {
+  source_item_id: string
+  targets: { project_id: string; parent_id?: string | null; due_date?: string | null }[]
+}): Promise<CopyTodoResult> {
+  const profile = await requireStaff()
+  const parsed = CopyTodoInput.parse(input)
+  const supabase = await createSupabaseServerClient()
+
+  // Load the source to-do, its checklist, and direct assignments once.
+  const { data: source, error: srcErr } = await supabase
+    .from("schedule_items")
+    .select(
+      "id, kind, title, description, priority, recurrence_rule, due_date, parent_id, parent_anchor, parent_offset_days"
+    )
+    .eq("id", parsed.source_item_id)
+    .maybeSingle()
+  if (srcErr) throw new Error(srcErr.message)
+  if (!source) throw new Error("To-do not found.")
+  if (source.kind !== "todo") throw new Error("Only to-dos can be copied.")
+
+  // Resolve the source parent's title so we can auto-match in target projects.
+  let sourceParentTitle: string | null = null
+  if (source.parent_id) {
+    const { data: parent } = await supabase
+      .from("schedule_items")
+      .select("title")
+      .eq("id", source.parent_id)
+      .maybeSingle()
+    sourceParentTitle = parent?.title ?? null
+  }
+
+  const [{ data: checklist }, { data: assignments }] = await Promise.all([
+    supabase
+      .from("todo_checklist_items")
+      .select("label, is_done, position, assignee_profile_id, assignee_company_id")
+      .eq("schedule_item_id", source.id)
+      .order("position", { ascending: true }),
+    supabase
+      .from("schedule_assignments")
+      .select("profile_id, company_id")
+      .eq("schedule_item_id", source.id),
+  ])
+
+  const created: string[] = []
+  const touchedProjects = new Set<string>()
+  const skipped: { project_id: string; reason: string }[] = []
+
+  for (const t of parsed.targets) {
+    // Confirm the target project is visible to this staff member.
+    const { data: proj, error: projErr } = await supabase
+      .from("projects")
+      .select("id")
+      .eq("id", t.project_id)
+      .maybeSingle()
+    if (projErr) throw new Error(projErr.message)
+    if (!proj) {
+      skipped.push({ project_id: t.project_id, reason: "project not found" })
+      continue
+    }
+
+    // Resolve the parent work item in the target project.
+    let parentId = nz(t.parent_id)
+    if (parentId) {
+      const { data: chosen } = await supabase
+        .from("schedule_items")
+        .select("id")
+        .eq("id", parentId)
+        .eq("project_id", t.project_id)
+        .eq("kind", "work")
+        .maybeSingle()
+      if (!chosen) {
+        skipped.push({
+          project_id: t.project_id,
+          reason: "chosen parent not found in target project",
+        })
+        continue
+      }
+    } else if (sourceParentTitle) {
+      // Auto-match a work item with the same title (case-insensitive).
+      const { data: matches } = await supabase
+        .from("schedule_items")
+        .select("id, title")
+        .eq("project_id", t.project_id)
+        .eq("kind", "work")
+      const match = (matches ?? []).find(
+        (m) =>
+          m.title.trim().toLowerCase() ===
+          sourceParentTitle!.trim().toLowerCase()
+      )
+      parentId = match?.id ?? null
+    }
+
+    // Resolve due date / anchor. If the source was anchored AND we have a
+    // parent, replicate the anchor against the new parent. Otherwise use the
+    // explicit due date, falling back to the source's due date.
+    let dueDate: string | null = nz(t.due_date) ?? source.due_date
+    let anchor: "start" | "end" | null = null
+    let offset: number | null = null
+    if (source.parent_anchor && parentId) {
+      const { data: parentRow } = await supabase
+        .from("schedule_items")
+        .select("start_date, end_date")
+        .eq("id", parentId)
+        .maybeSingle()
+      if (parentRow) {
+        anchor = source.parent_anchor
+        offset = source.parent_offset_days ?? 0
+        dueDate = recomputeAnchoredDueDate(parentRow, anchor, offset)
+      }
+    }
+
+    const { data: newItem, error: insErr } = await supabase
+      .from("schedule_items")
+      .insert({
+        project_id: t.project_id,
+        parent_id: parentId,
+        kind: "todo",
+        title: source.title,
+        description: source.description,
+        priority: source.priority,
+        recurrence_rule: source.recurrence_rule,
+        due_date: dueDate,
+        parent_anchor: anchor,
+        parent_offset_days: offset,
+        status: "not_started",
+        created_by: profile.id,
+      })
+      .select("id")
+      .single()
+    if (insErr) {
+      skipped.push({ project_id: t.project_id, reason: insErr.message })
+      continue
+    }
+
+    // Copy checklist (reset is_done — a copy starts fresh).
+    if (checklist && checklist.length) {
+      const rows = checklist.map((c, i) => ({
+        schedule_item_id: newItem.id,
+        label: c.label,
+        is_done: false,
+        position: i,
+        assignee_profile_id: c.assignee_profile_id,
+        assignee_company_id: c.assignee_company_id,
+      }))
+      const { error: clErr } = await supabase
+        .from("todo_checklist_items")
+        .insert(rows)
+      if (clErr) {
+        console.warn("[copyTodoToTargets] checklist copy failed:", clErr.message)
+      }
+    }
+
+    // Copy direct assignments.
+    if (assignments && assignments.length) {
+      const rows = assignments
+        .filter((a) => a.profile_id || a.company_id)
+        .map((a) => ({
+          schedule_item_id: newItem.id,
+          profile_id: a.profile_id,
+          company_id: a.company_id,
+        }))
+      if (rows.length) {
+        const { error: asErr } = await supabase
+          .from("schedule_assignments")
+          .insert(rows)
+        if (asErr) {
+          console.warn(
+            "[copyTodoToTargets] assignment copy failed:",
+            asErr.message
+          )
+        }
+      }
+    }
+
+    created.push(newItem.id)
+    touchedProjects.add(t.project_id)
+  }
+
+  for (const pid of touchedProjects) {
+    revalidatePath(`/projects/${pid}/schedule`)
+  }
+  return { created: created.length, skipped }
 }
 
 // ============================================================================

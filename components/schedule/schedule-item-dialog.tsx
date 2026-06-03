@@ -10,6 +10,7 @@ import {
   AlertTriangle,
   GripVertical,
   MessageSquare,
+  Copy,
 } from "lucide-react"
 import {
   Dialog,
@@ -42,6 +43,7 @@ import {
   type SchedulePredecessorDependent,
 } from "@/app/actions/schedule"
 import { DeleteWithDependentsDialog } from "./delete-with-dependents-dialog"
+import { CopyTodoDialog } from "./copy-todo-dialog"
 import {
   AttachmentsEditor,
   AttachmentsCreatePlaceholder,
@@ -58,7 +60,13 @@ import { checklistFor, predecessorsOf, delaysFor } from "./helpers"
 type Mode = "create" | "edit"
 
 type Assignment = { profile_id?: string | null; company_id?: string | null }
-type ChecklistItem = { id?: string; label: string; is_done: boolean }
+type ChecklistItem = {
+  id?: string
+  label: string
+  is_done: boolean
+  assignee_profile_id?: string | null
+  assignee_company_id?: string | null
+}
 type PredEdit = { predecessor_id: string; dep_type: Enums<"dependency_type">; lag_days: number }
 
 export function ScheduleItemDialog({
@@ -183,6 +191,8 @@ export function ScheduleItemDialog({
       id: c.id,
       label: c.label,
       is_done: c.is_done,
+      assignee_profile_id: c.assignee_profile_id,
+      assignee_company_id: c.assignee_company_id,
     }))
   })
   const [predecessors, setPredecessors] = useState<PredEdit[]>(() => {
@@ -194,6 +204,7 @@ export function ScheduleItemDialog({
     }))
   })
   const [showDelay, setShowDelay] = useState(false)
+  const [showCopy, setShowCopy] = useState(false)
   const [dependents, setDependents] = useState<
     SchedulePredecessorDependent[] | null
   >(null)
@@ -219,17 +230,19 @@ export function ScheduleItemDialog({
     (i) => i.kind === "work" && i.id !== item?.id
   )
 
-  async function handleSave() {
+  // Validates the form and assembles the server payload. Returns null (after
+  // toasting the reason) when the form isn't valid, so callers can bail.
+  function buildPayload(): ScheduleItemInputT | null {
     if (!title.trim()) {
       toast.error("Title is required")
-      return
+      return null
     }
     if (kind === "work" && startDate && endDate && endDate < startDate) {
       toast.error("End date must be on or after start date")
-      return
+      return null
     }
     const anchored = kind === "todo" && !!parentId && anchorEnabled
-    const payload: ScheduleItemInputT = {
+    return {
       id: item?.id,
       project_id: data.project_id,
       parent_id: kind === "todo" ? (parentId || null) : null,
@@ -254,12 +267,35 @@ export function ScheduleItemDialog({
       checklist: kind === "todo" ? checklist : [],
       predecessors: kind === "work" ? predecessors : [],
     }
+  }
+
+  async function handleSave() {
+    const payload = buildPayload()
+    if (!payload) return
     startTransition(async () => {
       try {
         await saveScheduleItem(payload)
         toast.success(mode === "edit" ? "Saved" : "Created")
         router.refresh()
         onClose()
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Save failed")
+      }
+    })
+  }
+
+  // Save first, then open the copy dialog — without this, the copy would
+  // duplicate the last-persisted row and silently drop any unsaved edits the
+  // user made in this drawer. We keep the drawer open so they land back here
+  // after copying.
+  function handleSaveAndCopy() {
+    const payload = buildPayload()
+    if (!payload) return
+    startTransition(async () => {
+      try {
+        await saveScheduleItem(payload)
+        router.refresh()
+        setShowCopy(true)
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Save failed")
       }
@@ -535,7 +571,12 @@ export function ScheduleItemDialog({
 
           {/* Checklist (todos only) */}
           {kind === "todo" && (
-            <ChecklistEditor value={checklist} onChange={setChecklist} />
+            <ChecklistEditor
+              value={checklist}
+              onChange={setChecklist}
+              profiles={data.profiles}
+              companies={data.companies}
+            />
           )}
 
           {/* Attachments (todos only) — needs a persisted id so the upload
@@ -637,6 +678,17 @@ export function ScheduleItemDialog({
               <Trash2 className="h-4 w-4" /> Delete
             </Button>
           )}
+          {mode === "edit" && item && item.kind === "todo" && (
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={handleSaveAndCopy}
+              disabled={pending}
+              title="Saves your changes, then opens the copy dialog"
+            >
+              <Copy className="h-4 w-4" /> Copy to job
+            </Button>
+          )}
           <Button type="button" variant="ghost" onClick={onClose}>
             Cancel
           </Button>
@@ -645,6 +697,14 @@ export function ScheduleItemDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
+      {showCopy && item && (
+        <CopyTodoDialog
+          open={true}
+          onClose={() => setShowCopy(false)}
+          sourceItemId={item.id}
+          currentProjectId={data.project_id}
+        />
+      )}
       {dependents && item && (
         <DeleteWithDependentsDialog
           open={true}
@@ -905,54 +965,127 @@ function PredecessorsEditor({
 function ChecklistEditor({
   value,
   onChange,
+  profiles,
+  companies,
 }: {
   value: ChecklistItem[]
   onChange: (v: ChecklistItem[]) => void
+  profiles: ScheduleData["profiles"]
+  companies: ScheduleData["companies"]
 }) {
+  // A single dropdown encodes both kinds of assignee with a prefixed value
+  // ("p:<id>" for a profile, "c:<id>" for a company) so we can keep the
+  // profile-XOR-company shape the server expects.
+  function setAssignee(idx: number, raw: string) {
+    const next = [...value]
+    const c = next[idx]
+    if (!raw) {
+      next[idx] = { ...c, assignee_profile_id: null, assignee_company_id: null }
+    } else if (raw.startsWith("p:")) {
+      next[idx] = {
+        ...c,
+        assignee_profile_id: raw.slice(2),
+        assignee_company_id: null,
+      }
+    } else {
+      next[idx] = {
+        ...c,
+        assignee_profile_id: null,
+        assignee_company_id: raw.slice(2),
+      }
+    }
+    onChange(next)
+  }
+
   return (
     <div>
       <Label>Checklist</Label>
-      <ul className="mt-1 space-y-1">
-        {value.map((c, i) => (
-          <li key={i} className="flex items-center gap-2">
-            <GripVertical className="h-3.5 w-3.5 text-muted" />
-            <input
-              type="checkbox"
-              checked={c.is_done}
-              onChange={(e) => {
-                const next = [...value]
-                next[i] = { ...c, is_done: e.target.checked }
-                onChange(next)
-              }}
-              className="h-4 w-4 rounded border-border-strong"
-            />
-            <Input
-              value={c.label}
-              onChange={(e) => {
-                const next = [...value]
-                next[i] = { ...c, label: e.target.value }
-                onChange(next)
-              }}
-              placeholder="Checklist item"
-              className="flex-1"
-            />
-            <button
-              type="button"
-              className="text-muted hover:text-danger p-1 cursor-pointer"
-              onClick={() => onChange(value.filter((_, idx) => idx !== i))}
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </li>
-        ))}
+      <ul className="mt-1 space-y-1.5">
+        {value.map((c, i) => {
+          const assigneeValue = c.assignee_profile_id
+            ? `p:${c.assignee_profile_id}`
+            : c.assignee_company_id
+            ? `c:${c.assignee_company_id}`
+            : ""
+          return (
+            <li key={i} className="flex items-center gap-2">
+              <GripVertical className="h-3.5 w-3.5 text-muted shrink-0" />
+              <input
+                type="checkbox"
+                checked={c.is_done}
+                onChange={(e) => {
+                  const next = [...value]
+                  next[i] = { ...c, is_done: e.target.checked }
+                  onChange(next)
+                }}
+                className="h-4 w-4 rounded border-border-strong shrink-0"
+              />
+              <Input
+                value={c.label}
+                onChange={(e) => {
+                  const next = [...value]
+                  next[i] = { ...c, label: e.target.value }
+                  onChange(next)
+                }}
+                placeholder="Checklist item"
+                className="flex-1 min-w-0"
+              />
+              <Select
+                value={assigneeValue}
+                onChange={(e) => setAssignee(i, e.target.value)}
+                className="w-36 shrink-0 text-xs"
+                aria-label="Assign checklist item"
+                title="Assigning someone here also adds them to this to-do"
+              >
+                <option value="">Unassigned</option>
+                <optgroup label="Staff / users">
+                  {profiles.map((p) => (
+                    <option key={p.id} value={`p:${p.id}`}>
+                      {p.full_name || p.email}
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="Subs / vendors">
+                  {companies
+                    .filter((co) => co.type !== "client")
+                    .map((co) => (
+                      <option key={co.id} value={`c:${co.id}`}>
+                        {co.name}
+                      </option>
+                    ))}
+                </optgroup>
+              </Select>
+              <button
+                type="button"
+                className="text-muted hover:text-danger p-1 cursor-pointer shrink-0"
+                onClick={() => onChange(value.filter((_, idx) => idx !== i))}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </li>
+          )
+        })}
       </ul>
       <button
         type="button"
-        onClick={() => onChange([...value, { label: "", is_done: false }])}
+        onClick={() =>
+          onChange([
+            ...value,
+            {
+              label: "",
+              is_done: false,
+              assignee_profile_id: null,
+              assignee_company_id: null,
+            },
+          ])
+        }
         className="mt-2 text-xs text-brand-600 hover:underline inline-flex items-center gap-1 cursor-pointer"
       >
         <Plus className="h-3 w-3" /> Add checklist item
       </button>
+      <p className="mt-1.5 text-[11px] text-muted">
+        Assigning a checklist item to someone also adds them to this to-do.
+      </p>
     </div>
   )
 }

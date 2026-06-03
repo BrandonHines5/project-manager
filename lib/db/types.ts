@@ -1423,6 +1423,8 @@ export type Database = {
       }
       todo_checklist_items: {
         Row: {
+          assignee_company_id: string | null
+          assignee_profile_id: string | null
           created_at: string
           id: string
           is_done: boolean
@@ -1431,6 +1433,8 @@ export type Database = {
           schedule_item_id: string
         }
         Insert: {
+          assignee_company_id?: string | null
+          assignee_profile_id?: string | null
           created_at?: string
           id?: string
           is_done?: boolean
@@ -1439,6 +1443,8 @@ export type Database = {
           schedule_item_id: string
         }
         Update: {
+          assignee_company_id?: string | null
+          assignee_profile_id?: string | null
           created_at?: string
           id?: string
           is_done?: boolean
@@ -1447,6 +1453,20 @@ export type Database = {
           schedule_item_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "todo_checklist_items_assignee_company_id_fkey"
+            columns: ["assignee_company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "todo_checklist_items_assignee_profile_id_fkey"
+            columns: ["assignee_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "todo_checklist_items_schedule_item_id_fkey"
             columns: ["schedule_item_id"]

@@ -11,6 +11,7 @@ import {
   EyeOff,
   Upload,
   FileIcon,
+  ListTodo,
 } from "lucide-react"
 import {
   Dialog,
@@ -34,6 +35,7 @@ import type { Tables, Enums } from "@/lib/db/types"
 import type { DailyLogsData } from "@/app/(app)/projects/[id]/daily-logs/daily-logs-client"
 
 type SubOnSite = { company_id: string; notes?: string | null }
+type QuickTodo = { title: string; due_date: string; assignee: string }
 
 type Attachment = {
   id?: string
@@ -89,6 +91,10 @@ export function DailyLogDrawer({
   })
 
   const [selCompany, setSelCompany] = useState("")
+  // Quick to-dos captured alongside a new log. Only offered when creating —
+  // re-saving an edited log shouldn't re-create them. Assignee is encoded as
+  // "p:<id>" (profile) or "c:<id>" (company), matching the server's XOR shape.
+  const [todos, setTodos] = useState<QuickTodo[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   function addSub() {
@@ -173,6 +179,21 @@ export function DailyLogDrawer({
         file_size: a.file_size,
         caption: a.caption,
       })),
+      todos:
+        mode === "create"
+          ? todos
+              .filter((t) => t.title.trim() !== "")
+              .map((t) => ({
+                title: t.title.trim(),
+                due_date: t.due_date || null,
+                assignee_profile_id: t.assignee.startsWith("p:")
+                  ? t.assignee.slice(2)
+                  : null,
+                assignee_company_id: t.assignee.startsWith("c:")
+                  ? t.assignee.slice(2)
+                  : null,
+              }))
+          : [],
     }
     startTransition(async () => {
       try {
@@ -188,7 +209,7 @@ export function DailyLogDrawer({
 
   async function handleDelete() {
     if (!log) return
-    if (!confirm("Delete this daily log and all its photos?")) return
+    if (!confirm("Delete this job log and all its photos?")) return
     startTransition(async () => {
       try {
         await deleteDailyLog({ id: log.id, project_id: data.project_id })
@@ -207,7 +228,7 @@ export function DailyLogDrawer({
         <DialogHeader>
           <div>
             <DialogTitle>
-              {mode === "edit" ? "Edit daily log" : "New daily log"}
+              {mode === "edit" ? "Edit job log" : "New job log"}
             </DialogTitle>
             <DialogDescription>
               Capture what happened on site today. Photos and notes can be
@@ -236,6 +257,16 @@ export function DailyLogDrawer({
               placeholder="What happened today? Weather, progress, issues, decisions, who showed up…"
             />
           </Field>
+
+          {/* Quick to-dos (create only) */}
+          {mode === "create" && (
+            <TodosEditor
+              todos={todos}
+              onChange={setTodos}
+              profiles={data.profiles}
+              companies={data.companies}
+            />
+          )}
 
           {/* Subs on site */}
           <div>
@@ -360,6 +391,95 @@ export function DailyLogDrawer({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function TodosEditor({
+  todos,
+  onChange,
+  profiles,
+  companies,
+}: {
+  todos: QuickTodo[]
+  onChange: (v: QuickTodo[]) => void
+  profiles: DailyLogsData["profiles"]
+  companies: DailyLogsData["companies"]
+}) {
+  function update(idx: number, patch: Partial<QuickTodo>) {
+    onChange(todos.map((t, i) => (i === idx ? { ...t, ...patch } : t)))
+  }
+  return (
+    <div>
+      <Label>To-dos</Label>
+      <p className="text-xs text-muted mt-0.5">
+        Jot follow-ups from today. Each becomes a to-do on this project&apos;s
+        schedule.
+      </p>
+      {todos.length > 0 && (
+        <ul className="mt-2 space-y-2">
+          {todos.map((t, i) => (
+            <li
+              key={i}
+              className="grid grid-cols-1 sm:grid-cols-[1fr_140px_160px_auto] gap-2 items-center"
+            >
+              <Input
+                value={t.title}
+                onChange={(e) => update(i, { title: e.target.value })}
+                placeholder="What needs doing?"
+                aria-label="To-do title"
+              />
+              <Input
+                type="date"
+                value={t.due_date}
+                onChange={(e) => update(i, { due_date: e.target.value })}
+                aria-label="Due date"
+              />
+              <Select
+                value={t.assignee}
+                onChange={(e) => update(i, { assignee: e.target.value })}
+                aria-label="Assignee"
+                className="text-xs"
+              >
+                <option value="">Unassigned</option>
+                <optgroup label="Staff / users">
+                  {profiles.map((p) => (
+                    <option key={p.id} value={`p:${p.id}`}>
+                      {p.full_name || p.email}
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="Subs / vendors">
+                  {companies
+                    .filter((c) => c.type !== "client")
+                    .map((c) => (
+                      <option key={c.id} value={`c:${c.id}`}>
+                        {c.name}
+                      </option>
+                    ))}
+                </optgroup>
+              </Select>
+              <button
+                type="button"
+                onClick={() => onChange(todos.filter((_, idx) => idx !== i))}
+                className="text-muted hover:text-danger cursor-pointer p-1 justify-self-start"
+                aria-label="Remove to-do"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <button
+        type="button"
+        onClick={() =>
+          onChange([...todos, { title: "", due_date: "", assignee: "" }])
+        }
+        className="mt-2 text-xs text-brand-600 hover:underline inline-flex items-center gap-1 cursor-pointer"
+      >
+        <ListTodo className="h-3.5 w-3.5" /> Add to-do
+      </button>
+    </div>
   )
 }
 

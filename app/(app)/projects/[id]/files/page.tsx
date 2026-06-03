@@ -89,7 +89,7 @@ export default async function FilesPage({
       file_type: a.file_type,
       caption: a.caption,
       source: "daily-log",
-      source_label: `Daily log · ${dl.log_date}`,
+      source_label: `Job log · ${dl.log_date}`,
       source_date: dl.log_date,
       tags: a.tags ?? [],
     })

@@ -473,7 +473,7 @@ function EditDialog({
               </p>
               <p className="text-muted text-xs">
                 This removes their account and signs them out. Their authored
-                content (decisions, daily logs, comments) is preserved with the
+                content (decisions, job logs, comments) is preserved with the
                 author shown as removed.
               </p>
               <div className="flex gap-2 pt-1">
