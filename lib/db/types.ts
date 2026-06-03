@@ -1042,6 +1042,7 @@ export type Database = {
           name: string
           notes: string | null
           project_number: string
+          project_manager: string | null
           start_date: string | null
           status: Database["public"]["Enums"]["project_status"]
           target_completion_date: string | null
@@ -1063,6 +1064,7 @@ export type Database = {
           name: string
           notes?: string | null
           project_number: string
+          project_manager?: string | null
           start_date?: string | null
           status?: Database["public"]["Enums"]["project_status"]
           target_completion_date?: string | null
@@ -1084,6 +1086,7 @@ export type Database = {
           name?: string
           notes?: string | null
           project_number?: string
+          project_manager?: string | null
           start_date?: string | null
           status?: Database["public"]["Enums"]["project_status"]
           target_completion_date?: string | null

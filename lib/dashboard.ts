@@ -183,6 +183,12 @@ export function verifyDashboardSignature(
  * The dashboard is the source of truth for everything here; PM mirrors them.
  */
 export interface DashboardProject {
+  // The dashboard's OWN internal project id (a uuid). The dashboard's
+  // /projects/[id] route is keyed on this, NOT on project_number — linking
+  // by project_number produces "invalid input syntax for type uuid". We
+  // capture it so PM can build a working dashboard link. Null if the
+  // dashboard response doesn't include it.
+  id: string | null
   project_number: string
   name: string
   address: string | null
@@ -190,9 +196,49 @@ export interface DashboardProject {
   client_name: string | null
   client_email: string | null
   client_phone: string | null
+  // Who's managing the job on the dashboard side. Free-text label (a name or
+  // email), mirrored into PM for display. Null if not provided.
+  project_manager: string | null
+  // A canonical, absolute dashboard URL for this project, if the dashboard
+  // hands one back directly. Preferred over building one ourselves.
+  url: string | null
   // ISO date strings or null. Optional: dashboards may not capture them.
   start_date?: string | null
   target_completion_date?: string | null
+}
+
+/**
+ * Builds the dashboard link for a project that opens the actual job. Prefers
+ * an absolute URL the dashboard supplied, then the dashboard's internal id
+ * (the route's real key), and only falls back to project_number as a last
+ * resort (that path 500s on uuid-keyed dashboards — see DashboardProject.id).
+ * Returns null when DASHBOARD_BASE_URL isn't configured.
+ */
+export function dashboardUrlForProject(p: {
+  id?: string | null
+  url?: string | null
+  project_number: string
+}): string | null {
+  const base = dashboardBaseUrl()
+  if (!base) return null
+  if (p.url && /^https?:\/\//i.test(p.url)) return p.url
+  if (p.id) return `${base}/projects/${encodeURIComponent(p.id)}`
+  return `${base}/projects/${encodeURIComponent(p.project_number)}`
+}
+
+// Reads the first present, non-empty string among the given keys. The
+// dashboard may name fields slightly differently (project_manager vs pm vs
+// manager); accept the common aliases so the pull works without a dashboard
+// change.
+function firstString(
+  r: Record<string, unknown>,
+  keys: string[]
+): string | null {
+  for (const k of keys) {
+    const v = r[k]
+    if (typeof v === "string" && v.trim() !== "") return v
+  }
+  return null
 }
 
 function dashboardApiHeaders(): Record<string, string> | null {
@@ -308,6 +354,7 @@ function normalizeDashboardProject(json: unknown): DashboardProject | null {
   // we can't even render a sensible picker row.
   if (!projectNumber || !name) return null
   return {
+    id: firstString(r, ["id", "project_id", "uuid"]),
     project_number: projectNumber,
     name,
     address: typeof r.address === "string" ? r.address : null,
@@ -315,6 +362,14 @@ function normalizeDashboardProject(json: unknown): DashboardProject | null {
     client_name: typeof r.client_name === "string" ? r.client_name : null,
     client_email: typeof r.client_email === "string" ? r.client_email : null,
     client_phone: typeof r.client_phone === "string" ? r.client_phone : null,
+    project_manager: firstString(r, [
+      "project_manager",
+      "project_manager_name",
+      "pm",
+      "pm_name",
+      "manager",
+    ]),
+    url: firstString(r, ["url", "dashboard_url", "link", "permalink"]),
     start_date:
       typeof r.start_date === "string" ? r.start_date : null,
     target_completion_date:

@@ -280,12 +280,20 @@ function ProjectFormFields({
   const locked = picked !== null
   const hasTemplates = templates.length > 0
   // When a dashboard project is picked, derive the canonical dashboard URL
-  // client-side so staff can see it in the form before submitting. Same
-  // logic the server uses if the field is left blank.
-  const prefilledDashboardUrl =
-    picked && dashboardBaseUrl
-      ? `${dashboardBaseUrl}/projects/${encodeURIComponent(picked.project_number)}`
-      : ""
+  // client-side so staff can see it before submitting. Mirrors the server's
+  // dashboardUrlForProject(): prefer an absolute URL the dashboard handed
+  // back, then its internal id (the route's real key — linking by
+  // project_number 500s the dashboard's uuid-keyed route), then the
+  // project_number as a last resort.
+  const prefilledDashboardUrl = !picked
+    ? ""
+    : picked.url && /^https?:\/\//i.test(picked.url)
+      ? picked.url
+      : dashboardBaseUrl && picked.id
+        ? `${dashboardBaseUrl}/projects/${encodeURIComponent(picked.id)}`
+        : dashboardBaseUrl
+          ? `${dashboardBaseUrl}/projects/${encodeURIComponent(picked.project_number)}`
+          : ""
   const [sourceTemplateId, setSourceTemplateId] = useState("")
   const selectedTemplate = templates.find((t) => t.id === sourceTemplateId)
 

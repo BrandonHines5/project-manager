@@ -8,6 +8,7 @@ import { ProjectTabs } from "./project-tabs"
 import { MembersButton } from "@/components/projects/members-dialog"
 import { DuplicateProjectButton } from "@/components/projects/duplicate-button"
 import { EditProjectButton } from "@/components/projects/edit-project-dialog"
+import { SyncDashboardButton } from "@/components/projects/sync-dashboard-button"
 import type { Enums } from "@/lib/db/types"
 
 const STATUS_LABEL: Record<Enums<"project_status">, string> = {
@@ -32,7 +33,7 @@ export default async function ProjectDetailLayout({
   const { data: project } = await supabase
     .from("projects")
     .select(
-      "id, project_number, name, address, status, dashboard_url, client_name, client_email, client_phone, contract_price, start_date, target_completion_date, notes"
+      "id, project_number, name, address, status, dashboard_url, project_manager, client_name, client_email, client_phone, contract_price, start_date, target_completion_date, notes"
     )
     .eq("id", id)
     .maybeSingle()
@@ -109,6 +110,14 @@ export default async function ProjectDetailLayout({
                   )}
                 </p>
               )}
+              {isStaff && project.project_manager && (
+                <p className="text-xs text-muted mt-1">
+                  PM:{" "}
+                  <span className="text-foreground">
+                    {project.project_manager}
+                  </span>
+                </p>
+              )}
             </div>
             <div className="flex items-center gap-4 text-sm">
               {isStaff && (
@@ -142,6 +151,7 @@ export default async function ProjectDetailLayout({
                   sourceProjectNumber={project.project_number}
                 />
               )}
+              {isStaff && <SyncDashboardButton projectId={project.id} />}
               {project.dashboard_url && (
                 <a
                   href={project.dashboard_url}
