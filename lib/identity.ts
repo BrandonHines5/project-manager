@@ -131,7 +131,7 @@ function normalize(json: unknown): DirectoryRecord | null {
  * ('client' / 'trade') or deny ('none' / 'disabled' / 'denied' → null).
  */
 export function mapDirectoryToPmRole(rec: DirectoryRecord): PmRole | null {
-  const override = rec.app_roles?.[PM_APP_KEY]?.toLowerCase()
+  const override = rec.app_roles?.[PM_APP_KEY]?.trim().toLowerCase()
   if (override === "none" || override === "disabled" || override === "denied") {
     return null
   }

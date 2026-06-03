@@ -12,8 +12,10 @@ is added as an OAuth provider and RLS keeps working on `auth.uid()`.
 
 - `app/auth/callback/route.ts` — exchanges the OAuth code, resolves the person
   against the directory, **denies unless they're active there**, and mirrors the
-  effective PM role (`app_roles['pm'] ?? role`, mapped to `staff`/`trade`/
-  `client`) into `profiles.role`.
+  effective PM role into `profiles.role`. The role comes from `app_roles['pm']`:
+  `client`/`trade` map through, deny values (`none`/`disabled`/`denied`) reject,
+  and anything else (including a missing `app_roles.pm`) defaults to `staff` —
+  it does **not** fall back to the directory's global `role`.
 - `lib/identity.ts` — the directory client (`GET /api/identity/resolve`) + role
   mapping. Fails **closed** when unconfigured.
 - Login page shows **"Sign in with Microsoft"** only when
