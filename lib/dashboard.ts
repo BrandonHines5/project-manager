@@ -196,6 +196,11 @@ export interface DashboardProject {
   client_name: string | null
   client_email: string | null
   client_phone: string | null
+  // The dashboard tracks up to two clients per project; the second slot is
+  // optional. Resolved (name/email/phone) from the dashboard's clients table.
+  client_name_2: string | null
+  client_email_2: string | null
+  client_phone_2: string | null
   // Who's managing the job on the dashboard side. Free-text label (a name or
   // email), mirrored into PM for display. Null if not provided.
   project_manager: string | null
@@ -362,6 +367,9 @@ function normalizeDashboardProject(json: unknown): DashboardProject | null {
     client_name: typeof r.client_name === "string" ? r.client_name : null,
     client_email: typeof r.client_email === "string" ? r.client_email : null,
     client_phone: typeof r.client_phone === "string" ? r.client_phone : null,
+    client_name_2: firstString(r, ["client_name_2", "client_2_name"]),
+    client_email_2: firstString(r, ["client_email_2", "client_2_email"]),
+    client_phone_2: firstString(r, ["client_phone_2", "client_2_phone"]),
     project_manager: firstString(r, [
       "project_manager",
       "project_manager_name",

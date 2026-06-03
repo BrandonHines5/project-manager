@@ -1029,8 +1029,11 @@ export type Database = {
           address: string | null
           client_company_id: string | null
           client_email: string | null
+          client_email_2: string | null
           client_name: string | null
+          client_name_2: string | null
           client_phone: string | null
+          client_phone_2: string | null
           contract_price: number | null
           created_at: string
           created_by: string | null
@@ -1051,8 +1054,11 @@ export type Database = {
           address?: string | null
           client_company_id?: string | null
           client_email?: string | null
+          client_email_2?: string | null
           client_name?: string | null
+          client_name_2?: string | null
           client_phone?: string | null
+          client_phone_2?: string | null
           contract_price?: number | null
           created_at?: string
           created_by?: string | null
@@ -1073,8 +1079,11 @@ export type Database = {
           address?: string | null
           client_company_id?: string | null
           client_email?: string | null
+          client_email_2?: string | null
           client_name?: string | null
+          client_name_2?: string | null
           client_phone?: string | null
+          client_phone_2?: string | null
           contract_price?: number | null
           created_at?: string
           created_by?: string | null

@@ -112,6 +112,10 @@ export async function createProject(
 
   // Project manager is dashboard-owned; null for blank-created projects.
   const projectManager = remote?.project_manager ?? null
+  // Second client (the form only captures the first); dashboard-owned.
+  const clientName2 = remote?.client_name_2 ?? null
+  const clientEmail2 = remote?.client_email_2 ?? null
+  const clientPhone2 = remote?.client_phone_2 ?? null
 
   // Combo path: copy a template's schedule + decisions, but use the form's
   // identity fields (typically pulled from the dashboard) for the new
@@ -137,6 +141,9 @@ export async function createProject(
         override_client_name: emptyToNull(input.client_name),
         override_client_email: emptyToNull(input.client_email),
         override_client_phone: emptyToNull(input.client_phone),
+        override_client_name_2: clientName2,
+        override_client_email_2: clientEmail2,
+        override_client_phone_2: clientPhone2,
         override_dashboard_pulled_at: dashboardPulledAt,
       })
     } catch (e) {
@@ -167,6 +174,9 @@ export async function createProject(
       client_name: emptyToNull(input.client_name),
       client_email: emptyToNull(input.client_email),
       client_phone: emptyToNull(input.client_phone),
+      client_name_2: clientName2,
+      client_email_2: clientEmail2,
+      client_phone_2: clientPhone2,
       // Set server-side after re-fetching the dashboard to confirm the
       // pull. See the dashboardPulledAt computation above.
       dashboard_pulled_at: dashboardPulledAt,
@@ -246,6 +256,12 @@ export async function syncProjectFromDashboard(input: {
     dashboard_pulled_at: string
     dashboard_url?: string | null
     project_manager?: string | null
+    client_name?: string | null
+    client_email?: string | null
+    client_phone?: string | null
+    client_name_2?: string | null
+    client_email_2?: string | null
+    client_phone_2?: string | null
   } = { dashboard_pulled_at: new Date().toISOString() }
   // Only persist a link that actually resolves the job. dashboardUrlForProject
   // returns the project_number route (which 500s) when there's no id and no
@@ -262,14 +278,33 @@ export async function syncProjectFromDashboard(input: {
   if (remote.project_manager) {
     update.project_manager = remote.project_manager
   }
+  // Client identity (both slots). Only overwrite when the dashboard returns a
+  // non-empty value — its API leaves these blank today, and we don't want to
+  // wipe values backfilled straight from the dashboard's clients table.
+  const nzTrim = (v: string | null | undefined) =>
+    v && v.trim() !== "" ? v : undefined
+  const clientFields = {
+    client_name: nzTrim(remote.client_name),
+    client_email: nzTrim(remote.client_email),
+    client_phone: nzTrim(remote.client_phone),
+    client_name_2: nzTrim(remote.client_name_2),
+    client_email_2: nzTrim(remote.client_email_2),
+    client_phone_2: nzTrim(remote.client_phone_2),
+  }
+  for (const [k, v] of Object.entries(clientFields)) {
+    if (v !== undefined) (update as Record<string, unknown>)[k] = v
+  }
 
   // Nothing useful came back beyond the timestamp — tell the user rather than
   // silently "succeeding" with no visible change.
-  if (update.dashboard_url === undefined && update.project_manager === undefined) {
+  const meaningful = Object.keys(update).filter(
+    (k) => k !== "dashboard_pulled_at"
+  )
+  if (meaningful.length === 0) {
     return {
       ok: false,
       error:
-        "The dashboard didn't return a project manager or a job link for this project. (The dashboard's API needs to expose those fields.)",
+        "The dashboard didn't return a project manager, client info, or a job link for this project. (The dashboard's API needs to expose those fields.)",
     }
   }
 
@@ -429,6 +464,9 @@ const DuplicateProjectInput = z
     override_client_name: z.string().nullish(),
     override_client_email: z.string().nullish(),
     override_client_phone: z.string().nullish(),
+    override_client_name_2: z.string().nullish(),
+    override_client_email_2: z.string().nullish(),
+    override_client_phone_2: z.string().nullish(),
     // Already-verified timestamp (set by createProject after re-fetching
     // from the dashboard). Pass-through — never trust a client-supplied one.
     override_dashboard_pulled_at: z.string().nullish(),
@@ -592,6 +630,9 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     client_name: ovr(parsed.override_client_name, source.client_name),
     client_email: ovr(parsed.override_client_email, source.client_email),
     client_phone: ovr(parsed.override_client_phone, source.client_phone),
+    client_name_2: ovr(parsed.override_client_name_2, source.client_name_2),
+    client_email_2: ovr(parsed.override_client_email_2, source.client_email_2),
+    client_phone_2: ovr(parsed.override_client_phone_2, source.client_phone_2),
     dashboard_pulled_at: parsed.override_dashboard_pulled_at ?? null,
     created_by: profile.id,
   }
