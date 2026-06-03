@@ -8,6 +8,7 @@ import { requireStaff } from "@/lib/auth"
 import { addDays } from "@/lib/utils"
 import {
   dashboardProjectUrl,
+  dashboardUrlForProject,
   getDashboardProject,
   sendDashboardWebhook,
 } from "@/lib/dashboard"
@@ -83,11 +84,6 @@ export async function createProject(
   }
   const input = parsed.data
 
-  // If staff didn't paste a URL, auto-derive from the project number so the
-  // dashboard link is canonical and immediately shareable with the client.
-  const finalDashboardUrl =
-    emptyToNull(input.dashboard_url) ?? dashboardProjectUrl(input.project_number)
-
   // Server-side verify the "this came from the dashboard" claim. The form
   // sends dashboard_pulled=1 when staff used the picker, but we can't trust
   // that flag — a crafted request could set it for any project_number. So
@@ -96,11 +92,26 @@ export async function createProject(
   // If the dashboard is unreachable / not configured / the project is no
   // longer there, we silently leave the timestamp NULL (the row still saves
   // — staff get their project, it just looks like a blank-created one).
+  // We also reuse this fetch for the canonical link + project manager.
+  let remote: Awaited<ReturnType<typeof getDashboardProject>> = null
   let dashboardPulledAt: string | null = null
   if (input.dashboard_pulled === "1") {
-    const remote = await getDashboardProject(input.project_number)
+    remote = await getDashboardProject(input.project_number)
     if (remote) dashboardPulledAt = new Date().toISOString()
   }
+
+  // Link priority: a URL staff explicitly pasted, then the dashboard's own
+  // link (built from its INTERNAL id so it actually resolves — linking by
+  // project_number 500s the dashboard's uuid-keyed route), then the
+  // project_number fallback for blank-created projects.
+  const finalDashboardUrl =
+    emptyToNull(input.dashboard_url) ??
+    (remote
+      ? dashboardUrlForProject(remote)
+      : dashboardProjectUrl(input.project_number))
+
+  // Project manager is dashboard-owned; null for blank-created projects.
+  const projectManager = remote?.project_manager ?? null
 
   // Combo path: copy a template's schedule + decisions, but use the form's
   // identity fields (typically pulled from the dashboard) for the new
@@ -121,6 +132,7 @@ export async function createProject(
         override_contract_price: input.contract_price ?? null,
         override_target_completion_date: emptyToNull(input.target_completion_date),
         override_dashboard_url: finalDashboardUrl,
+        override_project_manager: projectManager,
         override_notes: emptyToNull(input.notes),
         override_client_name: emptyToNull(input.client_name),
         override_client_email: emptyToNull(input.client_email),
@@ -150,6 +162,7 @@ export async function createProject(
       start_date: emptyToNull(input.start_date) ?? null,
       target_completion_date: emptyToNull(input.target_completion_date) ?? null,
       dashboard_url: finalDashboardUrl,
+      project_manager: projectManager,
       notes: emptyToNull(input.notes),
       client_name: emptyToNull(input.client_name),
       client_email: emptyToNull(input.client_email),
@@ -177,6 +190,66 @@ export async function createProject(
 
   revalidatePath("/projects")
   redirect(`/projects/${data.id}/schedule`)
+}
+
+// ---------------------------------------------------------------------------
+// Re-pull dashboard-owned fields for an existing project
+// ---------------------------------------------------------------------------
+
+export type SyncDashboardResult =
+  | { ok: true; project_manager: string | null }
+  | { ok: false; error: string }
+
+/**
+ * Re-fetches this project from the dashboard (by project_number) and refreshes
+ * the dashboard-owned fields PM mirrors: the canonical dashboard link (built
+ * from the dashboard's internal id so it actually opens the job) and the
+ * project manager. Used by the per-project "Sync from dashboard" button to fix
+ * projects created before this data was captured.
+ *
+ * Returns a typed result rather than throwing on user-facing failures —
+ * Next.js masks thrown messages in production, so a missing-config / not-found
+ * case would otherwise surface as a generic error toast.
+ */
+export async function syncProjectFromDashboard(input: {
+  project_id: string
+}): Promise<SyncDashboardResult> {
+  await requireStaff()
+  const parsed = z.object({ project_id: z.string() }).safeParse(input)
+  if (!parsed.success) return { ok: false, error: "Invalid project." }
+  const supabase = await createSupabaseServerClient()
+
+  const { data: project, error } = await supabase
+    .from("projects")
+    .select("id, project_number")
+    .eq("id", parsed.data.project_id)
+    .maybeSingle()
+  if (error) return { ok: false, error: error.message }
+  if (!project) return { ok: false, error: "Project not found." }
+
+  const remote = await getDashboardProject(project.project_number)
+  if (!remote) {
+    return {
+      ok: false,
+      error:
+        "Couldn't reach the dashboard, or this job isn't on it yet. Check the dashboard, then try again.",
+    }
+  }
+
+  const dashboardUrl = dashboardUrlForProject(remote)
+  const { error: uErr } = await supabase
+    .from("projects")
+    .update({
+      dashboard_url: dashboardUrl,
+      project_manager: remote.project_manager,
+      dashboard_pulled_at: new Date().toISOString(),
+    })
+    .eq("id", project.id)
+  if (uErr) return { ok: false, error: uErr.message }
+
+  revalidatePath(`/projects/${project.id}`)
+  revalidatePath("/projects")
+  return { ok: true, project_manager: remote.project_manager }
 }
 
 // ---------------------------------------------------------------------------
@@ -319,6 +392,7 @@ const DuplicateProjectInput = z
     override_contract_price: z.number().nullable().optional(),
     override_target_completion_date: z.string().nullish(),
     override_dashboard_url: z.string().nullish(),
+    override_project_manager: z.string().nullish(),
     override_notes: z.string().nullish(),
     override_client_name: z.string().nullish(),
     override_client_email: z.string().nullish(),
@@ -474,6 +548,7 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
       parsed.override_dashboard_url !== undefined
         ? parsed.override_dashboard_url
         : dashboardProjectUrl(parsed.new_project_number),
+    project_manager: ovr(parsed.override_project_manager, source.project_manager),
     notes: ovr(parsed.override_notes, source.notes),
     client_name: ovr(parsed.override_client_name, source.client_name),
     client_email: ovr(parsed.override_client_email, source.client_email),
