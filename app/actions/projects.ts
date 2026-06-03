@@ -381,6 +381,19 @@ const ProjectEditInput = z
       .regex(/^[+\d\s().\-x]*$/, "Phone may only contain digits, spaces, +, -, (), ., or x")
       .optional()
       .or(z.literal("")),
+    client_name_2: z.string().max(200).optional().or(z.literal("")),
+    client_email_2: z
+      .string()
+      .max(200)
+      .email("Must be a valid email")
+      .optional()
+      .or(z.literal("")),
+    client_phone_2: z
+      .string()
+      .max(50)
+      .regex(/^[+\d\s().\-x]*$/, "Phone may only contain digits, spaces, +, -, (), ., or x")
+      .optional()
+      .or(z.literal("")),
     notes: z.string().optional().or(z.literal("")),
   })
 
@@ -421,6 +434,9 @@ export async function updateProject(
       client_name: emptyToNull(rest.client_name),
       client_email: emptyToNull(rest.client_email),
       client_phone: emptyToNull(rest.client_phone),
+      client_name_2: emptyToNull(rest.client_name_2),
+      client_email_2: emptyToNull(rest.client_email_2),
+      client_phone_2: emptyToNull(rest.client_phone_2),
       notes: emptyToNull(rest.notes),
     })
     .eq("id", project_id)
