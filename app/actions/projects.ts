@@ -281,8 +281,10 @@ export async function syncProjectFromDashboard(input: {
   // Client identity (both slots). Only overwrite when the dashboard returns a
   // non-empty value — its API leaves these blank today, and we don't want to
   // wipe values backfilled straight from the dashboard's clients table.
-  const nzTrim = (v: string | null | undefined) =>
-    v && v.trim() !== "" ? v : undefined
+  const nzTrim = (v: string | null | undefined) => {
+    const trimmed = v?.trim()
+    return trimmed ? trimmed : undefined
+  }
   const clientFields = {
     client_name: nzTrim(remote.client_name),
     client_email: nzTrim(remote.client_email),
