@@ -29,6 +29,9 @@ type EditableProject = {
   client_name: string | null
   client_email: string | null
   client_phone: string | null
+  client_name_2: string | null
+  client_email_2: string | null
+  client_phone_2: string | null
   notes: string | null
 }
 
@@ -83,6 +86,9 @@ function EditProjectDialog({
       client_name: String(fd.get("client_name") ?? ""),
       client_email: String(fd.get("client_email") ?? ""),
       client_phone: String(fd.get("client_phone") ?? ""),
+      client_name_2: String(fd.get("client_name_2") ?? ""),
+      client_email_2: String(fd.get("client_email_2") ?? ""),
+      client_phone_2: String(fd.get("client_phone_2") ?? ""),
       notes: String(fd.get("notes") ?? ""),
     } as Parameters<typeof updateProject>[0]
 
@@ -202,6 +208,38 @@ function EditProjectDialog({
                 placeholder="jane@example.com"
                 defaultValue={project.client_email ?? ""}
                 className={cn(fieldErrors.client_email && "border-danger")}
+              />
+            </Field>
+            <p className="sm:col-span-2 text-xs font-medium uppercase tracking-wide text-muted">
+              Second client (optional)
+            </p>
+            <Field label="Client 2 name">
+              <Input
+                name="client_name_2"
+                placeholder="John Smith"
+                defaultValue={project.client_name_2 ?? ""}
+              />
+            </Field>
+            <Field label="Client 2 phone" hint={fieldErrors.client_phone_2}>
+              <Input
+                name="client_phone_2"
+                type="tel"
+                placeholder="(555) 123-4567"
+                defaultValue={project.client_phone_2 ?? ""}
+                className={cn(fieldErrors.client_phone_2 && "border-danger")}
+              />
+            </Field>
+            <Field
+              label="Client 2 email"
+              className="sm:col-span-2"
+              hint={fieldErrors.client_email_2}
+            >
+              <Input
+                name="client_email_2"
+                type="email"
+                placeholder="john@example.com"
+                defaultValue={project.client_email_2 ?? ""}
+                className={cn(fieldErrors.client_email_2 && "border-danger")}
               />
             </Field>
             <Field label="Notes" className="sm:col-span-2">
