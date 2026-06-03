@@ -247,11 +247,17 @@ export async function syncProjectFromDashboard(input: {
     dashboard_url?: string | null
     project_manager?: string | null
   } = { dashboard_pulled_at: new Date().toISOString() }
-  // dashboardUrlForProject only yields a job-resolving link when the
-  // dashboard returned an absolute url or its internal id; otherwise it
-  // falls back to the project_number route, which we must NOT persist.
-  if (remote.id || remote.url) {
-    update.dashboard_url = dashboardUrlForProject(remote)
+  // Only persist a link that actually resolves the job. dashboardUrlForProject
+  // returns the project_number route (which 500s) when there's no id and no
+  // ABSOLUTE url, and null when the dashboard base is unconfigured — neither
+  // should clobber a good stored link. Gate on the computed value, requiring
+  // an id or a genuinely absolute url first.
+  const candidateUrl =
+    remote.id || (remote.url && /^https?:\/\//i.test(remote.url))
+      ? dashboardUrlForProject(remote)
+      : null
+  if (candidateUrl) {
+    update.dashboard_url = candidateUrl
   }
   if (remote.project_manager) {
     update.project_manager = remote.project_manager
