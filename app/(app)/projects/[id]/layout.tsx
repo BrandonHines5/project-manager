@@ -33,7 +33,7 @@ export default async function ProjectDetailLayout({
   const { data: project } = await supabase
     .from("projects")
     .select(
-      "id, project_number, name, address, status, dashboard_url, project_manager, client_name, client_email, client_phone, contract_price, start_date, target_completion_date, notes"
+      "id, project_number, name, address, status, dashboard_url, project_manager, client_name, client_email, client_phone, client_name_2, client_email_2, client_phone_2, contract_price, start_date, target_completion_date, notes"
     )
     .eq("id", id)
     .maybeSingle()
@@ -83,33 +83,59 @@ export default async function ProjectDetailLayout({
               {project.address && (
                 <p className="text-sm text-muted mt-0.5">{project.address}</p>
               )}
-              {isStaff && project.client_name && (
-                <p className="text-xs text-muted mt-1">
-                  Client: <span className="text-foreground">{project.client_name}</span>
-                  {project.client_email && (
-                    <>
-                      {" · "}
-                      <a
-                        href={`mailto:${project.client_email}`}
-                        className="text-brand-600 hover:underline"
-                      >
-                        {project.client_email}
-                      </a>
-                    </>
-                  )}
-                  {project.client_phone && (
-                    <>
-                      {" · "}
-                      <a
-                        href={`tel:${project.client_phone}`}
-                        className="text-brand-600 hover:underline"
-                      >
-                        {project.client_phone}
-                      </a>
-                    </>
-                  )}
-                </p>
-              )}
+              {isStaff &&
+                (() => {
+                  // The dashboard tracks up to two clients per project; list
+                  // every one we have, each with their email + phone.
+                  const clients = [
+                    {
+                      name: project.client_name,
+                      email: project.client_email,
+                      phone: project.client_phone,
+                    },
+                    {
+                      name: project.client_name_2,
+                      email: project.client_email_2,
+                      phone: project.client_phone_2,
+                    },
+                  ].filter((c) => c.name)
+                  if (clients.length === 0) return null
+                  return (
+                    <div className="text-xs text-muted mt-1">
+                      <span>{clients.length > 1 ? "Clients:" : "Client:"}</span>
+                      <ul className="inline">
+                        {clients.map((c, i) => (
+                          <li key={i} className="inline">
+                            {i > 0 && <span className="mx-1">•</span>}
+                            <span className="text-foreground">{c.name}</span>
+                            {c.email && (
+                              <>
+                                {" · "}
+                                <a
+                                  href={`mailto:${c.email}`}
+                                  className="text-brand-600 hover:underline"
+                                >
+                                  {c.email}
+                                </a>
+                              </>
+                            )}
+                            {c.phone && (
+                              <>
+                                {" · "}
+                                <a
+                                  href={`tel:${c.phone}`}
+                                  className="text-brand-600 hover:underline"
+                                >
+                                  {c.phone}
+                                </a>
+                              </>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )
+                })()}
               {isStaff && project.project_manager && (
                 <p className="text-xs text-muted mt-1">
                   PM:{" "}
