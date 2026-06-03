@@ -236,14 +236,40 @@ export async function syncProjectFromDashboard(input: {
     }
   }
 
-  const dashboardUrl = dashboardUrlForProject(remote)
+  // Only overwrite fields the dashboard actually gave us. The dashboard's
+  // /api/projects endpoint currently doesn't return the internal id or the
+  // project manager, so without these guards a Sync would clobber a
+  // correct stored link (built from the id) with the project_number route
+  // that 500s, and wipe a known PM back to null. Build the update set
+  // conditionally instead.
+  const update: {
+    dashboard_pulled_at: string
+    dashboard_url?: string | null
+    project_manager?: string | null
+  } = { dashboard_pulled_at: new Date().toISOString() }
+  // dashboardUrlForProject only yields a job-resolving link when the
+  // dashboard returned an absolute url or its internal id; otherwise it
+  // falls back to the project_number route, which we must NOT persist.
+  if (remote.id || remote.url) {
+    update.dashboard_url = dashboardUrlForProject(remote)
+  }
+  if (remote.project_manager) {
+    update.project_manager = remote.project_manager
+  }
+
+  // Nothing useful came back beyond the timestamp — tell the user rather than
+  // silently "succeeding" with no visible change.
+  if (update.dashboard_url === undefined && update.project_manager === undefined) {
+    return {
+      ok: false,
+      error:
+        "The dashboard didn't return a project manager or a job link for this project. (The dashboard's API needs to expose those fields.)",
+    }
+  }
+
   const { error: uErr } = await supabase
     .from("projects")
-    .update({
-      dashboard_url: dashboardUrl,
-      project_manager: remote.project_manager,
-      dashboard_pulled_at: new Date().toISOString(),
-    })
+    .update(update)
     .eq("id", project.id)
   if (uErr) return { ok: false, error: uErr.message }
 

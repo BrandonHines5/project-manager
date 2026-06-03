@@ -316,18 +316,6 @@ export async function getDashboardProject(
       return null
     }
     const json = (await res.json()) as unknown
-    // TEMP DIAGNOSTIC (remove after confirming the dashboard API shape):
-    // logs the field NAMES the dashboard returns so we can map id /
-    // project_manager exactly. Values are limited to the few we map (which
-    // are not sensitive) to avoid dumping client PII into logs.
-    if (json && typeof json === "object") {
-      const d = json as Record<string, unknown>
-      console.error(
-        `[dash-debug] ${projectNumber} keys=[${Object.keys(d).join(",")}] ` +
-          `id=${String(d.id)} project_manager=${String(d.project_manager)} ` +
-          `project_manager_id=${String(d.project_manager_id)} pm=${String(d.pm)} url=${String(d.url)}`
-      )
-    }
     return normalizeDashboardProject(json)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
