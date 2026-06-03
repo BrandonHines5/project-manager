@@ -408,7 +408,7 @@ function SelectionFooter({
         />
         <FooterButton
           icon={<ScrollText className="h-3.5 w-3.5" />}
-          label="Daily Logs"
+          label="Job Logs"
           onClick={() => onNavigate("daily-logs")}
         />
         <FooterButton

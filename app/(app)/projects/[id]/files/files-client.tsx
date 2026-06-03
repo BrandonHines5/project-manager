@@ -180,7 +180,7 @@ export function FilesClient({ data }: { data: FilesData }) {
           <div>
             <h2 className="text-base font-semibold">Project gallery</h2>
             <p className="text-xs text-muted">
-              All photos and videos from daily logs, decisions, and uploaded plans.
+              All photos and videos from job logs, decisions, and uploaded plans.
               Search by name, caption, or source.
             </p>
           </div>
@@ -193,7 +193,7 @@ export function FilesClient({ data }: { data: FilesData }) {
               className="w-auto"
             >
               <option value="all">All sources</option>
-              <option value="daily-log">Daily logs</option>
+              <option value="daily-log">Job logs</option>
               <option value="decision">Decisions</option>
               <option value="plan">Plans &amp; docs</option>
             </Select>
@@ -251,7 +251,7 @@ export function FilesClient({ data }: { data: FilesData }) {
             description={
               search
                 ? "Try different search terms or change the source filter."
-                : "Photos uploaded to daily logs, decisions, or here will appear in this gallery."
+                : "Photos uploaded to job logs, decisions, or here will appear in this gallery."
             }
           />
         ) : (

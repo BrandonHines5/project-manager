@@ -125,7 +125,7 @@ export function DuplicateDialog({
               Copies the schedule (work items, to-dos, checklists, predecessor
               links) AND decisions (selections + change orders, with cost
               breakdowns, follow-up templates, and attachments). Decisions are
-              reset to draft. Assignments, daily logs, project files, and
+              reset to draft. Assignments, job logs, project files, and
               payments are NOT copied — those are project-specific.
             </DialogDescription>
           </div>

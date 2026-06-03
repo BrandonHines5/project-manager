@@ -6,7 +6,7 @@ import { formatDate } from "@/lib/utils"
 import { parseProjectIds } from "../parse-ids"
 import { EmptySelection } from "../empty-selection"
 
-export const metadata = { title: "Daily Logs (all) — Hines Homes" }
+export const metadata = { title: "Job Logs (all) — Hines Homes" }
 
 export default async function AggregateDailyLogsPage({
   searchParams,
@@ -16,7 +16,7 @@ export default async function AggregateDailyLogsPage({
   const profile = await requireSession()
   const params = await searchParams
   const ids = parseProjectIds(params.ids)
-  if (ids.length === 0) return <EmptySelection entity="daily logs" />
+  if (ids.length === 0) return <EmptySelection entity="job logs" />
 
   const supabase = await createSupabaseServerClient()
   // RLS handles per-row visibility: clients only see logs where
@@ -49,7 +49,7 @@ export default async function AggregateDailyLogsPage({
       </div>
       {rows.length === 0 ? (
         <div className="text-sm text-muted py-12 text-center border border-dashed border-border-strong rounded-lg">
-          No daily logs in the selected projects.
+          No job logs in the selected projects.
         </div>
       ) : (
         <ul className="space-y-3">

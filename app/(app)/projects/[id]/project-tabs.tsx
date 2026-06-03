@@ -14,12 +14,12 @@ type Tab = {
 const TABS: Tab[] = [
   { label: "Schedule", slug: "schedule", hideForRoles: ["client"] },
   { label: "Onsite", slug: "onsite", hideForRoles: ["client", "trade"] },
-  { label: "Daily Logs", slug: "daily-logs" },
+  { label: "Job Logs", slug: "daily-logs" },
   { label: "Decisions", slug: "decisions" },
   { label: "Files", slug: "files" },
   { label: "Pricing", slug: "pricing" },
 ]
-// Trades only see Schedule (RLS handles row-level filtering); clients only see Daily Logs / Files / Pricing.
+// Trades only see Schedule (RLS handles row-level filtering); clients only see Job Logs / Files / Pricing.
 
 export function ProjectTabs({
   projectId,

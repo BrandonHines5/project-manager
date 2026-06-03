@@ -41,7 +41,7 @@ const TYPE_GROUP_LABEL: Record<SearchResultType, string> = {
   todo: "To-dos",
   decision: "Decisions",
   decision_choice: "Selection choices",
-  daily_log: "Daily logs",
+  daily_log: "Job logs",
   decision_comment: "Comments",
   project_file: "Files",
 }
@@ -349,7 +349,7 @@ function EmptyHint() {
     <div className="px-6 py-10 text-center text-sm text-muted">
       <Search className="h-6 w-6 mx-auto text-muted/60 mb-2" />
       Type at least two characters to search across projects, schedule items,
-      decisions, daily logs, comments, and files.
+      decisions, job logs, comments, and files.
     </div>
   )
 }

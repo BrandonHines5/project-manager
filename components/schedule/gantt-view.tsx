@@ -4,17 +4,20 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { addDays as fnsAddDays, differenceInCalendarDays, parseISO, format, isWeekend, startOfDay } from "date-fns"
-import { CalendarDays, Zap } from "lucide-react"
+import { CalendarDays, Zap, Minimize2 } from "lucide-react"
 import { EmptyState } from "@/components/ui/empty"
 import { cn, todayISO, addDays } from "@/lib/utils"
 import { moveScheduleItem } from "@/app/actions/schedule"
 import { computeScheduleAnalysis } from "@/lib/schedule/scheduling"
 import type { ScheduleData } from "@/app/(app)/projects/[id]/schedule/schedule-client"
 
-const DAY_PX = 28
-const ROW_PX = 36
-const HEADER_PX = 56
-const LABEL_PX = 220
+// Two density presets. "Condensed" shrinks the day column and rows so more
+// of the timeline fits on screen at once; the default is comfortable for
+// dragging bars around.
+const DENSITY = {
+  comfortable: { DAY_PX: 28, ROW_PX: 36, HEADER_PX: 56, LABEL_PX: 220 },
+  condensed: { DAY_PX: 12, ROW_PX: 22, HEADER_PX: 44, LABEL_PX: 160 },
+} as const
 
 export function GanttView({
   data,
@@ -28,6 +31,9 @@ export function GanttView({
   )
 
   const [showCritical, setShowCritical] = useState(true)
+  const [condensed, setCondensed] = useState(false)
+  const { DAY_PX, ROW_PX, HEADER_PX, LABEL_PX } =
+    condensed ? DENSITY.condensed : DENSITY.comfortable
   const analysis = useMemo(
     () => computeScheduleAnalysis(data.items, data.predecessors),
     [data.items, data.predecessors]
@@ -205,19 +211,31 @@ export function GanttView({
       ) : (
         <span />
       )}
-      <label className="inline-flex items-center gap-1.5 cursor-pointer select-none text-muted hover:text-foreground">
-        <input
-          type="checkbox"
-          checked={showCritical}
-          onChange={(e) => setShowCritical(e.target.checked)}
-          className="h-3.5 w-3.5"
-        />
-        <Zap className="h-3.5 w-3.5 text-red-500" />
-        Highlight critical path
-        {criticalIds.size > 0 && (
-          <span className="text-muted">({criticalIds.size})</span>
-        )}
-      </label>
+      <div className="flex items-center gap-4">
+        <label className="inline-flex items-center gap-1.5 cursor-pointer select-none text-muted hover:text-foreground">
+          <input
+            type="checkbox"
+            checked={condensed}
+            onChange={(e) => setCondensed(e.target.checked)}
+            className="h-3.5 w-3.5"
+          />
+          <Minimize2 className="h-3.5 w-3.5" />
+          Condense
+        </label>
+        <label className="inline-flex items-center gap-1.5 cursor-pointer select-none text-muted hover:text-foreground">
+          <input
+            type="checkbox"
+            checked={showCritical}
+            onChange={(e) => setShowCritical(e.target.checked)}
+            className="h-3.5 w-3.5"
+          />
+          <Zap className="h-3.5 w-3.5 text-red-500" />
+          Highlight critical path
+          {criticalIds.size > 0 && (
+            <span className="text-muted">({criticalIds.size})</span>
+          )}
+        </label>
+      </div>
     </div>
     <div
       ref={containerRef}
