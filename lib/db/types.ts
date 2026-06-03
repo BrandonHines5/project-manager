@@ -808,6 +808,7 @@ export type Database = {
           created_at: string
           email: string | null
           email_digest_pref: Database["public"]["Enums"]["email_digest_pref"]
+          entra_user_id: string | null
           financial_access: boolean
           full_name: string
           id: string
@@ -821,6 +822,7 @@ export type Database = {
           created_at?: string
           email?: string | null
           email_digest_pref?: Database["public"]["Enums"]["email_digest_pref"]
+          entra_user_id?: string | null
           financial_access?: boolean
           full_name?: string
           id: string
@@ -834,6 +836,7 @@ export type Database = {
           created_at?: string
           email?: string | null
           email_digest_pref?: Database["public"]["Enums"]["email_digest_pref"]
+          entra_user_id?: string | null
           financial_access?: boolean
           full_name?: string
           id?: string
