@@ -66,14 +66,19 @@ export async function resolveDirectoryIdentity(input: {
   const secret = process.env.DASHBOARD_API_SECRET?.trim()
   if (!base || !secret) return { ok: false, reason: "not_configured" }
 
-  // Send BOTH identifiers when we have them. The directory matches on the
-  // stable Entra oid first, but on a person's first Microsoft login we have
-  // not stored their oid there yet — so the email is what actually matches,
-  // and the directory can backfill the oid. Sending only the oid would 404
-  // every first login.
+  // Resolve by EMAIL as the primary key. Supabase's Azure provider exposes a
+  // per-app pairwise subject (identity_data.sub) as the user's provider id —
+  // NOT the Entra directory `oid` the central directory stores. So an
+  // entra_user_id lookup never matches, and because the directory keys on oid
+  // first, sending that value alongside the email shadows the email match and
+  // 404s. Email is the dependable join key between Supabase and the directory;
+  // fall back to the Entra subject only when no email is available.
   const params = new URLSearchParams()
-  if (input.entraUserId) params.set("entra_user_id", input.entraUserId)
-  if (input.email) params.set("email", input.email)
+  if (input.email) {
+    params.set("email", input.email)
+  } else if (input.entraUserId) {
+    params.set("entra_user_id", input.entraUserId)
+  }
   if ([...params.keys()].length === 0) return { ok: false, reason: "not_found" }
 
   try {
