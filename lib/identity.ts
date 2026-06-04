@@ -66,15 +66,18 @@ export async function resolveDirectoryIdentity(input: {
   const secret = process.env.DASHBOARD_API_SECRET?.trim()
   if (!base || !secret) return { ok: false, reason: "not_configured" }
 
-  const query = input.entraUserId
-    ? `entra_user_id=${encodeURIComponent(input.entraUserId)}`
-    : input.email
-      ? `email=${encodeURIComponent(input.email)}`
-      : null
-  if (!query) return { ok: false, reason: "not_found" }
+  // Send BOTH identifiers when we have them. The directory matches on the
+  // stable Entra oid first, but on a person's first Microsoft login we have
+  // not stored their oid there yet — so the email is what actually matches,
+  // and the directory can backfill the oid. Sending only the oid would 404
+  // every first login.
+  const params = new URLSearchParams()
+  if (input.entraUserId) params.set("entra_user_id", input.entraUserId)
+  if (input.email) params.set("email", input.email)
+  if ([...params.keys()].length === 0) return { ok: false, reason: "not_found" }
 
   try {
-    const res = await fetch(`${base}/api/identity/resolve?${query}`, {
+    const res = await fetch(`${base}/api/identity/resolve?${params.toString()}`, {
       method: "GET",
       headers: withBypass({
         accept: "application/json",
