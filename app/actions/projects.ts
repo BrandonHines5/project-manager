@@ -757,8 +757,9 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     client_phone_2: ovr(parsed.override_client_phone_2, source.client_phone_2),
     dashboard_pulled_at: parsed.override_dashboard_pulled_at ?? null,
     // Persist the house-attribute answers so it's auditable later why a
-    // given template item was or wasn't copied.
-    attributes: parsed.attributes ?? {},
+    // given template item was or wasn't copied. Plain duplicates (no
+    // answers) carry the source project's stored profile forward.
+    attributes: parsed.attributes ?? source.attributes ?? {},
     created_by: profile.id,
   }
   const { data: newProject, error: pErr } = await supabase
@@ -814,16 +815,26 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     if (iErr) throw new Error(iErr.message)
 
     // Pass 2: parent_id fixups for to-dos that nested under a work item.
+    // The anchor pair rides along here, not in pass 1 — the DB check
+    // constraint requires parent_id to be set alongside it, and without
+    // the pair an anchored to-do would degrade to a fixed due date that
+    // stops following parent moves.
     const reparents = keptItems
       .filter((s) => s.parent_id && idMap.has(s.id) && idMap.has(s.parent_id))
       .map((s) => ({
         id: idMap.get(s.id)!,
         parent_id: idMap.get(s.parent_id!)!,
+        parent_anchor: s.parent_anchor,
+        parent_offset_days: s.parent_offset_days,
       }))
     for (const r of reparents) {
       const { error: upErr } = await supabase
         .from("schedule_items")
-        .update({ parent_id: r.parent_id })
+        .update({
+          parent_id: r.parent_id,
+          parent_anchor: r.parent_anchor,
+          parent_offset_days: r.parent_offset_days,
+        })
         .eq("id", r.id)
       if (upErr) throw new Error(upErr.message)
     }
@@ -896,23 +907,35 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
       }
     }
   }
-  const seenEdges = new Set<string>()
-  const newPreds = edges
-    .map((p) => {
-      const newItem = idMap.get(p.item_id)
-      const newPred = idMap.get(p.predecessor_id)
-      if (!newItem || !newPred) return null
-      const key = `${newItem}|${newPred}`
-      if (seenEdges.has(key)) return null
-      seenEdges.add(key)
-      return {
+  // One edge per (item, predecessor) pair — the table's PK. When splicing
+  // collapses two parallel skipped branches onto the same pair, keep the
+  // strictest (largest) lag rather than whichever the unordered source
+  // query produced first; ties break on dep_type so the result is
+  // deterministic either way.
+  const mergedEdges = new Map<
+    string,
+    { item_id: string; predecessor_id: string; dep_type: PredRow["dep_type"]; lag_days: number }
+  >()
+  for (const p of edges) {
+    const newItem = idMap.get(p.item_id)
+    const newPred = idMap.get(p.predecessor_id)
+    if (!newItem || !newPred) continue
+    const key = `${newItem}|${newPred}`
+    const existing = mergedEdges.get(key)
+    if (
+      !existing ||
+      p.lag_days > existing.lag_days ||
+      (p.lag_days === existing.lag_days && p.dep_type < existing.dep_type)
+    ) {
+      mergedEdges.set(key, {
         item_id: newItem,
         predecessor_id: newPred,
         dep_type: p.dep_type,
         lag_days: p.lag_days,
-      }
-    })
-    .filter((x): x is NonNullable<typeof x> => x !== null)
+      })
+    }
+  }
+  const newPreds = [...mergedEdges.values()]
   if (newPreds.length) {
     const { error: ePerr } = await supabase
       .from("schedule_predecessors")

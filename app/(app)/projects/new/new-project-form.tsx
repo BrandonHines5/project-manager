@@ -456,7 +456,13 @@ function ProjectFormFields({
             >
               <Select
                 value={sourceTemplateId}
-                onChange={(e) => setSourceTemplateId(e.target.value)}
+                onChange={(e) => {
+                  setSourceTemplateId(e.target.value)
+                  // Drop the previous template's answers immediately —
+                  // TemplateOptionsFields pushes null again on mount, but
+                  // until then a quick submit would reuse stale answers.
+                  setTemplateOptions(null)
+                }}
               >
                 <option value="">— None (empty schedule) —</option>
                 {templates.map((t) => (
