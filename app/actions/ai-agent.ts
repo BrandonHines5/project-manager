@@ -20,6 +20,13 @@ const ClientMessageSchema = z.object({
 })
 const TurnInputSchema = z.object({
   messages: z.array(ClientMessageSchema).min(1).max(40),
+  // The browser's local calendar date. Site notes are dictated from phones,
+  // so "today" must mean the user's day, not the server's UTC day (which
+  // rolls over at ~6pm in the US). Falls back to server date if absent.
+  today: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
 })
 type ClientMessage = z.infer<typeof ClientMessageSchema>
 
@@ -38,6 +45,7 @@ function toClaudeMessages(
 
 export async function runAgentTurnAction(input: {
   messages: ClientMessage[]
+  today?: string
 }): Promise<AgentTurnResult> {
   await requireStaff()
   const apiKey = process.env.ANTHROPIC_API_KEY
@@ -61,6 +69,7 @@ export async function runAgentTurnAction(input: {
       messages: toClaudeMessages(parsed.data.messages),
       supabase,
       apiKey,
+      today: parsed.data.today ?? new Date().toISOString().slice(0, 10),
     })
     return result
   } catch (e) {
@@ -184,6 +193,28 @@ const MutationSchema = z.discriminatedUnion("kind", [
       assignee_name: z.string().nullable(),
     }),
   }),
+  z.object({
+    kind: z.literal("append_daily_log"),
+    project_id: z.string().uuid(),
+    log_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    note: z.string().min(1).max(5000),
+    context: z.object({
+      project_name: z.string(),
+      project_number: z.string(),
+      appends_to_existing: z.boolean(),
+    }),
+  }),
+  z.object({
+    kind: z.literal("send_sms"),
+    company_id: z.string().uuid(),
+    message: z.string().min(1).max(1600),
+    context: z.object({
+      company_name: z.string(),
+      company_phone: z.string(),
+      project_name: z.string().nullable(),
+      project_number: z.string().nullable(),
+    }),
+  }),
 ])
 const ApplyInputSchema = z.object({
   mutations: z.array(MutationSchema).min(1).max(200),
@@ -241,7 +272,11 @@ export async function applyPlanAction(input: {
         case "create_todo":
         case "create_work_item":
         case "create_decision":
+        case "append_daily_log":
           projectIds.add(m.project_id)
+          break
+        case "send_sms":
+          // Nothing in the DB changed — no revalidation needed.
           break
         default:
           needsBroadRevalidate = true
