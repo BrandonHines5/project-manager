@@ -14,7 +14,11 @@ const MODEL = "claude-sonnet-4-6"
 // the bill up.
 const MAX_ITERATIONS = 30
 
-const SYSTEM_PROMPT = `You are an AI assistant for Hines Homes' project management system. You help staff make bulk updates across construction projects.
+const buildSystemPrompt = (
+  today: string
+) => `You are an AI assistant for Hines Homes' project management system. You help staff make bulk updates across construction projects, and you act as a field-notes assistant when staff relay what's happening on a job site (often dictated from a phone).
+
+Today's date is ${today}.
 
 Your job in a single turn:
 1. Use the read tools to understand what the user wants and find the relevant rows.
@@ -24,11 +28,22 @@ Your job in a single turn:
 Capability map — what you CAN propose:
 - Schedule: create a to-do, create a work item, add a checklist item to an existing to-do, update a schedule item's status, update other fields on a schedule item (title/description/dates/parent).
 - Decisions: create a draft change order or selection, update its status, add a follow-up to-do template.
+- Communication: send an SMS text message to a sub/vendor company that has a phone number on file (find them with list_companies).
+- Daily logs: append a note to a project's daily log for a given date (creates the log if none exists yet).
 
 What you CANNOT do (don't pretend you can):
 - Delete or archive anything.
 - Manage assignments, predecessors, or attachments.
-- Touch job logs, files, payments, or companies.
+- Touch files, payments, or edit companies.
+
+Field notes mode — when the user relays job-site information (a status update from a sub, something that needs doing, an observation):
+- Propose the concrete action(s) the note implies. Typical mappings:
+  - "The tile guy says he'll finish today" → find the matching schedule work item and propose updating its end_date (and status if clearly implied).
+  - "The dumpster needs to be flipped" → find the dumpster/waste company with list_companies and propose_send_sms asking them to swap it.
+  - "I need to order more 2x4s" → propose_create_todo ("Order more 2x4s").
+- AND ALWAYS propose exactly one append_daily_log per affected project per turn that records ALL of the user's notes for that project in clean plain language (e.g. "Tile sub reports finishing today. Requested dumpster swap from ABC Disposal. Need to order more 2x4s."). Site notes belong in the daily log even when no other action is needed.
+- Identify the project before proposing: if the user named it, or only one project is 'active', use it; otherwise call ask_user to pick.
+- SMS rules: keep texts short and professional, identify the project by address or name, and sign off as Hines Homes (e.g. "Hines Homes: Please swap the dumpster at 114 Oak St when you can. Thanks!"). Only propose a text when the user clearly wants a sub/vendor contacted. If the matched company has no phone on file, say so instead of proposing.
 
 Rules:
 - **IDs come only from prior tool results.** Never write a project_id, schedule_item_id, decision_id, parent_id, or assignee_*_id that you didn't see returned from a list_* or get_* tool earlier in this same turn. Don't compose IDs from a template (no "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" placeholders); the propose tool will reject the mutation and the user's plan count will silently disagree with your summary. If you need an ID you don't have, call the matching list_* tool first.
@@ -278,6 +293,59 @@ const TOOLS: Anthropic.Messages.Tool[] = [
     },
   },
   {
+    name: "list_companies",
+    description:
+      "List sub/vendor companies in the directory with their trades and whether a phone number is on file. Optionally filter by a case-insensitive search term matched against the company name, trade category, and trade tags (e.g. 'dumpster', 'tile', 'ABC Disposal'). Use this to find the right company before proposing an SMS.",
+    input_schema: {
+      type: "object",
+      properties: {
+        search: {
+          type: "string",
+          description:
+            "Case-insensitive substring matched against name, trade category, and trades. Omit to return all companies.",
+        },
+      },
+    },
+  },
+  {
+    name: "propose_send_sms",
+    description:
+      "Queue an SMS text message to a sub/vendor company for the user to review. The company must have a phone number on file (check via list_companies). Keep the message short, identify the project by address or name, and sign off as Hines Homes. Nothing is sent until the user approves the plan.",
+    input_schema: {
+      type: "object",
+      properties: {
+        company_id: { type: "string" },
+        message: {
+          type: "string",
+          description: "The SMS body to send (max 1600 characters).",
+        },
+        project_id: {
+          type: "string",
+          description:
+            "Optional project this text relates to — used for display context in the review UI.",
+        },
+      },
+      required: ["company_id", "message"],
+    },
+  },
+  {
+    name: "propose_append_daily_log",
+    description:
+      "Queue a daily-log note for a project. On apply, the note is appended to the project's existing daily log for that date, or a new internal log is created if none exists. Use one of these per affected project per turn, combining all of the user's site notes for that project into a single clean note.",
+    input_schema: {
+      type: "object",
+      properties: {
+        project_id: { type: "string" },
+        note: { type: "string", description: "The note text to record." },
+        log_date: {
+          type: "string",
+          description: "YYYY-MM-DD. Omit to use today's date.",
+        },
+      },
+      required: ["project_id", "note"],
+    },
+  },
+  {
     name: "ask_user",
     description:
       "Ask the user a clarifying question when the request is ambiguous. After calling this, STOP — produce no further tool calls and no final text. The session will pause and the user's reply will arrive on the next turn.",
@@ -303,6 +371,7 @@ async function executeTool({
   input,
   supabase,
   state,
+  today,
 }: {
   name: string
   input: ToolInput
@@ -311,6 +380,7 @@ async function executeTool({
     mutations: ProposedMutation[]
     question: string | null
   }
+  today: string
 }): Promise<string> {
   switch (name) {
     case "list_projects": {
@@ -767,6 +837,116 @@ async function executeTool({
       return JSON.stringify({ queued: true })
     }
 
+    case "list_companies": {
+      const search = ((input.search as string | undefined) ?? "")
+        .trim()
+        .toLowerCase()
+      // The directory is small (dozens, not thousands) so we pull it whole
+      // and filter in JS — lets one search term match across name, trade
+      // category, AND the trade tags without a messy or() filter.
+      const { data, error } = await supabase
+        .from("companies")
+        .select("id, name, type, trade_category, phone, company_trades(trade)")
+        .order("name")
+      if (error) return JSON.stringify({ error: error.message })
+      const companies = (data ?? [])
+        .map((c) => ({
+          id: c.id,
+          name: c.name,
+          type: c.type,
+          trade_category: c.trade_category,
+          trades: (c.company_trades ?? []).map((t) => t.trade),
+          has_phone: !!c.phone,
+        }))
+        .filter(
+          (c) =>
+            !search ||
+            c.name.toLowerCase().includes(search) ||
+            (c.trade_category ?? "").toLowerCase().includes(search) ||
+            c.trades.some((t) => t.toLowerCase().includes(search))
+        )
+      return JSON.stringify({ companies })
+    }
+
+    case "propose_send_sms": {
+      const companyId = input.company_id as string
+      const message = (input.message as string).trim()
+      const projectId = (input.project_id as string | undefined) ?? null
+      if (!message) return JSON.stringify({ error: "message cannot be empty" })
+      if (message.length > 1600)
+        return JSON.stringify({
+          error: "message exceeds the 1600-character SMS limit",
+        })
+      const { data: company, error } = await supabase
+        .from("companies")
+        .select("id, name, phone")
+        .eq("id", companyId)
+        .maybeSingle()
+      if (error) return JSON.stringify({ error: error.message })
+      if (!company) return JSON.stringify({ error: "company not found" })
+      if (!company.phone)
+        return JSON.stringify({
+          error: `${company.name} has no phone number on file — tell the user instead of texting.`,
+        })
+      let projectName: string | null = null
+      let projectNumber: string | null = null
+      if (projectId) {
+        const { data: project } = await supabase
+          .from("projects")
+          .select("name, project_number")
+          .eq("id", projectId)
+          .maybeSingle()
+        projectName = project?.name ?? null
+        projectNumber = project?.project_number ?? null
+      }
+      state.mutations.push({
+        kind: "send_sms",
+        company_id: companyId,
+        message,
+        context: {
+          company_name: company.name,
+          company_phone: company.phone,
+          project_name: projectName,
+          project_number: projectNumber,
+        },
+      })
+      return JSON.stringify({ queued: true })
+    }
+
+    case "propose_append_daily_log": {
+      const projectId = input.project_id as string
+      const note = (input.note as string).trim()
+      const logDate = ((input.log_date as string | undefined) ?? today).trim()
+      if (!note) return JSON.stringify({ error: "note cannot be empty" })
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(logDate))
+        return JSON.stringify({ error: "log_date must be YYYY-MM-DD" })
+      const { data: project, error } = await supabase
+        .from("projects")
+        .select("id, name, project_number")
+        .eq("id", projectId)
+        .maybeSingle()
+      if (error) return JSON.stringify({ error: error.message })
+      if (!project) return JSON.stringify({ error: "project not found" })
+      const { data: existing } = await supabase
+        .from("daily_logs")
+        .select("id")
+        .eq("project_id", projectId)
+        .eq("log_date", logDate)
+        .limit(1)
+      state.mutations.push({
+        kind: "append_daily_log",
+        project_id: projectId,
+        log_date: logDate,
+        note,
+        context: {
+          project_name: project.name,
+          project_number: project.project_number,
+          appends_to_existing: (existing?.length ?? 0) > 0,
+        },
+      })
+      return JSON.stringify({ queued: true })
+    }
+
     case "ask_user": {
       state.question = input.question as string
       return JSON.stringify({
@@ -801,10 +981,14 @@ export async function runAgentTurn({
   messages,
   supabase,
   apiKey,
+  today,
 }: {
   messages: Anthropic.Messages.MessageParam[]
   supabase: SupabaseTyped
   apiKey: string
+  // The user's LOCAL date (YYYY-MM-DD) — sent by the browser so "today" in
+  // a dictated note means the user's today, not the server's UTC day.
+  today: string
 }): Promise<{
   result: AgentTurnResult
   // The updated conversation, including everything Claude produced this turn
@@ -826,7 +1010,7 @@ export async function runAgentTurn({
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: 4096,
-      system: SYSTEM_PROMPT,
+      system: buildSystemPrompt(today),
       tools: TOOLS,
       messages: workingMessages,
     })
@@ -857,6 +1041,7 @@ export async function runAgentTurn({
         input: tool.input as ToolInput,
         supabase,
         state,
+        today,
       })
       toolResults.push({
         type: "tool_result",

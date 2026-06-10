@@ -49,6 +49,7 @@
 - Server action `runAgentTurnAction` in `app/actions/ai-agent.ts` wraps a manual Claude tool-use loop in `lib/ai/agent.ts`. Model is `claude-sonnet-4-6`. Requires `ANTHROPIC_API_KEY` env var (set in Vercel + `.env.local` for dev) — action returns a typed `error` result if the key is missing, never throws.
 - Plan-then-approve flow: the agent's `propose_*` tools record mutations into a per-turn array but DON'T execute anything. Only `applyPlanAction` actually writes to the DB, and it runs under the caller's session so RLS still gates writes.
 - Adding a new mutation kind takes four changes: extend `ProposedMutation` in `lib/ai/types.ts`, add the `propose_*` tool definition + handler in `lib/ai/agent.ts`, add the apply path in `lib/ai/apply.ts`, and add a case in the plan-row renderer `components/layout/ai-agent.tsx:MutationRow`.
+- Field-notes mode: dictated/typed site notes map to schedule updates, to-dos, an SMS to a sub (`send_sms`, sent via `lib/quo.ts` with the recipient re-resolved from `companies.phone` at apply time), and ALWAYS one `append_daily_log` per affected project (appends to, or creates, the internal daily log for that date). The browser sends its local date as `today` so "today" means the user's day, not UTC's. The chat dialog has a Web Speech API mic button for phone dictation.
 
 ## Workflow
 

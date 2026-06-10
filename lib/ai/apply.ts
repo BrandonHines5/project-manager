@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { Database, TablesUpdate } from "@/lib/db/types"
+import { sendQuoSms, normalizeE164 } from "@/lib/quo"
 import type { ProposedMutation, AppliedMutation } from "./types"
 
 /**
@@ -188,6 +189,73 @@ async function applyOne(
         if (error) throw new Error(error.message)
         if (!data) {
           throw new Error("decision not found or not permitted")
+        }
+        return { mutation, ok: true }
+      }
+      case "append_daily_log": {
+        // Append to the most recent log for this project + date, or create
+        // a fresh internal one. The proposal's appends_to_existing flag is
+        // display-only — we re-check here because another log may have been
+        // saved between propose and apply.
+        const { data: existing, error: exErr } = await supabase
+          .from("daily_logs")
+          .select("id, notes")
+          .eq("project_id", mutation.project_id)
+          .eq("log_date", mutation.log_date)
+          .order("created_at", { ascending: false })
+          .limit(1)
+        if (exErr) throw new Error(exErr.message)
+        const target = existing?.[0]
+        if (target) {
+          const notes = target.notes
+            ? `${target.notes.trimEnd()}\n\n${mutation.note}`
+            : mutation.note
+          const { data, error } = await supabase
+            .from("daily_logs")
+            .update({ notes })
+            .eq("id", target.id)
+            .select("id")
+            .maybeSingle()
+          if (error) throw new Error(error.message)
+          if (!data) {
+            throw new Error("daily log not found or not permitted")
+          }
+        } else {
+          const { error } = await supabase.from("daily_logs").insert({
+            project_id: mutation.project_id,
+            log_date: mutation.log_date,
+            visibility: "internal",
+            notes: mutation.note,
+            created_by: actorId,
+          })
+          if (error) throw new Error(error.message)
+        }
+        return { mutation, ok: true }
+      }
+      case "send_sms": {
+        // Re-resolve the recipient from the companies row — never trust the
+        // phone that round-tripped through the client. RLS gates the read.
+        const { data: company, error } = await supabase
+          .from("companies")
+          .select("id, name, phone")
+          .eq("id", mutation.company_id)
+          .maybeSingle()
+        if (error) throw new Error(error.message)
+        if (!company) {
+          throw new Error("company not found or not permitted")
+        }
+        if (!company.phone) {
+          throw new Error(`${company.name} has no phone number on file`)
+        }
+        const e164 = normalizeE164(company.phone)
+        if (!e164) {
+          throw new Error(
+            `${company.name} has an invalid phone number on file: ${company.phone}`
+          )
+        }
+        const result = await sendQuoSms({ to: e164, content: mutation.message })
+        if (!result.sent) {
+          throw new Error(result.reason ?? "SMS send failed")
         }
         return { mutation, ok: true }
       }

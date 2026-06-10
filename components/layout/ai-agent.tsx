@@ -19,6 +19,10 @@ import {
   Palette,
   Send as SendIcon,
   UserPlus,
+  Mic,
+  MicOff,
+  MessageSquare,
+  NotebookPen,
 } from "lucide-react"
 import {
   Dialog,
@@ -45,6 +49,31 @@ import {
 
 type Message = { role: "user" | "assistant"; content: string }
 
+// Minimal Web Speech API surface. TypeScript's dom lib doesn't ship these
+// declarations (the API is still vendor-prefixed in WebKit), so we declare
+// just what the dictation button uses.
+interface SpeechRecognitionLike {
+  lang: string
+  continuous: boolean
+  interimResults: boolean
+  start(): void
+  stop(): void
+  onresult:
+    | ((event: {
+        results: ArrayLike<{ 0: { transcript: string }; isFinal: boolean }>
+      }) => void)
+    | null
+  onend: (() => void) | null
+  onerror: ((event: { error?: string }) => void) | null
+}
+type SpeechRecognitionCtor = new () => SpeechRecognitionLike
+declare global {
+  interface Window {
+    SpeechRecognition?: SpeechRecognitionCtor
+    webkitSpeechRecognition?: SpeechRecognitionCtor
+  }
+}
+
 type Phase =
   | { kind: "compose" }
   | { kind: "thinking" }
@@ -55,9 +84,10 @@ type Phase =
   | { kind: "error"; message: string }
 
 const STARTER_EXAMPLES = [
+  "The tile guy says he will finish today",
+  "The dumpster needs to be flipped — text the dumpster company",
+  "I need to order more 2x4s",
   "Add 'Check that nails are picked up' to the framing to-do in every open project",
-  "Mark the rough-in framing item as complete on project HHC-104",
-  "Add 'Verify insulation R-value' to every insulation to-do",
 ]
 
 export function AIAgent() {
@@ -74,6 +104,60 @@ export function AIAgent() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
+  // Voice dictation via the Web Speech API — lets a PM talk to the agent
+  // from a phone on the job site. Hidden when the browser doesn't support
+  // it (the phone keyboard's mic key still works in the textarea).
+  const [listening, setListening] = useState(false)
+  const [speechSupported, setSpeechSupported] = useState(false)
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
+  // Draft text present when dictation started — live transcripts are
+  // appended after it so dictating never clobbers typed text.
+  const dictationBaseRef = useRef("")
+  // Don't leave the mic hot when the dialog closes.
+  useEffect(() => {
+    if (!open) recognitionRef.current?.stop()
+  }, [open])
+
+  const stopDictation = useCallback(() => {
+    recognitionRef.current?.stop()
+  }, [])
+
+  function toggleDictation() {
+    if (listening) {
+      stopDictation()
+      return
+    }
+    const Ctor = window.SpeechRecognition ?? window.webkitSpeechRecognition
+    if (!Ctor) return
+    const rec = new Ctor()
+    rec.lang = navigator.language || "en-US"
+    rec.continuous = true
+    rec.interimResults = true
+    dictationBaseRef.current = draft.trim() ? draft.trimEnd() + " " : ""
+    rec.onresult = (event) => {
+      let transcript = ""
+      for (let i = 0; i < event.results.length; i++) {
+        transcript += event.results[i][0].transcript
+      }
+      setDraft(dictationBaseRef.current + transcript)
+    }
+    rec.onend = () => {
+      setListening(false)
+      recognitionRef.current = null
+    }
+    rec.onerror = () => {
+      // onend fires after onerror in every implementation — state resets there.
+    }
+    recognitionRef.current = rec
+    setListening(true)
+    try {
+      rec.start()
+    } catch {
+      setListening(false)
+      recognitionRef.current = null
+    }
+  }
+
   // Open with a clean slate. State changes happen in the event handler so
   // we don't trip the set-state-in-effect rule.
   const openDialog = useCallback(() => {
@@ -81,6 +165,11 @@ export function AIAgent() {
     setDraft("")
     setConfirmText("")
     setPhase({ kind: "compose" })
+    // Feature-detect dictation here (not in an effect) — window isn't
+    // available during SSR and this is the first moment we need to know.
+    setSpeechSupported(
+      !!(window.SpeechRecognition || window.webkitSpeechRecognition)
+    )
     setOpen(true)
     requestAnimationFrame(() => textareaRef.current?.focus())
   }, [])
@@ -97,13 +186,19 @@ export function AIAgent() {
   function sendMessage(text: string) {
     const trimmed = text.trim()
     if (!trimmed) return
+    stopDictation()
     const next: Message[] = [...messages, { role: "user", content: trimmed }]
     setMessages(next)
     setDraft("")
     setPhase({ kind: "thinking" })
     startTransition(async () => {
       try {
-        const result = await runAgentTurnAction({ messages: next })
+        const result = await runAgentTurnAction({
+          messages: next,
+          // en-CA formats as YYYY-MM-DD in the browser's local timezone, so
+          // "today" in a dictated note means the user's today, not UTC's.
+          today: new Date().toLocaleDateString("en-CA"),
+        })
         handleResult(result, next)
       } catch (e) {
         setPhase({
@@ -222,8 +317,9 @@ export function AIAgent() {
                 </span>
               </DialogTitle>
               <DialogDescription>
-                Describe a bulk change in plain English. The assistant proposes
-                a plan; you review and apply.
+                Talk or type what&apos;s happening on site — schedule updates,
+                texts to subs, to-dos, and a daily-log note are drafted for
+                your review before anything happens.
               </DialogDescription>
             </div>
           </DialogHeader>
@@ -287,12 +383,34 @@ export function AIAgent() {
                     placeholder={
                       phase.kind === "question"
                         ? "Type your answer…"
-                        : "Describe a bulk change… (⌘+Enter to send)"
+                        : listening
+                          ? "Listening… talk now"
+                          : "What's happening on site? (⌘+Enter to send)"
                     }
                     disabled={pending}
                     className="min-h-[60px]"
                   />
                 </div>
+                {speechSupported && (
+                  <Button
+                    type="button"
+                    variant={listening ? "danger" : "secondary"}
+                    size="icon"
+                    onClick={toggleDictation}
+                    disabled={pending}
+                    aria-label={
+                      listening ? "Stop dictation" : "Dictate with your voice"
+                    }
+                    title={listening ? "Stop dictation" : "Dictate"}
+                    className={listening ? "animate-pulse" : undefined}
+                  >
+                    {listening ? (
+                      <MicOff className="h-4 w-4" />
+                    ) : (
+                      <Mic className="h-4 w-4" />
+                    )}
+                  </Button>
+                )}
                 <Button
                   type="button"
                   onClick={() => sendMessage(draft)}
@@ -584,6 +702,52 @@ function MutationRow({ mutation }: { mutation: ProposedMutation }) {
           {crumb(mutation.context)}
         </RowFrame>
       )
+    case "append_daily_log":
+      return (
+        <RowFrame icon={<NotebookPen className="h-3.5 w-3.5 text-brand-500" />}>
+          <div className="font-medium">
+            Daily log note ({mutation.log_date})
+            <span className="font-normal text-xs text-muted">
+              {" "}
+              —{" "}
+              {mutation.context.appends_to_existing
+                ? "adds to the existing log"
+                : "starts a new internal log"}
+            </span>
+          </div>
+          <div className="text-xs mt-1 whitespace-pre-wrap">
+            {mutation.note}
+          </div>
+          {crumb(mutation.context)}
+        </RowFrame>
+      )
+    case "send_sms":
+      return (
+        <RowFrame
+          icon={<MessageSquare className="h-3.5 w-3.5 text-amber-600" />}
+          destructive
+        >
+          <div className="font-medium">
+            Text {mutation.context.company_name}{" "}
+            <span className="font-mono text-xs">
+              {mutation.context.company_phone}
+            </span>
+          </div>
+          <div className="text-xs mt-1 whitespace-pre-wrap">
+            &ldquo;{mutation.message}&rdquo;
+          </div>
+          {mutation.context.project_name && (
+            <div className="text-xs text-muted mt-0.5">
+              {mutation.context.project_name}{" "}
+              {mutation.context.project_number && (
+                <span className="font-mono">
+                  #{mutation.context.project_number}
+                </span>
+              )}
+            </div>
+          )}
+        </RowFrame>
+      )
   }
 }
 
@@ -637,7 +801,7 @@ function PlanFooter({
         <div className="flex items-center gap-2 text-xs">
           <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
           <span className="text-muted">
-            This plan modifies existing data. Type{" "}
+            This plan modifies existing data or sends a text. Type{" "}
             <span className="font-mono font-medium">apply</span> to enable
             the button.
           </span>

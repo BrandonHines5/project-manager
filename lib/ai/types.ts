@@ -76,6 +76,21 @@ export type ProposedMutation =
         assignee_name: string | null
       }
     }
+  | {
+      kind: "append_daily_log"
+      project_id: string
+      // YYYY-MM-DD. Apply appends to the most recent log for this project +
+      // date, or creates a new internal log when none exists.
+      log_date: string
+      note: string
+      context: {
+        project_name: string
+        project_number: string
+        // Whether a log already existed for this date at proposal time —
+        // display hint only; apply re-checks.
+        appends_to_existing: boolean
+      }
+    }
   // ---- Destructive (typed confirmation required) ----
   | {
       kind: "update_schedule_item_status"
@@ -123,17 +138,31 @@ export type ProposedMutation =
         previous_status: string
       }
     }
+  | {
+      kind: "send_sms"
+      company_id: string
+      message: string
+      context: {
+        company_name: string
+        // Phone shown for review only — apply re-resolves the number from
+        // the companies row so a tampered payload can't redirect the text.
+        company_phone: string
+        project_name: string | null
+        project_number: string | null
+      }
+    }
 
 /**
- * Mutations that change existing data need an extra confirmation step in
- * the UI (type "apply" to enable the button). Pure creates are additive
- * and don't.
+ * Mutations that change existing data — or leave the building entirely,
+ * like an SMS — need an extra confirmation step in the UI (type "apply"
+ * to enable the button). Pure creates are additive and don't.
  */
 export function isDestructive(m: ProposedMutation): boolean {
   return (
     m.kind === "update_schedule_item_status" ||
     m.kind === "update_schedule_item" ||
-    m.kind === "update_decision_status"
+    m.kind === "update_decision_status" ||
+    m.kind === "send_sms"
   )
 }
 
