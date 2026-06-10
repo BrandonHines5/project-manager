@@ -53,6 +53,7 @@ import type {
   RecurrenceFreq,
 } from "@/lib/schedule/recurrence"
 import { isRecurrenceRule, describeRecurrence } from "@/lib/schedule/recurrence"
+import { formatTags, parseTagsInput } from "@/lib/template-tags"
 import type { Tables, Enums } from "@/lib/db/types"
 import type { ScheduleData } from "@/app/(app)/projects/[id]/schedule/schedule-client"
 import { checklistFor, predecessorsOf, delaysFor } from "./helpers"
@@ -95,6 +96,9 @@ export function ScheduleItemDialog({
   const [kind, setKind] = useState<"work" | "todo">(initialKind)
   const [title, setTitle] = useState(item?.title ?? "")
   const [description, setDescription] = useState(item?.description ?? "")
+  const [templateTagsText, setTemplateTagsText] = useState(
+    formatTags(item?.template_tags)
+  )
   const [startDate, setStartDate] = useState(item?.start_date ?? "")
   const [endDate, setEndDate] = useState(item?.end_date ?? "")
   // Duration is in business days (M–F). Derived from start+end on existing
@@ -263,6 +267,7 @@ export function ScheduleItemDialog({
       status,
       priority: kind === "todo" ? (priority || null) : null,
       recurrence_rule: kind === "todo" ? recurrence : null,
+      template_tags: parseTagsInput(templateTagsText),
       assignments,
       checklist: kind === "todo" ? checklist : [],
       predecessors: kind === "work" ? predecessors : [],
@@ -547,6 +552,17 @@ export function ScheduleItemDialog({
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 rows={2}
+              />
+            </Field>
+            <Field
+              label="Template tags"
+              className="sm:col-span-2"
+              hint="Only matters on template projects. Comma-separated conditions, e.g. walkout, !walkout — this item is copied to a new project only when every tag matches the house attributes answered at creation. Leave blank to always copy."
+            >
+              <Input
+                value={templateTagsText}
+                onChange={(e) => setTemplateTagsText(e.target.value)}
+                placeholder="walkout, finished_basement"
               />
             </Field>
           </div>

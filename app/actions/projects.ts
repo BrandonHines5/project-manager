@@ -13,6 +13,11 @@ import {
   sendDashboardWebhook,
 } from "@/lib/dashboard"
 import type { Tables } from "@/lib/db/types"
+import {
+  collectBaseTags,
+  matchesTemplateTags,
+  type TemplateAttributes,
+} from "@/lib/template-tags"
 
 const ProjectInput = z.object({
   project_number: z.string().min(1, "Required").max(64),
@@ -57,7 +62,25 @@ const ProjectInput = z.object({
   // If present, the new project is created by duplicating this source
   // project (template) and then layering the form's identity fields on top.
   source_template_id: z.string().optional().or(z.literal("")),
+  // JSON-serialized smart-template answers (TemplateOptions component):
+  // house-attribute booleans + per-selection include/allowance overrides.
+  // Only meaningful alongside source_template_id.
+  attributes_json: z.string().optional().or(z.literal("")),
+  selection_overrides_json: z.string().optional().or(z.literal("")),
 })
+
+// House-attribute answers: { walkout: true, finished_basement: false }.
+const AttributesSchema = z.record(z.string(), z.boolean())
+
+// Per-selection review answers from the duplicate flow. `include: false`
+// drops the selection entirely; `allowance_amount` replaces the template's
+// placeholder allowance with the contract's real number (null clears it).
+const SelectionOverride = z.object({
+  decision_id: z.string(),
+  include: z.boolean(),
+  allowance_amount: z.number().nullable().optional(),
+})
+export type SelectionOverrideT = z.infer<typeof SelectionOverride>
 
 export type ProjectFormState = {
   error?: string
@@ -66,6 +89,14 @@ export type ProjectFormState = {
 
 function emptyToNull<T extends string | undefined | null>(v: T) {
   return v === "" || v == null ? null : v
+}
+
+function safeJsonParse(raw: string): unknown {
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return undefined
+  }
 }
 
 export async function createProject(
@@ -124,10 +155,35 @@ export async function createProject(
   // redirect() throw isn't swallowed (Next 16 redirect throws a special
   // NEXT_REDIRECT error that has to propagate).
   if (input.source_template_id) {
+    // Parse the smart-template answers the TemplateOptions component
+    // serialized into hidden fields. Malformed JSON is a hard error — a
+    // silent fallback would copy waterproofing items into a slab house.
+    let templateAttributes: TemplateAttributes | undefined
+    let selectionOverrides: SelectionOverrideT[] | undefined
+    if (input.attributes_json) {
+      const attrsParsed = AttributesSchema.safeParse(
+        safeJsonParse(input.attributes_json)
+      )
+      if (!attrsParsed.success) {
+        return { error: "Template answers were malformed — please retry." }
+      }
+      templateAttributes = attrsParsed.data
+    }
+    if (input.selection_overrides_json) {
+      const ovrParsed = z
+        .array(SelectionOverride)
+        .safeParse(safeJsonParse(input.selection_overrides_json))
+      if (!ovrParsed.success) {
+        return { error: "Selection answers were malformed — please retry." }
+      }
+      selectionOverrides = ovrParsed.data
+    }
     let templateResult: Awaited<ReturnType<typeof duplicateProject>> | null = null
     try {
       templateResult = await duplicateProject({
         source_project_id: input.source_template_id,
+        attributes: templateAttributes,
+        selection_overrides: selectionOverrides,
         new_project_number: input.project_number,
         new_name: input.name,
         new_start_date: emptyToNull(input.start_date),
@@ -488,6 +544,14 @@ const DuplicateProjectInput = z
     // Already-verified timestamp (set by createProject after re-fetching
     // from the dashboard). Pass-through — never trust a client-supplied one.
     override_dashboard_pulled_at: z.string().nullish(),
+    // Smart-template answers. When `attributes` is present, template items
+    // whose template_tags don't match are skipped (and predecessor chains
+    // are spliced around skipped work items). When absent, everything copies
+    // — plain duplicates of real projects keep working unchanged.
+    attributes: AttributesSchema.optional(),
+    // Per-selection include/allowance answers from the review step. Only
+    // sensible for kind='selection' rows of the source project.
+    selection_overrides: z.array(SelectionOverride).optional(),
   })
   .passthrough()
 
@@ -532,6 +596,7 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     { data: srcChecklist, error: checklistErr },
     { data: srcPreds, error: predsErr },
     { data: srcDecisions, error: decisionsErr },
+    { data: srcChoices, error: choicesErr },
     { data: srcCostItems, error: costItemsErr },
     { data: srcFollowups, error: followupsErr },
     { data: srcAttachments, error: attachmentsErr },
@@ -563,9 +628,14 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
       .select("*")
       .eq("project_id", parsed.source_project_id)
       .order("created_at", { ascending: true }),
-    // Cost items + followup templates + attachments are joined through
-    // decisions so we only get rows that belong to the source project,
-    // regardless of which decisions actually have any.
+    // Choices + cost items + followup templates + attachments are joined
+    // through decisions so we only get rows that belong to the source
+    // project, regardless of which decisions actually have any.
+    supabase
+      .from("decision_choices")
+      .select("*, decisions!inner(project_id)")
+      .eq("decisions.project_id", parsed.source_project_id)
+      .order("position", { ascending: true }),
     supabase
       .from("decision_cost_items")
       .select("*, decisions!inner(project_id)")
@@ -595,11 +665,45 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     checklistErr ??
     predsErr ??
     decisionsErr ??
+    choicesErr ??
     costItemsErr ??
     followupsErr ??
     attachmentsErr
   if (readErr) throw new Error(`Source read failed: ${readErr.message}`)
   if (!source) throw new Error("Source project not found")
+
+  // Smart-template filter: when attribute answers were provided, drop items
+  // whose template_tags don't match. Children of a skipped item are skipped
+  // too (a to-do nested under skipped waterproofing work makes no sense on
+  // its own), propagated until stable since parent rows can appear in any
+  // order.
+  type SrcItem = Tables<"schedule_items">
+  const attrs = parsed.attributes
+  const skippedItemIds = new Set<string>()
+  if (attrs) {
+    for (const it of (srcItems ?? []) as SrcItem[]) {
+      if (!matchesTemplateTags(it.template_tags, attrs)) {
+        skippedItemIds.add(it.id)
+      }
+    }
+    let changed = true
+    while (changed) {
+      changed = false
+      for (const it of (srcItems ?? []) as SrcItem[]) {
+        if (
+          !skippedItemIds.has(it.id) &&
+          it.parent_id &&
+          skippedItemIds.has(it.parent_id)
+        ) {
+          skippedItemIds.add(it.id)
+          changed = true
+        }
+      }
+    }
+  }
+  const keptItems = ((srcItems ?? []) as SrcItem[]).filter(
+    (it) => !skippedItemIds.has(it.id)
+  )
 
   // Compute the date shift, if any. The "source start" is the earliest
   // start_date across all source items; due_date-only to-dos contribute via
@@ -607,7 +711,7 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
   let shiftDays = 0
   if (parsed.new_start_date) {
     let earliest: string | null = null
-    for (const it of srcItems ?? []) {
+    for (const it of keptItems) {
       const candidate = it.start_date ?? it.due_date
       if (candidate && (!earliest || candidate < earliest)) earliest = candidate
     }
@@ -652,6 +756,9 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     client_email_2: ovr(parsed.override_client_email_2, source.client_email_2),
     client_phone_2: ovr(parsed.override_client_phone_2, source.client_phone_2),
     dashboard_pulled_at: parsed.override_dashboard_pulled_at ?? null,
+    // Persist the house-attribute answers so it's auditable later why a
+    // given template item was or wasn't copied.
+    attributes: parsed.attributes ?? {},
     created_by: profile.id,
   }
   const { data: newProject, error: pErr } = await supabase
@@ -674,10 +781,9 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
   //    collide when two top-level work items share position 0.
   //    parent_id is filled in pass 2 because a to-do's parent is another
   //    schedule_item (which doesn't exist until pass 1 commits).
-  type Item = Tables<"schedule_items">
   const idMap = new Map<string, string>()
-  if (srcItems && srcItems.length > 0) {
-    const firstPass = (srcItems as Item[]).map((it) => {
+  if (keptItems.length > 0) {
+    const firstPass = keptItems.map((it) => {
       const newId = crypto.randomUUID()
       idMap.set(it.id, newId)
       return {
@@ -696,6 +802,9 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
         recurrence_rule: it.recurrence_rule,
         baseline_start_date: shift(it.baseline_start_date),
         baseline_end_date: shift(it.baseline_end_date),
+        // Carry the conditions along so a duplicated template is still a
+        // working template. Inert on regular projects.
+        template_tags: it.template_tags,
         created_by: profile.id,
       }
     })
@@ -705,7 +814,7 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     if (iErr) throw new Error(iErr.message)
 
     // Pass 2: parent_id fixups for to-dos that nested under a work item.
-    const reparents = (srcItems as Item[])
+    const reparents = keptItems
       .filter((s) => s.parent_id && idMap.has(s.id) && idMap.has(s.parent_id))
       .map((s) => ({
         id: idMap.get(s.id)!,
@@ -746,17 +855,56 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     if (cErr) throw new Error(cErr.message)
   }
 
-  // 4. Copy predecessor edges, mapping both ends through idMap. Skip any
-  //    edge whose endpoints didn't make it into the new project (defensive).
+  // 4. Copy predecessor edges, mapping both ends through idMap. Items the
+  //    smart-template filter skipped are spliced out of the dependency
+  //    graph first: if Waterproofing sat between Foundation and Backfill
+  //    and gets skipped, Backfill inherits Foundation as its predecessor
+  //    (lags summed, downstream edge's dep_type kept) so cascading still
+  //    flows through the chain. Splicing a DAG node can't create a cycle;
+  //    self-edges are dropped and duplicates de-duped.
   type PredRow = Tables<"schedule_predecessors"> & {
     schedule_items?: unknown
   }
   const predRows = (srcPreds ?? []) as PredRow[]
-  const newPreds = predRows
+  type Edge = {
+    item_id: string
+    predecessor_id: string
+    dep_type: PredRow["dep_type"]
+    lag_days: number
+  }
+  let edges: Edge[] = predRows.map((p) => ({
+    item_id: p.item_id,
+    predecessor_id: p.predecessor_id,
+    dep_type: p.dep_type,
+    lag_days: p.lag_days,
+  }))
+  for (const skippedId of skippedItemIds) {
+    const incoming = edges.filter((e) => e.item_id === skippedId)
+    const outgoing = edges.filter((e) => e.predecessor_id === skippedId)
+    edges = edges.filter(
+      (e) => e.item_id !== skippedId && e.predecessor_id !== skippedId
+    )
+    for (const out of outgoing) {
+      for (const inc of incoming) {
+        if (inc.predecessor_id === out.item_id) continue
+        edges.push({
+          item_id: out.item_id,
+          predecessor_id: inc.predecessor_id,
+          dep_type: out.dep_type,
+          lag_days: inc.lag_days + out.lag_days,
+        })
+      }
+    }
+  }
+  const seenEdges = new Set<string>()
+  const newPreds = edges
     .map((p) => {
       const newItem = idMap.get(p.item_id)
       const newPred = idMap.get(p.predecessor_id)
       if (!newItem || !newPred) return null
+      const key = `${newItem}|${newPred}`
+      if (seenEdges.has(key)) return null
+      seenEdges.add(key)
       return {
         item_id: newItem,
         predecessor_id: newPred,
@@ -781,14 +929,26 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
   //                   approved_by_client_id → null,
   //                   number → re-allocated 1..N in source order.
   type DecisionRow = Tables<"decisions">
+  type ChoiceRow = Tables<"decision_choices"> & { decisions?: unknown }
   type CostItemRow = Tables<"decision_cost_items"> & { decisions?: unknown }
   type FollowupRow = Tables<"decision_followup_templates"> & {
     decisions?: unknown
   }
   type AttachmentRow = Tables<"decision_attachments"> & { decisions?: unknown }
 
-  const decisionRows = (srcDecisions ?? []) as DecisionRow[]
+  // Smart-template filter, mirroring the schedule items: tag mismatches are
+  // dropped, and the review step's per-selection answers can drop a
+  // selection that isn't in this contract (include: false) or replace the
+  // template's placeholder allowance with the contract's real number.
+  const overrideByDecision = new Map(
+    (parsed.selection_overrides ?? []).map((o) => [o.decision_id, o])
+  )
+  const decisionRows = ((srcDecisions ?? []) as DecisionRow[]).filter((d) => {
+    if (attrs && !matchesTemplateTags(d.template_tags, attrs)) return false
+    return overrideByDecision.get(d.id)?.include !== false
+  })
   const decisionIdMap = new Map<string, string>()
+  const choiceIdMap = new Map<string, string>()
   let decisionsCopied = 0
   let costItemsCopied = 0
   let followupsCopied = 0
@@ -798,6 +958,12 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     const newDecisions = decisionRows.map((d, i) => {
       const newId = crypto.randomUUID()
       decisionIdMap.set(d.id, newId)
+      // Allowance: an explicit override wins (its null means "no allowance
+      // on this contract" — also drop the cost code so we don't keep a
+      // code without an amount); otherwise the template's value carries.
+      const override = overrideByDecision.get(d.id)
+      const allowanceAmount =
+        override !== undefined ? override.allowance_amount ?? null : d.allowance_amount
       return {
         id: newId,
         project_id: newProject.id,
@@ -808,8 +974,16 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
         kind: d.kind,
         title: d.title,
         description: d.description,
-        cost_delta: d.cost_delta,
+        // Selections derive cost_delta from the chosen choice on approval;
+        // copying the source's value would leak a stale price into the new
+        // project's pricing rollup (matches copyDecision's behavior).
+        cost_delta: d.kind === "selection" ? null : d.cost_delta,
         markup_percent: d.markup_percent,
+        allowance_amount: allowanceAmount,
+        allowance_cost_code_id:
+          allowanceAmount == null ? null : d.allowance_cost_code_id,
+        due_date: shift(d.due_date),
+        template_tags: d.template_tags,
         status: "draft" as const,
         approved_at: null,
         approved_by_client_id: null,
@@ -819,6 +993,33 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     const { error: dErr } = await supabase.from("decisions").insert(newDecisions)
     if (dErr) throw new Error(dErr.message)
     decisionsCopied = newDecisions.length
+
+    // Choices — copied before cost items / attachments so their per-choice
+    // rows can be remapped through choiceIdMap. selected_choice_id stays
+    // null (the clone is a draft awaiting a fresh client decision).
+    const choiceRows = (srcChoices ?? []) as ChoiceRow[]
+    const newChoices = choiceRows
+      .map((c) => {
+        const newDecisionId = decisionIdMap.get(c.decision_id)
+        if (!newDecisionId) return null
+        const newId = crypto.randomUUID()
+        choiceIdMap.set(c.id, newId)
+        return {
+          id: newId,
+          decision_id: newDecisionId,
+          title: c.title,
+          description: c.description,
+          price_delta: c.price_delta,
+          position: c.position,
+        }
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+    if (newChoices.length > 0) {
+      const { error: chErr } = await supabase
+        .from("decision_choices")
+        .insert(newChoices)
+      if (chErr) throw new Error(chErr.message)
+    }
 
     // Cost items — map decision_id through decisionIdMap. Skip rows
     // whose decision didn't get copied (defensive — shouldn't happen
@@ -830,6 +1031,12 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
         if (!newDecisionId) return null
         return {
           decision_id: newDecisionId,
+          // Per-choice line items follow their choice; the composite FK
+          // (0018) requires the mapped pair to match, which it does by
+          // construction.
+          choice_id: ci.choice_id
+            ? choiceIdMap.get(ci.choice_id) ?? null
+            : null,
           cost_code_id: ci.cost_code_id,
           description: ci.description,
           quantity: ci.quantity,
@@ -854,12 +1061,25 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
       .map((f) => {
         const newDecisionId = decisionIdMap.get(f.decision_id)
         if (!newDecisionId) return null
+        // Schedule-item anchors remap through idMap — the schedule was
+        // cloned above, so the anchor can follow. If the anchor item was
+        // skipped by the template filter, drop the whole anchor triple
+        // (all-or-nothing check constraint) and the due_offset_days
+        // fallback takes over at materialization.
+        const newAnchor = f.anchor_schedule_item_id
+          ? idMap.get(f.anchor_schedule_item_id) ?? null
+          : null
         return {
           decision_id: newDecisionId,
           title: f.title,
+          kind: f.kind,
           assignee_profile_id: f.assignee_profile_id,
           assignee_company_id: f.assignee_company_id,
           due_offset_days: f.due_offset_days,
+          duration_days: f.duration_days,
+          anchor_schedule_item_id: newAnchor,
+          parent_anchor: newAnchor ? f.parent_anchor : null,
+          parent_offset_days: newAnchor ? f.parent_offset_days : null,
           notes: f.notes,
           position: f.position,
         }
@@ -900,12 +1120,15 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
         .from("decision_attachments")
         .insert({
           decision_id: newDecisionId,
+          // Per-choice photos follow their (re-mapped) choice.
+          choice_id: a.choice_id ? choiceIdMap.get(a.choice_id) ?? null : null,
           storage_bucket: a.storage_bucket,
           storage_path: newPath,
           file_name: a.file_name,
           file_type: a.file_type,
           file_size: a.file_size,
           caption: a.caption,
+          tags: a.tags,
           position: a.position,
         })
       if (aErr) {
@@ -925,11 +1148,74 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
   return {
     id: newProject.id,
     itemsCopied: idMap.size,
+    itemsSkipped: skippedItemIds.size,
     checklistsCopied: newChecklists.length,
     predecessorsCopied: newPreds.length,
     decisionsCopied,
+    decisionsSkipped: (srcDecisions?.length ?? 0) - decisionsCopied,
     costItemsCopied,
     followupsCopied,
     attachmentsCopied,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Template profile (smart-template questionnaire data)
+// ---------------------------------------------------------------------------
+
+export type TemplateProfile = {
+  /** Distinct base tags across the template's items — one yes/no question each. */
+  tags: string[]
+  /** The template's selections, for the include/allowance review step. */
+  selections: {
+    id: string
+    title: string
+    allowance_amount: number | null
+    template_tags: string[]
+  }[]
+}
+
+/**
+ * What the duplicate flow needs to render the smart-template steps for a
+ * given source project: the house-attribute questions (derived from the
+ * template_tags actually present, so tagging a new item automatically adds
+ * its question) and the selections to review against the contract.
+ */
+export async function getTemplateProfile(input: {
+  source_project_id: string
+}): Promise<TemplateProfile> {
+  await requireStaff()
+  const parsed = z
+    .object({ source_project_id: z.string() })
+    .parse(input)
+  const supabase = await createSupabaseServerClient()
+  const [
+    { data: items, error: iErr },
+    { data: decisions, error: dErr },
+  ] = await Promise.all([
+    supabase
+      .from("schedule_items")
+      .select("template_tags")
+      .eq("project_id", parsed.source_project_id),
+    supabase
+      .from("decisions")
+      .select("id, title, kind, allowance_amount, template_tags")
+      .eq("project_id", parsed.source_project_id)
+      .order("number", { ascending: true }),
+  ])
+  const err = iErr ?? dErr
+  if (err) throw new Error(err.message)
+  return {
+    tags: collectBaseTags(
+      [...(items ?? []), ...(decisions ?? [])].map((r) => r.template_tags)
+    ),
+    selections: (decisions ?? [])
+      .filter((d) => d.kind === "selection")
+      .map((d) => ({
+        id: d.id,
+        title: d.title,
+        allowance_amount: d.allowance_amount,
+        template_tags: d.template_tags,
+      })),
   }
 }

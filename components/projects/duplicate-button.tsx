@@ -16,6 +16,10 @@ import {
 import { Field, Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { duplicateProject } from "@/app/actions/projects"
+import {
+  TemplateOptionsFields,
+  type TemplateOptionsValue,
+} from "@/components/projects/template-options"
 
 /**
  * Duplicate-project trigger + dialog. Lives in the project header for any
@@ -81,6 +85,10 @@ export function DuplicateDialog({
   const [newNumber, setNewNumber] = useState("")
   const [newName, setNewName] = useState(`${sourceName} (copy)`)
   const [newStartDate, setNewStartDate] = useState("")
+  // Smart-template answers (house attributes + selection/allowance review).
+  // null while the template profile is still loading.
+  const [templateOptions, setTemplateOptions] =
+    useState<TemplateOptionsValue | null>(null)
 
   function submit() {
     if (!newNumber.trim()) {
@@ -94,17 +102,30 @@ export function DuplicateDialog({
           new_project_number: newNumber.trim(),
           new_name: newName.trim() || `${sourceName} (copy)`,
           new_start_date: newStartDate || null,
+          // On a profile-load error we send no answers — the server then
+          // copies everything (pre-smart-template behavior).
+          attributes:
+            templateOptions?.status === "ready"
+              ? templateOptions.attributes
+              : undefined,
+          selection_overrides:
+            templateOptions?.status === "ready"
+              ? templateOptions.selection_overrides
+              : undefined,
         })
         // Build a concise multi-line toast so staff can confirm everything
         // they expected to copy actually came across. Each line is only
         // shown when its count is non-zero so we don't surface "0 decisions"
         // on schedule-only templates.
+        const skipped = result.itemsSkipped + result.decisionsSkipped
         const parts = [
           `${result.itemsCopied} schedule item${result.itemsCopied === 1 ? "" : "s"}`,
           result.predecessorsCopied > 0 &&
             `${result.predecessorsCopied} predecessor link${result.predecessorsCopied === 1 ? "" : "s"}`,
           result.decisionsCopied > 0 &&
             `${result.decisionsCopied} decision${result.decisionsCopied === 1 ? "" : "s"}`,
+          skipped > 0 &&
+            `${skipped} skipped for this house`,
         ].filter(Boolean)
         toast.success(`Created · ${parts.join(", ")}`)
         router.push(`/projects/${result.id}/schedule`)
@@ -158,12 +179,24 @@ export function DuplicateDialog({
               onChange={(e) => setNewStartDate(e.target.value)}
             />
           </Field>
+          <TemplateOptionsFields
+            sourceProjectId={sourceProjectId}
+            onChange={setTemplateOptions}
+          />
         </DialogBody>
         <DialogFooter>
           <Button type="button" variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="button" onClick={submit} disabled={pending}>
+          {/* Locked until the template profile resolves so a quick click
+              can't skip the house-attribute filtering. Load errors unlock
+              it (templateOptions becomes {status:"error"}) with a visible
+              copy-everything warning. */}
+          <Button
+            type="button"
+            onClick={submit}
+            disabled={pending || templateOptions === null}
+          >
             {pending ? "Duplicating…" : "Duplicate"}
           </Button>
         </DialogFooter>

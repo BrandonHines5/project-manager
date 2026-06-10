@@ -48,6 +48,7 @@ import {
   type DecisionInputT,
 } from "@/app/actions/decisions"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
+import { formatTags, parseTagsInput } from "@/lib/template-tags"
 import {
   KindChip,
   StatusBadge,
@@ -132,6 +133,9 @@ export function DecisionDrawer({
   const [kind, setKind] = useState<Enums<"decision_kind">>(initialKind)
   const [title, setTitle] = useState(decision?.title ?? "")
   const [description, setDescription] = useState(decision?.description ?? "")
+  const [templateTagsText, setTemplateTagsText] = useState(
+    formatTags(decision?.template_tags)
+  )
   const [dueDate, setDueDate] = useState<string>(decision?.due_date ?? "")
   const [costDelta, setCostDelta] = useState<string>(
     decision?.cost_delta != null ? String(decision.cost_delta) : ""
@@ -366,6 +370,7 @@ export function DecisionDrawer({
           : null,
       status: overrideStatus ?? status,
       due_date: dueDate || null,
+      template_tags: parseTagsInput(templateTagsText),
       followups: followups
         .filter((f) => f.title.trim() !== "")
         .map((f) => {
@@ -725,6 +730,18 @@ export function DecisionDrawer({
               placeholder="What's changing or being selected, and any relevant detail for the owner."
             />
           </Field>
+          {canEdit && (
+            <Field
+              label="Template tags"
+              hint="Only matters on template projects. Comma-separated conditions, e.g. walkout, !walkout — this decision is copied to a new project only when every tag matches the house attributes answered at creation. Leave blank to always copy."
+            >
+              <Input
+                value={templateTagsText}
+                onChange={(e) => setTemplateTagsText(e.target.value)}
+                placeholder="walkout, finished_basement"
+              />
+            </Field>
+          )}
 
           {/* Selection choices — staff editor / client picker */}
           {kind === "selection" && (

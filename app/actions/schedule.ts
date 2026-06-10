@@ -12,6 +12,7 @@ import {
 import type { RecurrenceRule } from "@/lib/schedule/recurrence"
 import { sendEmail, appUrl } from "@/lib/email"
 import { sendQuoSms, normalizeE164 } from "@/lib/quo"
+import { normalizeTag } from "@/lib/template-tags"
 
 // Permissive schema: accept anything reasonable and normalize inside the
 // action. Never let a benign client quirk (null vs "", missing key, extra
@@ -72,6 +73,10 @@ const ScheduleItemInput = z
       .default("not_started"),
     priority: z.enum(["low", "medium", "high"]).nullish(),
     recurrence_rule: Recurrence,
+    // Smart-template conditions (e.g. ["walkout"]). Optional so callers
+    // that don't send the field (bulk ops, copy-to-targets) leave the
+    // stored value untouched.
+    template_tags: z.array(z.string()).optional(),
     assignments: z.array(Assignment).default([]),
     checklist: z.array(ChecklistItem).default([]),
     predecessors: z.array(Predecessor).default([]),
@@ -211,6 +216,15 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     recurrence_rule: (parsed.recurrence_rule ?? null) as RecurrenceRule | null,
     parent_anchor: anchorFinal,
     parent_offset_days: offsetFinal,
+    // Only touch template_tags when the caller sent them — undefined means
+    // "not editing tags in this save".
+    ...(parsed.template_tags !== undefined
+      ? {
+          template_tags: parsed.template_tags
+            .map(normalizeTag)
+            .filter((t, i, arr) => t !== "" && arr.indexOf(t) === i),
+        }
+      : {}),
   }
 
   let id: string | null = nz(parsed.id)
