@@ -123,8 +123,11 @@ export function AIAgent() {
   }, [])
 
   function toggleDictation() {
-    if (listening) {
-      stopDictation()
+    // The ref — not `listening` — is the source of truth here: two taps
+    // before React re-renders would both read a stale `listening === false`
+    // and spawn a second recognizer over the active one.
+    if (recognitionRef.current) {
+      recognitionRef.current.stop()
       return
     }
     const Ctor = window.SpeechRecognition ?? window.webkitSpeechRecognition
@@ -142,8 +145,12 @@ export function AIAgent() {
       setDraft(dictationBaseRef.current + transcript)
     }
     rec.onend = () => {
-      setListening(false)
-      recognitionRef.current = null
+      // Only tear down if this instance is still the active one — a late
+      // onend from a superseded recognizer must not break the live session.
+      if (recognitionRef.current === rec) {
+        recognitionRef.current = null
+        setListening(false)
+      }
     }
     rec.onerror = () => {
       // onend fires after onerror in every implementation — state resets there.
@@ -153,8 +160,10 @@ export function AIAgent() {
     try {
       rec.start()
     } catch {
-      setListening(false)
-      recognitionRef.current = null
+      if (recognitionRef.current === rec) {
+        recognitionRef.current = null
+        setListening(false)
+      }
     }
   }
 
