@@ -582,6 +582,7 @@ export type Database = {
           project_id: string
           selected_choice_id: string | null
           status: Database["public"]["Enums"]["decision_status"]
+          template_tags: string[]
           title: string
           updated_at: string
         }
@@ -602,6 +603,7 @@ export type Database = {
           project_id: string
           selected_choice_id?: string | null
           status?: Database["public"]["Enums"]["decision_status"]
+          template_tags?: string[]
           title: string
           updated_at?: string
         }
@@ -622,6 +624,7 @@ export type Database = {
           project_id?: string
           selected_choice_id?: string | null
           status?: Database["public"]["Enums"]["decision_status"]
+          template_tags?: string[]
           title?: string
           updated_at?: string
         }
@@ -912,6 +915,13 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "project_files_parent_file_id_fkey"
+            columns: ["parent_file_id"]
+            isOneToOne: false
+            referencedRelation: "project_files"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "project_files_project_id_fkey"
             columns: ["project_id"]
             isOneToOne: false
@@ -1030,6 +1040,7 @@ export type Database = {
       projects: {
         Row: {
           address: string | null
+          attributes: Json
           client_company_id: string | null
           client_email: string | null
           client_email_2: string | null
@@ -1047,14 +1058,15 @@ export type Database = {
           longitude: number | null
           name: string
           notes: string | null
-          project_number: string
           project_manager: string | null
+          project_number: string
           start_date: string | null
           status: Database["public"]["Enums"]["project_status"]
           target_completion_date: string | null
         }
         Insert: {
           address?: string | null
+          attributes?: Json
           client_company_id?: string | null
           client_email?: string | null
           client_email_2?: string | null
@@ -1072,14 +1084,15 @@ export type Database = {
           longitude?: number | null
           name: string
           notes?: string | null
-          project_number: string
           project_manager?: string | null
+          project_number: string
           start_date?: string | null
           status?: Database["public"]["Enums"]["project_status"]
           target_completion_date?: string | null
         }
         Update: {
           address?: string | null
+          attributes?: Json
           client_company_id?: string | null
           client_email?: string | null
           client_email_2?: string | null
@@ -1097,8 +1110,8 @@ export type Database = {
           longitude?: number | null
           name?: string
           notes?: string | null
-          project_number?: string
           project_manager?: string | null
+          project_number?: string
           start_date?: string | null
           status?: Database["public"]["Enums"]["project_status"]
           target_completion_date?: string | null
@@ -1299,6 +1312,7 @@ export type Database = {
           source_decision_id: string | null
           start_date: string | null
           status: Database["public"]["Enums"]["schedule_item_status"]
+          template_tags: string[]
           title: string
           updated_at: string
         }
@@ -1326,6 +1340,7 @@ export type Database = {
           source_decision_id?: string | null
           start_date?: string | null
           status?: Database["public"]["Enums"]["schedule_item_status"]
+          template_tags?: string[]
           title: string
           updated_at?: string
         }
@@ -1353,6 +1368,7 @@ export type Database = {
           source_decision_id?: string | null
           start_date?: string | null
           status?: Database["public"]["Enums"]["schedule_item_status"]
+          template_tags?: string[]
           title?: string
           updated_at?: string
         }
@@ -1513,17 +1529,22 @@ export type Database = {
       next_decision_number: { Args: { p_project: string }; Returns: number }
       save_company_with_trades: {
         Args: {
+          // Hand-kept nullability: these args accept NULL at runtime
+          // (p_id null = insert new company; see migration 0032), but newer
+          // supabase-gen versions emit them as plain string. Restore the
+          // `| null` unions if a regeneration drops them.
+          p_address: string | null
+          p_email: string | null
           p_id: string | null
           p_name: string
-          p_type: Database["public"]["Enums"]["company_type"]
-          p_address: string | null
-          p_phone: string | null
-          p_email: string | null
           p_notes: string | null
+          p_phone: string | null
           p_trades: string[]
+          p_type: Database["public"]["Enums"]["company_type"]
         }
         Returns: string
       }
+      validate_media_tags: { Args: { p_tags: string[] }; Returns: undefined }
     }
     Enums: {
       company_type: "sub" | "vendor" | "client"
@@ -1689,25 +1710,10 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      company_type: [
-        "sub",
-        "vendor",
-        "client",
-      ],
-      daily_log_visibility: [
-        "internal",
-        "client",
-      ],
-      decision_kind: [
-        "change_order",
-        "selection",
-      ],
-      decision_status: [
-        "draft",
-        "pending_client",
-        "approved",
-        "rejected",
-      ],
+      company_type: ["sub", "vendor", "client"],
+      daily_log_visibility: ["internal", "client"],
+      decision_kind: ["change_order", "selection"],
+      decision_status: ["draft", "pending_client", "approved", "rejected"],
       delay_reason: [
         "weather",
         "sub",
@@ -1716,12 +1722,7 @@ export const Constants = {
         "permit",
         "other",
       ],
-      dependency_type: [
-        "FS",
-        "SS",
-        "FF",
-        "SF",
-      ],
+      dependency_type: ["FS", "SS", "FF", "SF"],
       email_digest_pref: ["immediate", "daily", "off"],
       file_category: [
         "house_plans",
@@ -1730,13 +1731,7 @@ export const Constants = {
         "contract",
         "other",
       ],
-      payment_method: [
-        "check",
-        "wire",
-        "card",
-        "cash",
-        "other",
-      ],
+      payment_method: ["check", "wire", "card", "cash", "other"],
       project_status: [
         "lead",
         "pre_construction",
@@ -1745,30 +1740,16 @@ export const Constants = {
         "complete",
         "cancelled",
       ],
-      schedule_item_kind: [
-        "work",
-        "todo",
-      ],
+      schedule_item_kind: ["work", "todo"],
       schedule_item_status: [
         "not_started",
         "in_progress",
         "complete",
         "delayed",
       ],
-      schedule_parent_anchor: [
-        "start",
-        "end",
-      ],
-      todo_priority: [
-        "low",
-        "medium",
-        "high",
-      ],
-      user_role: [
-        "staff",
-        "trade",
-        "client",
-      ],
+      schedule_parent_anchor: ["start", "end"],
+      todo_priority: ["low", "medium", "high"],
+      user_role: ["staff", "trade", "client"],
     },
   },
 } as const

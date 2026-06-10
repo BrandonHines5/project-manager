@@ -9,6 +9,7 @@ import { addDays, formatCurrency, formatDate, todayISO } from "@/lib/utils"
 import { sendEmail, appUrl } from "@/lib/email"
 import { sendDashboardWebhook } from "@/lib/dashboard"
 import type { TablesInsert, TablesUpdate } from "@/lib/db/types"
+import { normalizeTag } from "@/lib/template-tags"
 
 const optStr = z.string().nullish()
 
@@ -98,6 +99,9 @@ const DecisionInput = z
     allowance_cost_code_id: optStr,
     status: z.enum(["draft", "pending_client", "approved", "rejected"]).default("draft"),
     due_date: optStr,
+    // Smart-template conditions (e.g. ["walkout"]). Optional so callers
+    // that don't send the field leave the stored value untouched.
+    template_tags: z.array(z.string()).optional(),
     followups: z.array(Followup).default([]),
     attachments: z.array(Attachment).default([]),
     choices: z.array(Choice).default([]),
@@ -258,6 +262,15 @@ export async function saveDecision(input: DecisionInputT) {
     finalCostDelta = parsed.cost_delta ?? null
   }
 
+  // Only touch template_tags when the caller sent them — undefined means
+  // "not editing tags in this save".
+  const normalizedTags =
+    parsed.template_tags !== undefined
+      ? parsed.template_tags
+          .map(normalizeTag)
+          .filter((t, i, arr) => t !== "" && arr.indexOf(t) === i)
+      : undefined
+
   if (id) {
     const updateRow: TablesUpdate<"decisions"> = {
       project_id: parsed.project_id,
@@ -271,6 +284,7 @@ export async function saveDecision(input: DecisionInputT) {
       status: parsed.status,
       due_date: nz(parsed.due_date),
     }
+    if (normalizedTags !== undefined) updateRow.template_tags = normalizedTags
     if (newlyApproved) updateRow.approved_at = new Date().toISOString()
     const { error } = await supabase
       .from("decisions")
@@ -303,6 +317,7 @@ export async function saveDecision(input: DecisionInputT) {
           allowance_cost_code_id: allowanceCostCodeId,
           status: parsed.status,
           due_date: nz(parsed.due_date),
+          template_tags: normalizedTags ?? [],
           number,
           created_by: profile.id,
           approved_at:
@@ -1393,6 +1408,7 @@ export async function copyDecision({
         allowance_cost_code_id: src.allowance_cost_code_id,
         status: "draft",
         due_date: src.due_date,
+        template_tags: src.template_tags,
         number,
         created_by: profile.id,
       })

@@ -5,6 +5,10 @@ import Link from "next/link"
 import { Building2, ChevronRight, Copy, FilePlus } from "lucide-react"
 import { createProject, type ProjectFormState } from "@/app/actions/projects"
 import { DuplicateDialog } from "@/components/projects/duplicate-button"
+import {
+  TemplateOptionsFields,
+  type TemplateOptionsValue,
+} from "@/components/projects/template-options"
 import { Card, CardBody, CardFooter } from "@/components/ui/card"
 import { Field, Input, Select, Textarea } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -296,6 +300,10 @@ function ProjectFormFields({
           : ""
   const [sourceTemplateId, setSourceTemplateId] = useState("")
   const selectedTemplate = templates.find((t) => t.id === sourceTemplateId)
+  // Smart-template answers, serialized into hidden fields so createProject
+  // can hand them to duplicateProject. null while the profile loads.
+  const [templateOptions, setTemplateOptions] =
+    useState<TemplateOptionsValue | null>(null)
 
   return (
     <form action={formAction}>
@@ -448,7 +456,13 @@ function ProjectFormFields({
             >
               <Select
                 value={sourceTemplateId}
-                onChange={(e) => setSourceTemplateId(e.target.value)}
+                onChange={(e) => {
+                  setSourceTemplateId(e.target.value)
+                  // Drop the previous template's answers immediately —
+                  // TemplateOptionsFields pushes null again on mount, but
+                  // until then a quick submit would reuse stale answers.
+                  setTemplateOptions(null)
+                }}
               >
                 <option value="">— None (empty schedule) —</option>
                 {templates.map((t) => (
@@ -458,6 +472,31 @@ function ProjectFormFields({
                 ))}
               </Select>
             </Field>
+          )}
+          {sourceTemplateId && (
+            <div className="sm:col-span-2">
+              {/* On a profile-load error no answers are submitted — the
+                  server then copies everything (pre-smart-template
+                  behavior); the component shows a visible warning. */}
+              {templateOptions?.status === "ready" && (
+                <>
+                  <input
+                    type="hidden"
+                    name="attributes_json"
+                    value={JSON.stringify(templateOptions.attributes)}
+                  />
+                  <input
+                    type="hidden"
+                    name="selection_overrides_json"
+                    value={JSON.stringify(templateOptions.selection_overrides)}
+                  />
+                </>
+              )}
+              <TemplateOptionsFields
+                sourceProjectId={sourceTemplateId}
+                onChange={setTemplateOptions}
+              />
+            </div>
           )}
           <Field label="Notes" className="sm:col-span-2">
             <Textarea name="notes" rows={3} />
@@ -496,7 +535,12 @@ function ProjectFormFields({
               <Copy className="h-4 w-4" /> Start from template
             </Button>
           )}
-          <Button type="submit" disabled={pending}>
+          {/* When a template is selected, wait for its profile to resolve so
+              a quick submit can't skip the house-attribute filtering. */}
+          <Button
+            type="submit"
+            disabled={pending || (!!sourceTemplateId && templateOptions === null)}
+          >
             {pending ? "Creating…" : "Create project"}
           </Button>
         </CardFooter>
