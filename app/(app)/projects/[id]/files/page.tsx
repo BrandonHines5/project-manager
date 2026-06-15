@@ -114,7 +114,15 @@ export default async function FilesPage({
     })
   }
 
-  const allPaths = [...new Set(media.map((m) => m.storage_path))]
+  // Include every plan (archived ones too) so the Archived folder's cards and
+  // the DocViewer can still preview/download — `media` deliberately omits
+  // archived plans, so derive paths from the full plans list as well.
+  const allPaths = [
+    ...new Set([
+      ...(plans ?? []).map((p) => p.storage_path),
+      ...media.map((m) => m.storage_path),
+    ]),
+  ]
   const signedUrls = await getSignedUrlsForFiles(allPaths)
 
   const data: FilesData = {

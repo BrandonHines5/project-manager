@@ -450,6 +450,9 @@ const ProjectEditInput = z
       .regex(/^[+\d\s().\-x]*$/, "Phone may only contain digits, spaces, +, -, (), ., or x")
       .optional()
       .or(z.literal("")),
+    // Cost-plus jobs bill actual cost, so they track labor hours on daily
+    // logs. Fixed-price jobs leave this false and never surface the hours UI.
+    cost_plus: z.boolean().optional().default(false),
     notes: z.string().optional().or(z.literal("")),
   })
 
@@ -493,6 +496,7 @@ export async function updateProject(
       client_name_2: emptyToNull(rest.client_name_2),
       client_email_2: emptyToNull(rest.client_email_2),
       client_phone_2: emptyToNull(rest.client_phone_2),
+      cost_plus: rest.cost_plus,
       notes: emptyToNull(rest.notes),
     })
     .eq("id", project_id)
@@ -504,6 +508,7 @@ export async function updateProject(
   revalidatePath(`/projects/${project_id}/onsite`)
   revalidatePath(`/projects/${project_id}/schedule`)
   revalidatePath(`/projects/${project_id}/pricing`)
+  revalidatePath(`/projects/${project_id}/daily-logs`)
   revalidatePath("/projects")
   return { ok: true }
 }

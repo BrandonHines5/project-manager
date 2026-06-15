@@ -193,6 +193,7 @@ export type Database = {
         Row: {
           created_at: string
           created_by: string
+          hours_worked: number | null
           id: string
           log_date: string
           notes: string | null
@@ -203,6 +204,7 @@ export type Database = {
         Insert: {
           created_at?: string
           created_by: string
+          hours_worked?: number | null
           id?: string
           log_date?: string
           notes?: string | null
@@ -213,6 +215,7 @@ export type Database = {
         Update: {
           created_at?: string
           created_by?: string
+          hours_worked?: number | null
           id?: string
           log_date?: string
           notes?: string | null
@@ -1052,6 +1055,7 @@ export type Database = {
           client_phone: string | null
           client_phone_2: string | null
           contract_price: number | null
+          cost_plus: boolean
           created_at: string
           created_by: string | null
           dashboard_pulled_at: string | null
@@ -1078,6 +1082,7 @@ export type Database = {
           client_phone?: string | null
           client_phone_2?: string | null
           contract_price?: number | null
+          cost_plus?: boolean
           created_at?: string
           created_by?: string | null
           dashboard_pulled_at?: string | null
@@ -1104,6 +1109,7 @@ export type Database = {
           client_phone?: string | null
           client_phone_2?: string | null
           contract_price?: number | null
+          cost_plus?: boolean
           created_at?: string
           created_by?: string | null
           dashboard_pulled_at?: string | null

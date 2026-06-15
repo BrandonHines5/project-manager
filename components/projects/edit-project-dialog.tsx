@@ -32,6 +32,7 @@ type EditableProject = {
   client_name_2: string | null
   client_email_2: string | null
   client_phone_2: string | null
+  cost_plus: boolean
   notes: string | null
 }
 
@@ -89,6 +90,7 @@ function EditProjectDialog({
       client_name_2: String(fd.get("client_name_2") ?? ""),
       client_email_2: String(fd.get("client_email_2") ?? ""),
       client_phone_2: String(fd.get("client_phone_2") ?? ""),
+      cost_plus: fd.get("cost_plus") === "on",
       notes: String(fd.get("notes") ?? ""),
     } as Parameters<typeof updateProject>[0]
 
@@ -159,6 +161,22 @@ function EditProjectDialog({
                 defaultValue={project.contract_price ?? ""}
                 className={cn(fieldErrors.contract_price && "border-danger")}
               />
+            </Field>
+            <Field label="Billing" className="sm:col-span-2">
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  name="cost_plus"
+                  defaultChecked={project.cost_plus}
+                  className="mt-0.5 h-4 w-4 rounded border-border-strong"
+                />
+                <span>
+                  <span className="font-medium">Cost-plus job</span>
+                  <span className="block text-xs text-muted">
+                    Track labor hours on daily logs and roll them up per job.
+                  </span>
+                </span>
+              </label>
             </Field>
             <Field label="Address" className="sm:col-span-2">
               <Input

@@ -167,15 +167,21 @@ export async function deleteProjectFile({
  * the revision chain is intact) — the UI just files it under "Archived" and
  * drops it from the active list and gallery. Restoring clears the timestamp.
  */
-export async function setProjectFileArchived({
-  id,
-  project_id,
-  archived,
-}: {
-  id: string
-  project_id: string
-  archived: boolean
-}) {
+const ArchiveInput = z.object({
+  id: z.string().min(1),
+  project_id: z.string().min(1),
+  archived: z.boolean(),
+})
+
+export async function setProjectFileArchived(input: z.input<typeof ArchiveInput>) {
+  const result = ArchiveInput.safeParse(input)
+  if (!result.success) {
+    const first = result.error.issues[0]
+    throw new Error(
+      `Invalid archive payload at ${first.path.join(".") || "(root)"}: ${first.message}`
+    )
+  }
+  const { id, project_id, archived } = result.data
   await requireStaff()
   const supabase = await createSupabaseServerClient()
   const { error } = await supabase

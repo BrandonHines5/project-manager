@@ -17,6 +17,10 @@ const DailyLogInput = z
     log_date: z.string().min(1, "Required"),
     visibility: z.enum(["internal", "client"]).default("internal"),
     notes: optStr,
+    // Labor hours for the day, attributed to the log's author. Only set on
+    // cost-plus jobs (the UI hides the field otherwise). Capped at 24 since a
+    // log covers a single day.
+    hours_worked: z.coerce.number().min(0).max(24).nullish(),
     subs_on_site: z
       .array(
         z.object({
@@ -78,6 +82,7 @@ export async function saveDailyLog(input: DailyLogInputT) {
     log_date: parsed.log_date,
     visibility: parsed.visibility,
     notes: nz(parsed.notes),
+    hours_worked: parsed.hours_worked ?? null,
   }
 
   if (id) {

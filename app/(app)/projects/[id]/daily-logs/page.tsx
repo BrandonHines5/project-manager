@@ -18,7 +18,7 @@ export default async function DailyLogsPage({
 
   const { data: project } = await supabase
     .from("projects")
-    .select("id, name, project_number")
+    .select("id, name, project_number, cost_plus")
     .eq("id", projectId)
     .maybeSingle()
   if (!project) notFound()
@@ -71,6 +71,7 @@ export default async function DailyLogsPage({
   const data: DailyLogsData = {
     project_id: projectId,
     role: profile.role,
+    cost_plus: project.cost_plus,
     logs: logs ?? [],
     subs_on_site: strip(subsOnSite) as DailyLogsData["subs_on_site"],
     attachments: cleanedAttachments,
