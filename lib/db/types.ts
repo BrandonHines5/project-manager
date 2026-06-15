@@ -193,6 +193,7 @@ export type Database = {
         Row: {
           created_at: string
           created_by: string
+          hours_worked: number | null
           id: string
           log_date: string
           notes: string | null
@@ -203,6 +204,7 @@ export type Database = {
         Insert: {
           created_at?: string
           created_by: string
+          hours_worked?: number | null
           id?: string
           log_date?: string
           notes?: string | null
@@ -213,6 +215,7 @@ export type Database = {
         Update: {
           created_at?: string
           created_by?: string
+          hours_worked?: number | null
           id?: string
           log_date?: string
           notes?: string | null
@@ -860,6 +863,7 @@ export type Database = {
       }
       project_files: {
         Row: {
+          archived_at: string | null
           category: Database["public"]["Enums"]["file_category"]
           created_at: string
           description: string | null
@@ -878,6 +882,7 @@ export type Database = {
           version: number
         }
         Insert: {
+          archived_at?: string | null
           category?: Database["public"]["Enums"]["file_category"]
           created_at?: string
           description?: string | null
@@ -896,6 +901,7 @@ export type Database = {
           version?: number
         }
         Update: {
+          archived_at?: string | null
           category?: Database["public"]["Enums"]["file_category"]
           created_at?: string
           description?: string | null
@@ -1049,6 +1055,7 @@ export type Database = {
           client_phone: string | null
           client_phone_2: string | null
           contract_price: number | null
+          cost_plus: boolean
           created_at: string
           created_by: string | null
           dashboard_pulled_at: string | null
@@ -1060,6 +1067,7 @@ export type Database = {
           notes: string | null
           project_manager: string | null
           project_number: string
+          project_type: Database["public"]["Enums"]["project_type"] | null
           start_date: string | null
           status: Database["public"]["Enums"]["project_status"]
           target_completion_date: string | null
@@ -1075,6 +1083,7 @@ export type Database = {
           client_phone?: string | null
           client_phone_2?: string | null
           contract_price?: number | null
+          cost_plus?: boolean
           created_at?: string
           created_by?: string | null
           dashboard_pulled_at?: string | null
@@ -1086,6 +1095,7 @@ export type Database = {
           notes?: string | null
           project_manager?: string | null
           project_number: string
+          project_type?: Database["public"]["Enums"]["project_type"] | null
           start_date?: string | null
           status?: Database["public"]["Enums"]["project_status"]
           target_completion_date?: string | null
@@ -1101,6 +1111,7 @@ export type Database = {
           client_phone?: string | null
           client_phone_2?: string | null
           contract_price?: number | null
+          cost_plus?: boolean
           created_at?: string
           created_by?: string | null
           dashboard_pulled_at?: string | null
@@ -1112,6 +1123,7 @@ export type Database = {
           notes?: string | null
           project_manager?: string | null
           project_number?: string
+          project_type?: Database["public"]["Enums"]["project_type"] | null
           start_date?: string | null
           status?: Database["public"]["Enums"]["project_status"]
           target_completion_date?: string | null
@@ -1573,7 +1585,13 @@ export type Database = {
         | "active"
         | "on_hold"
         | "complete"
+        | "warranty"
         | "cancelled"
+      project_type:
+        | "residential_new"
+        | "residential_remodel"
+        | "commercial_new"
+        | "commercial_remodel"
       schedule_item_kind: "work" | "todo"
       schedule_item_status:
         | "not_started"
@@ -1738,7 +1756,14 @@ export const Constants = {
         "active",
         "on_hold",
         "complete",
+        "warranty",
         "cancelled",
+      ],
+      project_type: [
+        "residential_new",
+        "residential_remodel",
+        "commercial_new",
+        "commercial_remodel",
       ],
       schedule_item_kind: ["work", "todo"],
       schedule_item_status: [

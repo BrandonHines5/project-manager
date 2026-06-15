@@ -17,6 +17,11 @@ import {
   X,
   History,
   RefreshCcw,
+  Eye,
+  Archive,
+  ArchiveRestore,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -36,6 +41,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client"
 import {
   saveProjectFile,
   deleteProjectFile,
+  setProjectFileArchived,
   getFileVersions,
   setMediaTags,
   type FileInputT,
@@ -95,6 +101,22 @@ export function FilesClient({ data }: { data: FilesData }) {
   >("all")
   const [tagFilter, setTagFilter] = useState<string | null>(null)
   const [lightbox, setLightbox] = useState<Media | null>(null)
+  // When set, render the in-browser document viewer for this plan.
+  const [viewerTarget, setViewerTarget] = useState<Tables<"project_files"> | null>(
+    null
+  )
+  const [showArchived, setShowArchived] = useState(false)
+
+  // Split plans into the active list and the archived folder. Archived plans
+  // are filed away (still downloadable) but kept out of the main list.
+  const activePlans = useMemo(
+    () => data.plans.filter((p) => !p.archived_at),
+    [data.plans]
+  )
+  const archivedPlans = useMemo(
+    () => data.plans.filter((p) => p.archived_at),
+    [data.plans]
+  )
 
   // Global tag pool for the filter chip row. Built from every visible
   // media tag (not just the currently-filtered set) so the user can pivot
@@ -141,10 +163,12 @@ export function FilesClient({ data }: { data: FilesData }) {
           )}
         </div>
 
-        {data.plans.length === 0 ? (
+        {activePlans.length === 0 ? (
           <EmptyState
             icon={<FileText className="h-8 w-8" />}
-            title="No plans uploaded"
+            title={
+              archivedPlans.length > 0 ? "No active plans" : "No plans uploaded"
+            }
             description={
               canEdit
                 ? "Upload the house plans, plot plan, permits, and contract here."
@@ -153,13 +177,14 @@ export function FilesClient({ data }: { data: FilesData }) {
           />
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {data.plans.map((p) => (
+            {activePlans.map((p) => (
               <PlanCard
                 key={p.id}
                 file={p}
                 url={data.signed_urls[p.storage_path]}
                 canEdit={canEdit}
                 projectId={data.project_id}
+                onView={() => setViewerTarget(p)}
                 onReplace={() =>
                   setRevisionTarget({
                     id: p.id,
@@ -173,6 +198,44 @@ export function FilesClient({ data }: { data: FilesData }) {
           </div>
         )}
       </section>
+
+      {/* Archived folder */}
+      {archivedPlans.length > 0 && (
+        <section>
+          <button
+            type="button"
+            onClick={() => setShowArchived((v) => !v)}
+            className="flex items-center gap-1.5 text-sm font-semibold cursor-pointer hover:text-brand-600"
+          >
+            {showArchived ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
+            <Archive className="h-4 w-4 text-muted" />
+            Archived
+            <span className="text-xs font-normal text-muted">
+              ({archivedPlans.length})
+            </span>
+          </button>
+          {showArchived && (
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {archivedPlans.map((p) => (
+                <PlanCard
+                  key={p.id}
+                  file={p}
+                  url={data.signed_urls[p.storage_path]}
+                  canEdit={canEdit}
+                  projectId={data.project_id}
+                  archived
+                  onView={() => setViewerTarget(p)}
+                  onShowHistory={() => setHistoryTarget(p)}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Gallery section */}
       <section>
@@ -329,6 +392,13 @@ export function FilesClient({ data }: { data: FilesData }) {
           onClose={() => setLightbox(null)}
         />
       )}
+      {viewerTarget && (
+        <DocViewer
+          file={viewerTarget}
+          url={data.signed_urls[viewerTarget.storage_path]}
+          onClose={() => setViewerTarget(null)}
+        />
+      )}
     </div>
   )
 }
@@ -338,6 +408,8 @@ function PlanCard({
   url,
   canEdit,
   projectId,
+  archived = false,
+  onView,
   onReplace,
   onShowHistory,
 }: {
@@ -345,7 +417,9 @@ function PlanCard({
   url: string | undefined
   canEdit: boolean
   projectId: string
-  onReplace: () => void
+  archived?: boolean
+  onView: () => void
+  onReplace?: () => void
   onShowHistory: () => void
 }) {
   const meta = CATEGORY_META[file.category]
@@ -375,9 +449,31 @@ function PlanCard({
     })
   }
 
+  function handleArchive(next: boolean) {
+    startTransition(async () => {
+      try {
+        await setProjectFileArchived({
+          id: file.id,
+          project_id: projectId,
+          archived: next,
+        })
+        toast.success(next ? "Archived" : "Restored")
+        router.refresh()
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Action failed")
+      }
+    })
+  }
+
   return (
-    <Card className="flex flex-col">
-      <div className="aspect-[4/3] bg-background flex items-center justify-center overflow-hidden relative">
+    <Card className={cn("flex flex-col", archived && "opacity-75")}>
+      <button
+        type="button"
+        onClick={onView}
+        className="aspect-[4/3] bg-background flex items-center justify-center overflow-hidden relative cursor-pointer group"
+        title="View"
+        aria-label={`View ${file.title}`}
+      >
         {isImage && url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -388,12 +484,15 @@ function PlanCard({
         ) : (
           <Icon className="h-12 w-12 text-muted" />
         )}
+        <span className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+          <Eye className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+        </span>
         {file.version > 1 && (
           <span className="absolute top-2 left-2 inline-flex items-center rounded-full bg-foreground/80 text-white text-[10px] font-medium px-1.5 py-0.5">
             v{file.version}
           </span>
         )}
-      </div>
+      </button>
       <CardBody className="flex-1 flex flex-col gap-1">
         <div className="flex items-center justify-between gap-2">
           <Badge tone={meta.tone}>{meta.label}</Badge>
@@ -409,7 +508,7 @@ function PlanCard({
                 <History className="h-3.5 w-3.5" />
               </button>
             )}
-            {canEdit && (
+            {canEdit && !archived && onReplace && (
               <button
                 type="button"
                 onClick={onReplace}
@@ -426,10 +525,27 @@ function PlanCard({
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-muted hover:text-foreground p-1 inline-flex"
-                title="Open"
+                title="Download"
+                aria-label="Download"
               >
                 <Download className="h-3.5 w-3.5" />
               </a>
+            )}
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => handleArchive(!archived)}
+                disabled={pending}
+                className="text-muted hover:text-foreground p-1 cursor-pointer inline-flex"
+                title={archived ? "Restore" : "Archive"}
+                aria-label={archived ? "Restore" : "Archive"}
+              >
+                {archived ? (
+                  <ArchiveRestore className="h-3.5 w-3.5" />
+                ) : (
+                  <Archive className="h-3.5 w-3.5" />
+                )}
+              </button>
             )}
             {canEdit && (
               <button
@@ -453,6 +569,114 @@ function PlanCard({
         </p>
       </CardBody>
     </Card>
+  )
+}
+
+// In-browser viewer for plans & documents. PDFs render in an iframe (the
+// browser's built-in PDF reader), images inline; anything the browser can't
+// display natively (e.g. Office docs) falls back to a download prompt.
+function DocViewer({
+  file,
+  url,
+  onClose,
+}: {
+  file: Tables<"project_files">
+  url: string | undefined
+  onClose: () => void
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [onClose])
+
+  const name = (file.file_name ?? "").toLowerCase()
+  const isPdf = file.file_type === "application/pdf" || name.endsWith(".pdf")
+  const isImage = file.file_type?.startsWith("image/") ?? false
+  const isVideo = file.file_type?.startsWith("video/") ?? false
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/85 flex flex-col p-4"
+      onClick={onClose}
+    >
+      <div
+        className="mx-auto flex w-full max-w-6xl flex-1 flex-col overflow-hidden rounded-lg bg-surface"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-2.5">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium">{file.title}</div>
+            <div className="truncate text-xs text-muted">{file.file_name}</div>
+          </div>
+          <div className="flex items-center gap-1">
+            {url && (
+              <a
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-muted hover:text-foreground p-1.5 inline-flex"
+                title="Download"
+                aria-label="Download"
+              >
+                <Download className="h-4 w-4" />
+              </a>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-muted hover:text-foreground p-1.5 cursor-pointer"
+              aria-label="Close"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-auto bg-background">
+          {!url ? (
+            <div className="flex h-full items-center justify-center text-sm text-muted">
+              Loading…
+            </div>
+          ) : isPdf ? (
+            <iframe
+              src={url}
+              title={file.title}
+              className="h-full w-full border-0"
+            />
+          ) : isImage ? (
+            <div className="flex h-full items-center justify-center p-4">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={url}
+                alt={file.title}
+                className="max-h-full max-w-full object-contain"
+              />
+            </div>
+          ) : isVideo ? (
+            <div className="flex h-full items-center justify-center p-4">
+              <video src={url} controls className="max-h-full max-w-full" />
+            </div>
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+              <FileIconLucide className="h-10 w-10 text-muted" />
+              <p className="text-sm text-muted">
+                This file type can&apos;t be previewed in the browser.
+              </p>
+              <a
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-sm text-brand-600 hover:underline"
+              >
+                <Download className="h-4 w-4" /> Download to open
+              </a>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   )
 }
 

@@ -12,7 +12,7 @@ import {
   getDashboardProject,
   sendDashboardWebhook,
 } from "@/lib/dashboard"
-import type { Tables } from "@/lib/db/types"
+import type { Tables, TablesUpdate } from "@/lib/db/types"
 import {
   collectBaseTags,
   matchesTemplateTags,
@@ -24,8 +24,27 @@ const ProjectInput = z.object({
   name: z.string().min(1, "Required").max(200),
   address: z.string().max(500).optional().or(z.literal("")),
   status: z
-    .enum(["lead", "pre_construction", "active", "on_hold", "complete", "cancelled"])
+    .enum([
+      "lead",
+      "pre_construction",
+      "active",
+      "on_hold",
+      "complete",
+      "warranty",
+      "cancelled",
+    ])
     .default("active"),
+  // Drives client-facing branding (residential → Hines Homes, commercial →
+  // MJV Building Group). Optional; empty string maps to "unset".
+  project_type: z
+    .enum([
+      "residential_new",
+      "residential_remodel",
+      "commercial_new",
+      "commercial_remodel",
+    ])
+    .optional()
+    .or(z.literal("").transform(() => undefined)),
   contract_price: z.coerce.number().nonnegative().nullable().optional(),
   start_date: z.string().optional().or(z.literal("")),
   target_completion_date: z.string().optional().or(z.literal("")),
@@ -189,6 +208,7 @@ export async function createProject(
         new_start_date: emptyToNull(input.start_date),
         override_address: emptyToNull(input.address),
         override_status: input.status,
+        override_project_type: input.project_type,
         override_contract_price: input.contract_price ?? null,
         override_target_completion_date: emptyToNull(input.target_completion_date),
         override_dashboard_url: finalDashboardUrl,
@@ -221,6 +241,7 @@ export async function createProject(
       name: input.name,
       address: emptyToNull(input.address),
       status: input.status,
+      project_type: input.project_type ?? null,
       contract_price: input.contract_price ?? null,
       start_date: emptyToNull(input.start_date) ?? null,
       target_completion_date: emptyToNull(input.target_completion_date) ?? null,
@@ -414,6 +435,7 @@ const ProjectEditInput = z
       "active",
       "on_hold",
       "complete",
+      "warranty",
       "cancelled",
     ]),
     contract_price: z.coerce
@@ -450,6 +472,21 @@ const ProjectEditInput = z
       .regex(/^[+\d\s().\-x]*$/, "Phone may only contain digits, spaces, +, -, (), ., or x")
       .optional()
       .or(z.literal("")),
+    // Cost-plus jobs bill actual cost, so they track labor hours on daily
+    // logs. Optional so a partial-update caller can't silently flip an
+    // existing cost-plus project back to fixed-price by omitting it.
+    cost_plus: z.boolean().optional(),
+    // Branding driver. Empty string clears it back to "unset" (Hines default).
+    project_type: z
+      .enum([
+        "residential_new",
+        "residential_remodel",
+        "commercial_new",
+        "commercial_remodel",
+      ])
+      .nullable()
+      .optional()
+      .or(z.literal("").transform(() => null)),
     notes: z.string().optional().or(z.literal("")),
   })
 
@@ -476,25 +513,31 @@ export async function updateProject(
   }
   const { project_id, ...rest } = parsed.data
   const supabase = await createSupabaseServerClient()
+  // Branding and cost-plus are only written when the caller explicitly sends
+  // them, so a partial-update caller can't accidentally clear an existing
+  // value by omission. The edit dialog always sends both.
+  const update: TablesUpdate<"projects"> = {
+    name: rest.name,
+    address: emptyToNull(rest.address),
+    status: rest.status,
+    contract_price: rest.contract_price ?? null,
+    start_date: emptyToNull(rest.start_date) ?? null,
+    target_completion_date: emptyToNull(rest.target_completion_date) ?? null,
+    client_name: emptyToNull(rest.client_name),
+    client_email: emptyToNull(rest.client_email),
+    client_phone: emptyToNull(rest.client_phone),
+    client_name_2: emptyToNull(rest.client_name_2),
+    client_email_2: emptyToNull(rest.client_email_2),
+    client_phone_2: emptyToNull(rest.client_phone_2),
+    notes: emptyToNull(rest.notes),
+  }
+  if (rest.cost_plus !== undefined) update.cost_plus = rest.cost_plus
+  if (rest.project_type !== undefined) update.project_type = rest.project_type
   // .select() forces the update to return the matched row so we can tell a
   // silent zero-rows case (wrong id, or RLS hid it) apart from a real save.
   const { data, error } = await supabase
     .from("projects")
-    .update({
-      name: rest.name,
-      address: emptyToNull(rest.address),
-      status: rest.status,
-      contract_price: rest.contract_price ?? null,
-      start_date: emptyToNull(rest.start_date) ?? null,
-      target_completion_date: emptyToNull(rest.target_completion_date) ?? null,
-      client_name: emptyToNull(rest.client_name),
-      client_email: emptyToNull(rest.client_email),
-      client_phone: emptyToNull(rest.client_phone),
-      client_name_2: emptyToNull(rest.client_name_2),
-      client_email_2: emptyToNull(rest.client_email_2),
-      client_phone_2: emptyToNull(rest.client_phone_2),
-      notes: emptyToNull(rest.notes),
-    })
+    .update(update)
     .eq("id", project_id)
     .select("id")
     .maybeSingle()
@@ -504,6 +547,7 @@ export async function updateProject(
   revalidatePath(`/projects/${project_id}/onsite`)
   revalidatePath(`/projects/${project_id}/schedule`)
   revalidatePath(`/projects/${project_id}/pricing`)
+  revalidatePath(`/projects/${project_id}/daily-logs`)
   revalidatePath("/projects")
   return { ok: true }
 }
@@ -528,7 +572,24 @@ const DuplicateProjectInput = z
     // is used (existing behavior).
     override_address: z.string().nullish(),
     override_status: z
-      .enum(["lead", "pre_construction", "active", "on_hold", "complete", "cancelled"])
+      .enum([
+        "lead",
+        "pre_construction",
+        "active",
+        "on_hold",
+        "complete",
+        "warranty",
+        "cancelled",
+      ])
+      .optional(),
+    override_project_type: z
+      .enum([
+        "residential_new",
+        "residential_remodel",
+        "commercial_new",
+        "commercial_remodel",
+      ])
+      .nullable()
       .optional(),
     override_contract_price: z.number().nullable().optional(),
     override_target_completion_date: z.string().nullish(),
@@ -735,6 +796,7 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     name: parsed.new_name,
     address: ovr(parsed.override_address, source.address),
     status: parsed.override_status ?? source.status,
+    project_type: ovr(parsed.override_project_type, source.project_type),
     contract_price: ovr(parsed.override_contract_price, source.contract_price),
     start_date: parsed.new_start_date ?? source.start_date,
     target_completion_date:
@@ -760,6 +822,9 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     // given template item was or wasn't copied. Plain duplicates (no
     // answers) carry the source project's stored profile forward.
     attributes: parsed.attributes ?? source.attributes ?? {},
+    // Carry the cost-plus designation so a duplicated cost-plus job keeps
+    // tracking labor hours instead of silently reverting to fixed-price.
+    cost_plus: source.cost_plus ?? false,
     created_by: profile.id,
   }
   const { data: newProject, error: pErr } = await supabase

@@ -50,7 +50,7 @@ Rules:
 - **Dates are ISO YYYY-MM-DD.** If the user gave you "5/30/26" or "May 30", convert it to "2026-05-30" before passing it to a tool. The database stores date columns and rejects ambiguous formats.
 - **Match the summary to the plan.** Your final text count must equal the number of propose_* calls that returned queued:true. If any propose call returned an error or queued:false, mention the skip explicitly.
 - Never assume — if the request is ambiguous (e.g., "all framing items" → work items, to-dos, or both? "add Final Inspection" → which project? which parent?), call ask_user to clarify and stop.
-- When the user says "open projects", that means status IN ('lead', 'pre_construction', 'active', 'on_hold'). 'complete' and 'cancelled' are CLOSED.
+- When the user says "open projects", that means status IN ('lead', 'pre_construction', 'active', 'on_hold'). 'complete', 'warranty', and 'cancelled' are CLOSED ('warranty' is a post-completion phase).
 - Match titles case-insensitively. "Framing" should match items titled "Framing", "FRAMING", "Framing - Phase 1", etc.
 - Don't propose duplicate work — if a checklist item with the same label already exists on a target, skip it and mention the skip in your summary.
 - For create_work_item, both start_date and end_date are required and end must be on or after start. Use YYYY-MM-DD.
@@ -70,7 +70,7 @@ const TOOLS: Anthropic.Messages.Tool[] = [
   {
     name: "list_projects",
     description:
-      "List projects in the workspace, optionally filtered by status. Statuses: lead, pre_construction, active, on_hold, complete, cancelled. 'Open' projects are lead + pre_construction + active + on_hold.",
+      "List projects in the workspace, optionally filtered by status. Statuses: lead, pre_construction, active, on_hold, complete, warranty, cancelled. 'Open' projects are lead + pre_construction + active + on_hold. 'warranty' is a post-completion phase.",
     input_schema: {
       type: "object",
       properties: {
@@ -84,6 +84,7 @@ const TOOLS: Anthropic.Messages.Tool[] = [
               "active",
               "on_hold",
               "complete",
+              "warranty",
               "cancelled",
             ],
           },

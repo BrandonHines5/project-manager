@@ -10,6 +10,7 @@ import {
   recomputeAnchoredDueDate,
 } from "@/lib/schedule/scheduling"
 import type { RecurrenceRule } from "@/lib/schedule/recurrence"
+import type { TablesUpdate } from "@/lib/db/types"
 import { sendEmail, appUrl } from "@/lib/email"
 import { sendQuoSms, normalizeE164 } from "@/lib/quo"
 import { normalizeTag } from "@/lib/template-tags"
@@ -856,6 +857,59 @@ export async function setItemStatus({
     .from("schedule_items")
     .update({ status })
     .eq("id", id)
+  if (error) throw new Error(error.message)
+  revalidatePath(`/projects/${project_id}/schedule`)
+}
+
+// Lightweight single-field edits for the to-do spreadsheet view. Unlike
+// saveScheduleItem (which replaces assignments/checklist/predecessors on every
+// call), this only patches the simple scalar columns it's given, so inline
+// grid edits don't disturb a to-do's relationships. Each field is applied only
+// when explicitly present.
+const TodoFieldsInput = z.object({
+  id: z.string().min(1),
+  project_id: z.string().min(1),
+  title: z.string().min(1, "Title is required").max(500).optional(),
+  due_date: z
+    .string()
+    .nullable()
+    .optional()
+    .or(z.literal("").transform(() => null)),
+  status: z
+    .enum(["not_started", "in_progress", "complete", "delayed"])
+    .optional(),
+  priority: z
+    .enum(["low", "medium", "high"])
+    .nullable()
+    .optional()
+    .or(z.literal("").transform(() => null)),
+})
+
+export async function updateScheduleItemFields(
+  input: z.input<typeof TodoFieldsInput>
+) {
+  await requireStaff()
+  const parsed = TodoFieldsInput.safeParse(input)
+  if (!parsed.success) {
+    const first = parsed.error.issues[0]
+    throw new Error(
+      `Invalid form data at ${first.path.join(".") || "(root)"}: ${first.message}`
+    )
+  }
+  const { id, project_id, ...fields } = parsed.data
+  const update: TablesUpdate<"schedule_items"> = {}
+  if (fields.title !== undefined) update.title = fields.title
+  if (fields.due_date !== undefined) update.due_date = fields.due_date
+  if (fields.status !== undefined) update.status = fields.status
+  if (fields.priority !== undefined) update.priority = fields.priority
+  if (Object.keys(update).length === 0) return
+
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase
+    .from("schedule_items")
+    .update(update)
+    .eq("id", id)
+    .eq("project_id", project_id)
   if (error) throw new Error(error.message)
   revalidatePath(`/projects/${project_id}/schedule`)
 }

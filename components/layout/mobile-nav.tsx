@@ -5,6 +5,7 @@ import { Menu, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { SidebarBrand, SidebarNavList } from "@/components/layout/sidebar"
 import type { UserRole } from "@/lib/auth"
+import { HINES_HOMES, type Brand } from "@/lib/brand"
 
 /**
  * Hamburger button + slide-in drawer that exposes the main nav on mobile.
@@ -17,7 +18,13 @@ import type { UserRole } from "@/lib/auth"
  * their onNavigate prop, so the drawer closes itself when the user taps
  * anywhere that triggers navigation.
  */
-export function MobileNav({ role }: { role: UserRole }) {
+export function MobileNav({
+  role,
+  brand = HINES_HOMES,
+}: {
+  role: UserRole
+  brand?: Brand
+}) {
   const [open, setOpen] = useState(false)
   const close = () => setOpen(false)
 
@@ -76,7 +83,7 @@ export function MobileNav({ role }: { role: UserRole }) {
         )}
       >
         <div className="relative">
-          <SidebarBrand onNavigate={close} />
+          <SidebarBrand onNavigate={close} brand={brand} />
           <button
             type="button"
             onClick={close}

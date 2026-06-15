@@ -69,6 +69,10 @@ export function DailyLogDrawer({
     log?.visibility ?? "internal"
   )
   const [notes, setNotes] = useState(log?.notes ?? "")
+  // Labor hours — only relevant (and shown) on cost-plus jobs.
+  const [hoursWorked, setHoursWorked] = useState(
+    log?.hours_worked != null ? String(log.hours_worked) : ""
+  )
   const [subs, setSubs] = useState<SubOnSite[]>(() => {
     if (!log) return []
     return data.subs_on_site
@@ -170,6 +174,10 @@ export function DailyLogDrawer({
       log_date: logDate,
       visibility,
       notes: notes || null,
+      hours_worked:
+        data.cost_plus && hoursWorked.trim() !== ""
+          ? Number(hoursWorked)
+          : null,
       subs_on_site: subs,
       attachments: attachments.map((a) => ({
         id: a.id,
@@ -247,6 +255,20 @@ export function DailyLogDrawer({
                 onChange={(e) => setLogDate(e.target.value)}
               />
             </Field>
+            {data.cost_plus && (
+              <Field label="Hours worked" hint="Cost-plus — your labor hours for the day">
+                <Input
+                  type="number"
+                  step="0.25"
+                  min="0"
+                  max="24"
+                  inputMode="decimal"
+                  value={hoursWorked}
+                  onChange={(e) => setHoursWorked(e.target.value)}
+                  placeholder="e.g. 8"
+                />
+              </Field>
+            )}
           </div>
 
           <Field label="Notes">

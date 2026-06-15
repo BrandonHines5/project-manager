@@ -10,9 +10,11 @@ import {
   Users,
   Hammer,
   MessageSquarePlus,
+  ShieldCheck,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { UserRole } from "@/lib/auth"
+import { HINES_HOMES, type Brand } from "@/lib/brand"
 
 type Item = {
   href: string
@@ -27,6 +29,7 @@ const ITEMS: Item[] = [
   { href: "/notifications", label: "Notifications", icon: Bell },
   { href: "/companies", label: "Companies", icon: Building2, roles: ["staff"] },
   { href: "/team", label: "Team", icon: Users, roles: ["staff"] },
+  { href: "/warranty", label: "Warranty", icon: ShieldCheck, roles: ["staff"] },
   { href: "/reports", label: "Reports", icon: BarChart3, roles: ["staff"] },
   { href: "/feedback", label: "Feedback", icon: MessageSquarePlus },
 ]
@@ -39,7 +42,13 @@ export function navItemsFor(role: UserRole): Item[] {
 // Shared header chunk (HH logo + product name). Used by both desktop sidebar
 // and the mobile drawer. `onNavigate` lets the drawer dismiss itself when
 // the user taps the logo to head back to /projects.
-export function SidebarBrand({ onNavigate }: { onNavigate?: () => void }) {
+export function SidebarBrand({
+  onNavigate,
+  brand = HINES_HOMES,
+}: {
+  onNavigate?: () => void
+  brand?: Brand
+}) {
   return (
     <Link
       href="/projects"
@@ -47,10 +56,10 @@ export function SidebarBrand({ onNavigate }: { onNavigate?: () => void }) {
       className="px-5 h-14 flex items-center gap-2 border-b border-white/10"
     >
       <div className="h-8 w-8 rounded-md bg-brand-500 text-white flex items-center justify-center font-bold text-sm">
-        HH
+        {brand.abbr}
       </div>
       <div className="leading-tight">
-        <div className="text-sm font-semibold">Hines Homes</div>
+        <div className="text-sm font-semibold">{brand.name}</div>
         <div className="text-[10px] uppercase text-white/60 tracking-wider">
           Project Manager
         </div>
@@ -95,10 +104,10 @@ export function SidebarNavList({
   )
 }
 
-export function Sidebar({ role }: { role: UserRole }) {
+export function Sidebar({ role, brand }: { role: UserRole; brand?: Brand }) {
   return (
     <aside className="hidden md:flex md:flex-col w-56 shrink-0 border-r border-border bg-sidebar text-sidebar-foreground">
-      <SidebarBrand />
+      <SidebarBrand brand={brand} />
       <SidebarNavList role={role} />
       <div className="p-4 text-[11px] text-white/40 border-t border-white/10">
         v0.1 · BrandonHines5

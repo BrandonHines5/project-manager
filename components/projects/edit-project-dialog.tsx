@@ -23,6 +23,7 @@ type EditableProject = {
   name: string
   address: string | null
   status: Enums<"project_status">
+  project_type: Enums<"project_type"> | null
   contract_price: number | null
   start_date: string | null
   target_completion_date: string | null
@@ -32,6 +33,7 @@ type EditableProject = {
   client_name_2: string | null
   client_email_2: string | null
   client_phone_2: string | null
+  cost_plus: boolean
   notes: string | null
 }
 
@@ -80,6 +82,7 @@ function EditProjectDialog({
       name: String(fd.get("name") ?? ""),
       address: String(fd.get("address") ?? ""),
       status: String(fd.get("status") ?? project.status),
+      project_type: String(fd.get("project_type") ?? ""),
       contract_price: String(fd.get("contract_price") ?? ""),
       start_date: String(fd.get("start_date") ?? ""),
       target_completion_date: String(fd.get("target_completion_date") ?? ""),
@@ -89,6 +92,7 @@ function EditProjectDialog({
       client_name_2: String(fd.get("client_name_2") ?? ""),
       client_email_2: String(fd.get("client_email_2") ?? ""),
       client_phone_2: String(fd.get("client_phone_2") ?? ""),
+      cost_plus: fd.get("cost_plus") === "on",
       notes: String(fd.get("notes") ?? ""),
     } as Parameters<typeof updateProject>[0]
 
@@ -143,7 +147,28 @@ function EditProjectDialog({
                 <option value="active">Active</option>
                 <option value="on_hold">On hold</option>
                 <option value="complete">Complete</option>
+                <option value="warranty">Warranty</option>
                 <option value="cancelled">Cancelled</option>
+              </Select>
+            </Field>
+            <Field
+              label="Project type"
+              hint="Residential shows Hines Homes branding to the client; commercial shows MJV Building Group."
+            >
+              <Select name="project_type" defaultValue={project.project_type ?? ""}>
+                <option value="">— Not set (Hines Homes)</option>
+                <option value="residential_new">
+                  Residential — New construction
+                </option>
+                <option value="residential_remodel">
+                  Residential — Remodel / Addition
+                </option>
+                <option value="commercial_new">
+                  Commercial — New construction
+                </option>
+                <option value="commercial_remodel">
+                  Commercial — Remodel / Addition
+                </option>
               </Select>
             </Field>
             <Field
@@ -159,6 +184,22 @@ function EditProjectDialog({
                 defaultValue={project.contract_price ?? ""}
                 className={cn(fieldErrors.contract_price && "border-danger")}
               />
+            </Field>
+            <Field label="Billing" className="sm:col-span-2">
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  name="cost_plus"
+                  defaultChecked={project.cost_plus}
+                  className="mt-0.5 h-4 w-4 rounded border-border-strong"
+                />
+                <span>
+                  <span className="font-medium">Cost-plus job</span>
+                  <span className="block text-xs text-muted">
+                    Track labor hours on daily logs and roll them up per job.
+                  </span>
+                </span>
+              </label>
             </Field>
             <Field label="Address" className="sm:col-span-2">
               <Input

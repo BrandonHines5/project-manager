@@ -66,6 +66,9 @@ export default async function FilesPage({
   const media: Media[] = []
 
   for (const p of plans ?? []) {
+    // Archived plans drop out of the shared gallery — they live only in the
+    // "Archived" folder on the files page.
+    if (p.archived_at) continue
     media.push({
       id: `pf:${p.id}`,
       source_id: p.id,
@@ -111,7 +114,15 @@ export default async function FilesPage({
     })
   }
 
-  const allPaths = [...new Set(media.map((m) => m.storage_path))]
+  // Include every plan (archived ones too) so the Archived folder's cards and
+  // the DocViewer can still preview/download — `media` deliberately omits
+  // archived plans, so derive paths from the full plans list as well.
+  const allPaths = [
+    ...new Set([
+      ...(plans ?? []).map((p) => p.storage_path),
+      ...media.map((m) => m.storage_path),
+    ]),
+  ]
   const signedUrls = await getSignedUrlsForFiles(allPaths)
 
   const data: FilesData = {

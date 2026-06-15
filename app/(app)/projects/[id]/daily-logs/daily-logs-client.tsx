@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useMemo } from "react"
-import { Plus, NotebookPen, Eye, EyeOff, Image as ImageIcon, Users } from "lucide-react"
+import { Plus, NotebookPen, Eye, EyeOff, Image as ImageIcon, Users, Clock } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { EmptyState } from "@/components/ui/empty"
@@ -13,6 +13,7 @@ import { DailyLogDrawer } from "@/components/daily-logs/daily-log-drawer"
 export type DailyLogsData = {
   project_id: string
   role: UserRole
+  cost_plus: boolean
   logs: Tables<"daily_logs">[]
   subs_on_site: Tables<"daily_log_subs_on_site">[]
   attachments: Tables<"daily_log_attachments">[]
@@ -41,6 +42,30 @@ export function DailyLogsClient({ data }: { data: DailyLogsData }) {
     return { total, clientVisible, internal: total - clientVisible }
   }, [data.logs])
 
+  // Per-job labor hours, rolled up by the person who authored each log.
+  // Only meaningful on cost-plus jobs.
+  const labor = useMemo(() => {
+    if (!data.cost_plus) return null
+    const byPerson = new Map<string, number>()
+    let total = 0
+    for (const l of data.logs) {
+      const h = l.hours_worked ?? 0
+      if (h <= 0) continue
+      total += h
+      byPerson.set(l.created_by, (byPerson.get(l.created_by) ?? 0) + h)
+    }
+    const rows = Array.from(byPerson.entries())
+      .map(([profileId, hours]) => {
+        const p = data.profiles.find((x) => x.id === profileId)
+        return { name: p?.full_name || p?.email || "Unknown", hours }
+      })
+      .sort((a, b) => b.hours - a.hours)
+    return { total, rows }
+  }, [data.cost_plus, data.logs, data.profiles])
+
+  const fmtHours = (h: number) =>
+    Number.isInteger(h) ? String(h) : h.toFixed(2).replace(/\.?0+$/, "")
+
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-6 py-5">
       <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
@@ -48,6 +73,7 @@ export function DailyLogsClient({ data }: { data: DailyLogsData }) {
           <Stat label="Logs" value={stats.total} />
           <Stat label="Internal" value={stats.internal} />
           <Stat label="Client-visible" value={stats.clientVisible} />
+          {labor && <Stat label="Labor hours" value={fmtHours(labor.total)} />}
         </div>
         {canEdit && (
           <Button onClick={() => setDrawerState({ mode: "create" })}>
@@ -55,6 +81,31 @@ export function DailyLogsClient({ data }: { data: DailyLogsData }) {
           </Button>
         )}
       </div>
+
+      {labor && labor.total > 0 && (
+        <div className="mb-4 rounded-lg border border-border bg-surface p-4">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <Clock className="h-4 w-4 text-brand-600" />
+            Labor hours summary
+            <span className="ml-auto tabular-nums">
+              {fmtHours(labor.total)} hrs total
+            </span>
+          </div>
+          <ul className="mt-3 divide-y divide-border text-sm">
+            {labor.rows.map((r) => (
+              <li
+                key={r.name}
+                className="flex items-center justify-between py-1.5"
+              >
+                <span>{r.name}</span>
+                <span className="tabular-nums font-medium">
+                  {fmtHours(r.hours)} hrs
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {data.logs.length === 0 ? (
         <EmptyState
@@ -104,7 +155,7 @@ export function DailyLogsClient({ data }: { data: DailyLogsData }) {
   )
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+function Stat({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="flex flex-col">
       <span className="text-xs text-muted uppercase tracking-wide">{label}</span>
@@ -146,7 +197,7 @@ function DailyLogCard({
           <div className="text-sm font-semibold text-foreground">
             {formatDate(log.log_date)}
           </div>
-          <div className="mt-1">
+          <div className="mt-1 flex items-center gap-1.5 flex-wrap">
             {isClient ? (
               <Badge tone="brand">
                 <Eye className="h-3 w-3" /> Client visible
@@ -154,6 +205,11 @@ function DailyLogCard({
             ) : (
               <Badge tone="muted">
                 <EyeOff className="h-3 w-3" /> Internal only
+              </Badge>
+            )}
+            {data.cost_plus && log.hours_worked != null && log.hours_worked > 0 && (
+              <Badge tone="info">
+                <Clock className="h-3 w-3" /> {log.hours_worked} hrs
               </Badge>
             )}
           </div>

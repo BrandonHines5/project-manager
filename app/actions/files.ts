@@ -162,6 +162,38 @@ export async function deleteProjectFile({
 }
 
 /**
+ * Archive or restore a plan/document. Archiving is a soft move: the row and
+ * its storage object stay put (so client signed-URL links keep working and
+ * the revision chain is intact) — the UI just files it under "Archived" and
+ * drops it from the active list and gallery. Restoring clears the timestamp.
+ */
+const ArchiveInput = z.object({
+  id: z.string().min(1),
+  project_id: z.string().min(1),
+  archived: z.boolean(),
+})
+
+export async function setProjectFileArchived(input: z.input<typeof ArchiveInput>) {
+  const result = ArchiveInput.safeParse(input)
+  if (!result.success) {
+    const first = result.error.issues[0]
+    throw new Error(
+      `Invalid archive payload at ${first.path.join(".") || "(root)"}: ${first.message}`
+    )
+  }
+  const { id, project_id, archived } = result.data
+  await requireStaff()
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase
+    .from("project_files")
+    .update({ archived_at: archived ? new Date().toISOString() : null })
+    .eq("id", id)
+    .eq("project_id", project_id)
+  if (error) throw new Error(error.message)
+  revalidatePath(`/projects/${project_id}/files`)
+}
+
+/**
  * Returns every revision (current + history) belonging to the same chain as
  * the supplied file id. The result is sorted with v1 first → newest last so
  * the UI can render a left-to-right timeline.

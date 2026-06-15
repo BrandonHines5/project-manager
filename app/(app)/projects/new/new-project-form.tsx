@@ -348,7 +348,21 @@ function ProjectFormFields({
               <option value="active">Active</option>
               <option value="on_hold">On hold</option>
               <option value="complete">Complete</option>
+              <option value="warranty">Warranty</option>
               <option value="cancelled">Cancelled</option>
+            </Select>
+          </Field>
+          <Field label="Project type">
+            <Select name="project_type" defaultValue="">
+              <option value="">— Not set (Hines Homes)</option>
+              <option value="residential_new">Residential — New construction</option>
+              <option value="residential_remodel">
+                Residential — Remodel / Addition
+              </option>
+              <option value="commercial_new">Commercial — New construction</option>
+              <option value="commercial_remodel">
+                Commercial — Remodel / Addition
+              </option>
             </Select>
           </Field>
           <Field label="Name" className="sm:col-span-2" hint={err.name}>
