@@ -1,13 +1,14 @@
 "use client"
 
 import { useState, useMemo } from "react"
-import { Plus, List, BarChart3, CheckSquare } from "lucide-react"
+import { Plus, List, BarChart3, CheckSquare, Table } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { Tables } from "@/lib/db/types"
 import { ScheduleListView } from "@/components/schedule/schedule-list-view"
 import { GanttView } from "@/components/schedule/gantt-view"
 import { TodosView } from "@/components/schedule/todos-view"
+import { TodosSheet } from "@/components/schedule/todos-sheet"
 import { ScheduleItemDialog } from "@/components/schedule/schedule-item-dialog"
 
 export type ScheduleData = {
@@ -24,7 +25,7 @@ export type ScheduleData = {
   companies: Pick<Tables<"companies">, "id" | "name" | "type" | "trade_category" | "phone">[]
 }
 
-type View = "list" | "gantt" | "todos"
+type View = "list" | "gantt" | "todos" | "sheet"
 
 export function ScheduleClient({ data }: { data: ScheduleData }) {
   const [view, setView] = useState<View>("list")
@@ -86,6 +87,17 @@ export function ScheduleClient({ data }: { data: ScheduleData }) {
               <CheckSquare className="h-3.5 w-3.5" /> To-dos
             </button>
             <button
+              onClick={() => setView("sheet")}
+              className={cn(
+                "px-3 py-1.5 text-xs font-medium rounded inline-flex items-center gap-1.5 cursor-pointer",
+                view === "sheet"
+                  ? "bg-brand-500 text-white"
+                  : "text-muted hover:text-foreground"
+              )}
+            >
+              <Table className="h-3.5 w-3.5" /> Sheet
+            </button>
+            <button
               onClick={() => setView("gantt")}
               className={cn(
                 "px-3 py-1.5 text-xs font-medium rounded inline-flex items-center gap-1.5 cursor-pointer",
@@ -129,6 +141,13 @@ export function ScheduleClient({ data }: { data: ScheduleData }) {
       )}
       {view === "todos" && (
         <TodosView
+          data={data}
+          onEdit={(id) => setDialogState({ mode: "edit", itemId: id })}
+          onAddTodo={() => setDialogState({ mode: "create", kind: "todo" })}
+        />
+      )}
+      {view === "sheet" && (
+        <TodosSheet
           data={data}
           onEdit={(id) => setDialogState({ mode: "edit", itemId: id })}
           onAddTodo={() => setDialogState({ mode: "create", kind: "todo" })}
