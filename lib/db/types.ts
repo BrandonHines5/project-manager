@@ -1067,6 +1067,7 @@ export type Database = {
           notes: string | null
           project_manager: string | null
           project_number: string
+          project_type: Database["public"]["Enums"]["project_type"] | null
           start_date: string | null
           status: Database["public"]["Enums"]["project_status"]
           target_completion_date: string | null
@@ -1094,6 +1095,7 @@ export type Database = {
           notes?: string | null
           project_manager?: string | null
           project_number: string
+          project_type?: Database["public"]["Enums"]["project_type"] | null
           start_date?: string | null
           status?: Database["public"]["Enums"]["project_status"]
           target_completion_date?: string | null
@@ -1121,6 +1123,7 @@ export type Database = {
           notes?: string | null
           project_manager?: string | null
           project_number?: string
+          project_type?: Database["public"]["Enums"]["project_type"] | null
           start_date?: string | null
           status?: Database["public"]["Enums"]["project_status"]
           target_completion_date?: string | null
@@ -1584,6 +1587,11 @@ export type Database = {
         | "complete"
         | "warranty"
         | "cancelled"
+      project_type:
+        | "residential_new"
+        | "residential_remodel"
+        | "commercial_new"
+        | "commercial_remodel"
       schedule_item_kind: "work" | "todo"
       schedule_item_status:
         | "not_started"
@@ -1750,6 +1758,12 @@ export const Constants = {
         "complete",
         "warranty",
         "cancelled",
+      ],
+      project_type: [
+        "residential_new",
+        "residential_remodel",
+        "commercial_new",
+        "commercial_remodel",
       ],
       schedule_item_kind: ["work", "todo"],
       schedule_item_status: [

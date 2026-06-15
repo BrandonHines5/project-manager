@@ -9,6 +9,7 @@ import { MembersButton } from "@/components/projects/members-dialog"
 import { DuplicateProjectButton } from "@/components/projects/duplicate-button"
 import { EditProjectButton } from "@/components/projects/edit-project-dialog"
 import { SyncDashboardButton } from "@/components/projects/sync-dashboard-button"
+import { brandForProjectType } from "@/lib/brand"
 import type { Enums } from "@/lib/db/types"
 
 const STATUS_LABEL: Record<Enums<"project_status">, string> = {
@@ -34,7 +35,7 @@ export default async function ProjectDetailLayout({
   const { data: project } = await supabase
     .from("projects")
     .select(
-      "id, project_number, name, address, status, dashboard_url, project_manager, client_name, client_email, client_phone, client_name_2, client_email_2, client_phone_2, contract_price, cost_plus, start_date, target_completion_date, notes"
+      "id, project_number, name, address, status, project_type, dashboard_url, project_manager, client_name, client_email, client_phone, client_name_2, client_email_2, client_phone_2, contract_price, cost_plus, start_date, target_completion_date, notes"
     )
     .eq("id", id)
     .maybeSingle()
@@ -72,6 +73,19 @@ export default async function ProjectDetailLayout({
           >
             <ArrowLeft className="h-3 w-3" /> All projects
           </Link>
+          {(() => {
+            // Client-facing brand for this job (residential → Hines Homes,
+            // commercial → MJV Building Group).
+            const brand = brandForProjectType(project.project_type)
+            return (
+              <div className="flex items-center gap-2 mb-2">
+                <div className="h-7 w-7 rounded-md bg-brand-500 text-white flex items-center justify-center font-bold text-[11px]">
+                  {brand.abbr}
+                </div>
+                <span className="text-sm font-semibold">{brand.name}</span>
+              </div>
+            )
+          })()}
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div>
               <div className="flex items-center gap-2 flex-wrap">
@@ -154,6 +168,7 @@ export default async function ProjectDetailLayout({
                     name: project.name,
                     address: project.address,
                     status: project.status,
+                    project_type: project.project_type,
                     contract_price: project.contract_price,
                     start_date: project.start_date,
                     target_completion_date: project.target_completion_date,

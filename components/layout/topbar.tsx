@@ -10,25 +10,28 @@ import { AIAgent } from "@/components/layout/ai-agent"
 import { FeedbackButton } from "@/components/feedback/feedback-button"
 import { MobileNav } from "@/components/layout/mobile-nav"
 import type { UserRole } from "@/lib/auth"
+import { HINES_HOMES, type Brand } from "@/lib/brand"
 
 export function Topbar({
   fullName,
   email,
   role,
   unreadCount,
+  brand = HINES_HOMES,
 }: {
   fullName: string
   email: string
   role: UserRole
   unreadCount: number
+  brand?: Brand
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   return (
     <header className="h-14 shrink-0 bg-surface border-b border-border flex items-center justify-between px-4 md:px-6">
       <div className="flex items-center gap-2 md:hidden">
-        <MobileNav role={role} />
+        <MobileNav role={role} brand={brand} />
         <div className="h-8 w-8 rounded-md bg-brand-500 text-white flex items-center justify-center text-sm font-bold">
-          HH
+          {brand.abbr}
         </div>
         <div className="text-sm font-semibold">Project Manager</div>
       </div>

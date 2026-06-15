@@ -19,8 +19,14 @@ const DailyLogInput = z
     notes: optStr,
     // Labor hours for the day, attributed to the log's author. Only set on
     // cost-plus jobs (the UI hides the field otherwise). Capped at 24 since a
-    // log covers a single day.
-    hours_worked: z.coerce.number().min(0).max(24).nullish(),
+    // log covers a single day. Blank strings normalize to null (rather than
+    // coercing to 0) so clearing the field doesn't persist an explicit zero.
+    hours_worked: z
+      .preprocess(
+        (v) => (typeof v === "string" && v.trim() === "" ? null : v),
+        z.coerce.number().min(0).max(24).nullable()
+      )
+      .optional(),
     subs_on_site: z
       .array(
         z.object({

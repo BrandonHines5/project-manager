@@ -4,6 +4,7 @@ import { Topbar } from "@/components/layout/topbar"
 import { ProjectContextShell } from "@/components/layout/project-context-shell"
 import { ProjectListSidebar } from "@/components/layout/project-list-sidebar"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { HINES_HOMES, brandForProjectTypes } from "@/lib/brand"
 
 // Every authenticated page depends on cookies and per-user data, so we opt out
 // of any caching here — otherwise Vercel's edge can serve one user's response
@@ -31,9 +32,17 @@ export default async function AppLayout({
       .is("read_at", null),
     supabase
       .from("projects")
-      .select("id, name, project_number, address, status")
+      .select("id, name, project_number, address, status, project_type")
       .order("project_number", { ascending: false }),
   ])
+
+  // Client-facing branding: a client whose projects are all commercial sees
+  // MJV Building Group across the app; everyone else (staff/trade, or a client
+  // with any residential job) sees the default Hines Homes brand.
+  const brand =
+    profile.role === "client"
+      ? brandForProjectTypes((projects ?? []).map((p) => p.project_type))
+      : HINES_HOMES
 
   return (
     <div className="flex min-h-screen flex-1">
@@ -45,13 +54,14 @@ export default async function AppLayout({
       >
         Skip to main content
       </a>
-      <Sidebar role={profile.role} />
+      <Sidebar role={profile.role} brand={brand} />
       <div className="flex flex-1 flex-col min-w-0">
         <Topbar
           fullName={profile.full_name}
           email={profile.email ?? ""}
           role={profile.role}
           unreadCount={unreadCount ?? 0}
+          brand={brand}
         />
         <ProjectContextShell
           sidebar={<ProjectListSidebar projects={projects ?? []} />}

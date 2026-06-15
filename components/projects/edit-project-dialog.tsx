@@ -23,6 +23,7 @@ type EditableProject = {
   name: string
   address: string | null
   status: Enums<"project_status">
+  project_type: Enums<"project_type"> | null
   contract_price: number | null
   start_date: string | null
   target_completion_date: string | null
@@ -81,6 +82,7 @@ function EditProjectDialog({
       name: String(fd.get("name") ?? ""),
       address: String(fd.get("address") ?? ""),
       status: String(fd.get("status") ?? project.status),
+      project_type: String(fd.get("project_type") ?? ""),
       contract_price: String(fd.get("contract_price") ?? ""),
       start_date: String(fd.get("start_date") ?? ""),
       target_completion_date: String(fd.get("target_completion_date") ?? ""),
@@ -147,6 +149,26 @@ function EditProjectDialog({
                 <option value="complete">Complete</option>
                 <option value="warranty">Warranty</option>
                 <option value="cancelled">Cancelled</option>
+              </Select>
+            </Field>
+            <Field
+              label="Project type"
+              hint="Residential shows Hines Homes branding to the client; commercial shows MJV Building Group."
+            >
+              <Select name="project_type" defaultValue={project.project_type ?? ""}>
+                <option value="">— Not set (Hines Homes)</option>
+                <option value="residential_new">
+                  Residential — New construction
+                </option>
+                <option value="residential_remodel">
+                  Residential — Remodel / Addition
+                </option>
+                <option value="commercial_new">
+                  Commercial — New construction
+                </option>
+                <option value="commercial_remodel">
+                  Commercial — Remodel / Addition
+                </option>
               </Select>
             </Field>
             <Field

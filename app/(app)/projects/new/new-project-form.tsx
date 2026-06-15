@@ -352,6 +352,19 @@ function ProjectFormFields({
               <option value="cancelled">Cancelled</option>
             </Select>
           </Field>
+          <Field label="Project type">
+            <Select name="project_type" defaultValue="">
+              <option value="">— Not set (Hines Homes)</option>
+              <option value="residential_new">Residential — New construction</option>
+              <option value="residential_remodel">
+                Residential — Remodel / Addition
+              </option>
+              <option value="commercial_new">Commercial — New construction</option>
+              <option value="commercial_remodel">
+                Commercial — Remodel / Addition
+              </option>
+            </Select>
+          </Field>
           <Field label="Name" className="sm:col-span-2" hint={err.name}>
             <Input
               name="name"
