@@ -24,7 +24,15 @@ const ProjectInput = z.object({
   name: z.string().min(1, "Required").max(200),
   address: z.string().max(500).optional().or(z.literal("")),
   status: z
-    .enum(["lead", "pre_construction", "active", "on_hold", "complete", "cancelled"])
+    .enum([
+      "lead",
+      "pre_construction",
+      "active",
+      "on_hold",
+      "complete",
+      "warranty",
+      "cancelled",
+    ])
     .default("active"),
   contract_price: z.coerce.number().nonnegative().nullable().optional(),
   start_date: z.string().optional().or(z.literal("")),
@@ -414,6 +422,7 @@ const ProjectEditInput = z
       "active",
       "on_hold",
       "complete",
+      "warranty",
       "cancelled",
     ]),
     contract_price: z.coerce
@@ -533,7 +542,15 @@ const DuplicateProjectInput = z
     // is used (existing behavior).
     override_address: z.string().nullish(),
     override_status: z
-      .enum(["lead", "pre_construction", "active", "on_hold", "complete", "cancelled"])
+      .enum([
+        "lead",
+        "pre_construction",
+        "active",
+        "on_hold",
+        "complete",
+        "warranty",
+        "cancelled",
+      ])
       .optional(),
     override_contract_price: z.number().nullable().optional(),
     override_target_completion_date: z.string().nullish(),

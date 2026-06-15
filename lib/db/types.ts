@@ -1582,6 +1582,7 @@ export type Database = {
         | "active"
         | "on_hold"
         | "complete"
+        | "warranty"
         | "cancelled"
       schedule_item_kind: "work" | "todo"
       schedule_item_status:
@@ -1747,6 +1748,7 @@ export const Constants = {
         "active",
         "on_hold",
         "complete",
+        "warranty",
         "cancelled",
       ],
       schedule_item_kind: ["work", "todo"],

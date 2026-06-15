@@ -76,13 +76,25 @@ export async function saveDailyLog(input: DailyLogInputT) {
   const parsed = result.data
   const supabase = await createSupabaseServerClient()
 
+  // Hours are only valid on cost-plus jobs. Enforce that server-side so a
+  // crafted request can't write labor hours onto a fixed-price project (the
+  // UI already hides the field, but that's not a security boundary).
+  const { data: project, error: projectErr } = await supabase
+    .from("projects")
+    .select("id, cost_plus")
+    .eq("id", parsed.project_id)
+    .maybeSingle()
+  if (projectErr) throw new Error(projectErr.message)
+  if (!project) throw new Error("Project not found")
+  const hoursWorked = project.cost_plus ? parsed.hours_worked ?? null : null
+
   let id = nz(parsed.id)
   const baseRow = {
     project_id: parsed.project_id,
     log_date: parsed.log_date,
     visibility: parsed.visibility,
     notes: nz(parsed.notes),
-    hours_worked: parsed.hours_worked ?? null,
+    hours_worked: hoursWorked,
   }
 
   if (id) {

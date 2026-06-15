@@ -348,6 +348,7 @@ function ProjectFormFields({
               <option value="active">Active</option>
               <option value="on_hold">On hold</option>
               <option value="complete">Complete</option>
+              <option value="warranty">Warranty</option>
               <option value="cancelled">Cancelled</option>
             </Select>
           </Field>

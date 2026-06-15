@@ -17,6 +17,7 @@ const STATUS_LABEL: Record<Enums<"project_status">, string> = {
   active: "Active",
   on_hold: "On hold",
   complete: "Complete",
+  warranty: "Warranty",
   cancelled: "Cancelled",
 }
 
