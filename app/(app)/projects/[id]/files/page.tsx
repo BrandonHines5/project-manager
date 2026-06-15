@@ -66,6 +66,9 @@ export default async function FilesPage({
   const media: Media[] = []
 
   for (const p of plans ?? []) {
+    // Archived plans drop out of the shared gallery — they live only in the
+    // "Archived" folder on the files page.
+    if (p.archived_at) continue
     media.push({
       id: `pf:${p.id}`,
       source_id: p.id,

@@ -860,6 +860,7 @@ export type Database = {
       }
       project_files: {
         Row: {
+          archived_at: string | null
           category: Database["public"]["Enums"]["file_category"]
           created_at: string
           description: string | null
@@ -878,6 +879,7 @@ export type Database = {
           version: number
         }
         Insert: {
+          archived_at?: string | null
           category?: Database["public"]["Enums"]["file_category"]
           created_at?: string
           description?: string | null
@@ -896,6 +898,7 @@ export type Database = {
           version?: number
         }
         Update: {
+          archived_at?: string | null
           category?: Database["public"]["Enums"]["file_category"]
           created_at?: string
           description?: string | null
