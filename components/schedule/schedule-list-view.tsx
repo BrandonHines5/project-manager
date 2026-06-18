@@ -147,7 +147,7 @@ export function ScheduleListView({
       {/* Critical-path summary */}
       <div className="bg-surface border border-border rounded-lg px-4 py-3">
         <div className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted font-medium">
-          <Zap className="h-3.5 w-3.5 text-red-500" />
+          <Zap className="h-3.5 w-3.5 text-danger" />
           Next 2 Critical Path Items
         </div>
         {nextCriticalItems.length > 0 ? (

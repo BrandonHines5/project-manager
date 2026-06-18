@@ -28,14 +28,20 @@ export function GanttView({
   hideComplete: boolean
   onEdit: (id: string) => void
 }) {
-  const items = data.items.filter(
+  const datedWorkItems = data.items.filter(
     (i) =>
       i.kind === "work" &&
       i.start_date &&
       i.end_date &&
-      !i.recurrence_parent_id &&
-      (!hideComplete || i.status !== "complete")
+      !i.recurrence_parent_id
   )
+  const items = hideComplete
+    ? datedWorkItems.filter((i) => i.status !== "complete")
+    : datedWorkItems
+  // Distinguishes "nothing scheduled" from "everything's done and hidden" so
+  // the empty state below isn't misleading when Hide complete is on.
+  const allHiddenByComplete =
+    hideComplete && items.length === 0 && datedWorkItems.length > 0
 
   const [showCritical, setShowCritical] = useState(true)
   const [condensed, setCondensed] = useState(false)
@@ -170,8 +176,16 @@ export function GanttView({
     return (
       <EmptyState
         icon={<CalendarDays className="h-10 w-10" />}
-        title="No scheduled work items"
-        description="Add a work item with start and end dates to see it on the Gantt chart."
+        title={
+          allHiddenByComplete
+            ? "All work items are complete"
+            : "No scheduled work items"
+        }
+        description={
+          allHiddenByComplete
+            ? "They're hidden by “Hide complete.” Click “Show complete” to view them."
+            : "Add a work item with start and end dates to see it on the Gantt chart."
+        }
       />
     )
   }
@@ -236,7 +250,7 @@ export function GanttView({
             onChange={(e) => setShowCritical(e.target.checked)}
             className="h-3.5 w-3.5"
           />
-          <Zap className="h-3.5 w-3.5 text-red-500" />
+          <Zap className="h-3.5 w-3.5 text-danger" />
           Highlight critical path
           {criticalIds.size > 0 && (
             <span className="text-muted">({criticalIds.size})</span>
