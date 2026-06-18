@@ -12,6 +12,9 @@ import {
   ChevronsDownUp,
   ChevronsUpDown,
   Paperclip,
+  Zap,
+  Eye,
+  EyeOff,
 } from "lucide-react"
 import { cn, formatDateRange, formatDate } from "@/lib/utils"
 import { AvatarStack } from "@/components/ui/avatar"
@@ -27,6 +30,7 @@ import {
   delaysFor,
 } from "./helpers"
 import { setItemStatus } from "@/app/actions/schedule"
+import { computeCriticalPath } from "@/lib/schedule/scheduling"
 import type { ScheduleData } from "@/app/(app)/projects/[id]/schedule/schedule-client"
 import type { Tables } from "@/lib/db/types"
 
@@ -56,6 +60,34 @@ export function ScheduleListView({
   const unlinkedTodos = data.items.filter(
     (i) => i.kind === "todo" && !i.parent_id && !i.recurrence_parent_id
   )
+
+  // The two soonest critical-path work items that aren't done yet — surfaced
+  // above the list so the PM sees what actually drives the finish date.
+  // computeCriticalPath already excludes to-dos, undated items, and anything
+  // flagged off the critical path. workItems is sorted by start_date, so
+  // taking the first two incomplete-critical entries gives the next two.
+  const nextCriticalItems = useMemo(() => {
+    const criticalIds = computeCriticalPath(data.items, data.predecessors)
+    return workItems
+      .filter((w) => criticalIds.has(w.id) && w.status !== "complete")
+      .slice(0, 2)
+  }, [data.items, data.predecessors, workItems])
+
+  // "Hide complete" hides finished work items and to-dos to declutter the
+  // list. A completed work item stays visible while it still has open to-dos
+  // under it, so the remaining tasks aren't hidden along with their parent.
+  const [hideComplete, setHideComplete] = useState(false)
+  const visibleWorkItems = useMemo(() => {
+    if (!hideComplete) return workItems
+    return workItems.filter(
+      (w) =>
+        w.status !== "complete" ||
+        childItemsOf(w.id, data.items).some((c) => c.status !== "complete")
+    )
+  }, [workItems, hideComplete, data.items])
+  const visibleUnlinkedTodos = hideComplete
+    ? unlinkedTodos.filter((t) => t.status !== "complete")
+    : unlinkedTodos
 
   // Expansion state lifted out of WorkItemRow so the Expand/Collapse all
   // buttons can drive every row in one click. Default: every work item is
@@ -112,7 +144,70 @@ export function ScheduleListView({
 
   return (
     <div className="space-y-4">
-      {workItems.length > 0 && (
+      {/* Critical-path summary + hide-complete toggle */}
+      <div className="bg-surface border border-border rounded-lg px-4 py-3 flex items-start justify-between gap-3 flex-wrap">
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted font-medium">
+            <Zap className="h-3.5 w-3.5 text-red-500" />
+            Next 2 Critical Path Items
+          </div>
+          {nextCriticalItems.length > 0 ? (
+            <ol className="mt-1.5 space-y-1">
+              {nextCriticalItems.map((it, i) => (
+                <li key={it.id} className="flex items-baseline gap-2 text-sm">
+                  <span className="text-muted tabular-nums">{i + 1}.</span>
+                  <button
+                    type="button"
+                    onClick={() => onEdit(it.id)}
+                    className="text-left min-w-0 cursor-pointer hover:underline"
+                  >
+                    <span className="font-medium text-foreground">
+                      {it.title}
+                    </span>
+                    <span className="ml-2 text-xs text-muted">
+                      {formatDateRange(it.start_date, it.end_date)}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="mt-1.5 text-sm text-muted">
+              No incomplete critical-path items.
+            </p>
+          )}
+        </div>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => setHideComplete((v) => !v)}
+          title={
+            hideComplete
+              ? "Show completed items"
+              : "Hide completed items from the list"
+          }
+        >
+          {hideComplete ? (
+            <>
+              <Eye className="h-3.5 w-3.5" /> Show complete
+            </>
+          ) : (
+            <>
+              <EyeOff className="h-3.5 w-3.5" /> Hide complete
+            </>
+          )}
+        </Button>
+      </div>
+
+      {hideComplete &&
+        visibleWorkItems.length === 0 &&
+        visibleUnlinkedTodos.length === 0 && (
+          <p className="text-sm text-muted px-1">
+            All items are complete. Click “Show complete” to see them.
+          </p>
+        )}
+
+      {visibleWorkItems.length > 0 && (
         <div className="bg-surface border border-border rounded-lg overflow-hidden">
           <div className="px-4 py-2.5 bg-background/60 border-b border-border text-xs uppercase tracking-wide text-muted font-medium flex items-center justify-between">
             <span>Work items</span>
@@ -134,7 +229,7 @@ export function ScheduleListView({
             </button>
           </div>
           <ul className="divide-y divide-border">
-            {workItems.map((item) => (
+            {visibleWorkItems.map((item) => (
               <WorkItemRow
                 key={item.id}
                 item={item}
@@ -145,13 +240,14 @@ export function ScheduleListView({
                 onToggleExpanded={(next) => setExpandedFor(item.id, next)}
                 selectedIds={selectedIds}
                 onToggleSelected={toggleSelected}
+                hideComplete={hideComplete}
               />
             ))}
           </ul>
         </div>
       )}
 
-      {unlinkedTodos.length > 0 && (
+      {visibleUnlinkedTodos.length > 0 && (
         <div className="bg-surface border border-border rounded-lg overflow-hidden">
           <div className="px-4 py-2.5 bg-background/60 border-b border-border text-xs uppercase tracking-wide text-muted font-medium flex items-center justify-between">
             <span>Unlinked to-dos</span>
@@ -163,7 +259,7 @@ export function ScheduleListView({
             </button>
           </div>
           <ul className="divide-y divide-border">
-            {unlinkedTodos.map((todo) => (
+            {visibleUnlinkedTodos.map((todo) => (
               <TodoRow
                 key={todo.id}
                 item={todo}
@@ -310,6 +406,7 @@ function WorkItemRow({
   onToggleExpanded,
   selectedIds,
   onToggleSelected,
+  hideComplete,
 }: {
   item: Tables<"schedule_items">
   data: ScheduleData
@@ -319,8 +416,14 @@ function WorkItemRow({
   onToggleExpanded: (next: boolean) => void
   selectedIds: Set<string>
   onToggleSelected: (id: string) => void
+  hideComplete: boolean
 }) {
   const children = childItemsOf(item.id, data.items)
+  // The "X/Y to-dos" count below still reflects all children; only the
+  // rendered rows are filtered when hiding completed items.
+  const visibleChildren = hideComplete
+    ? children.filter((c) => c.status !== "complete")
+    : children
   const assignees = assigneeNamesFor(item.id, data)
   const delays = delaysFor(item.id, data.delays)
   const isSelected = selectedIds.has(item.id)
@@ -402,7 +505,7 @@ function WorkItemRow({
       {expanded && (
         <div className="bg-background/30 border-t border-border/60">
           <ul className="divide-y divide-border/60">
-            {children.map((c) => (
+            {visibleChildren.map((c) => (
               <TodoRow
                 key={c.id}
                 item={c}
