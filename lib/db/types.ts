@@ -1071,6 +1071,7 @@ export type Database = {
           start_date: string | null
           status: Database["public"]["Enums"]["project_status"]
           target_completion_date: string | null
+          warranty_end_date: string | null
         }
         Insert: {
           address?: string | null
@@ -1099,6 +1100,7 @@ export type Database = {
           start_date?: string | null
           status?: Database["public"]["Enums"]["project_status"]
           target_completion_date?: string | null
+          warranty_end_date?: string | null
         }
         Update: {
           address?: string | null
@@ -1127,6 +1129,7 @@ export type Database = {
           start_date?: string | null
           status?: Database["public"]["Enums"]["project_status"]
           target_completion_date?: string | null
+          warranty_end_date?: string | null
         }
         Relationships: [
           {
@@ -1328,6 +1331,8 @@ export type Database = {
           template_tags: string[]
           title: string
           updated_at: string
+          warranty_date_noted: string | null
+          warranty_resolution: string | null
         }
         Insert: {
           baseline_end_date?: string | null
@@ -1357,6 +1362,8 @@ export type Database = {
           template_tags?: string[]
           title: string
           updated_at?: string
+          warranty_date_noted?: string | null
+          warranty_resolution?: string | null
         }
         Update: {
           baseline_end_date?: string | null
@@ -1386,6 +1393,8 @@ export type Database = {
           template_tags?: string[]
           title?: string
           updated_at?: string
+          warranty_date_noted?: string | null
+          warranty_resolution?: string | null
         }
         Relationships: [
           {
