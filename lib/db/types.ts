@@ -1309,6 +1309,7 @@ export type Database = {
           due_date: string | null
           duration_days: number | null
           end_date: string | null
+          exclude_from_critical_path: boolean
           id: string
           kind: Database["public"]["Enums"]["schedule_item_kind"]
           parent_anchor:
@@ -1337,6 +1338,7 @@ export type Database = {
           due_date?: string | null
           duration_days?: number | null
           end_date?: string | null
+          exclude_from_critical_path?: boolean
           id?: string
           kind: Database["public"]["Enums"]["schedule_item_kind"]
           parent_anchor?:
@@ -1365,6 +1367,7 @@ export type Database = {
           due_date?: string | null
           duration_days?: number | null
           end_date?: string | null
+          exclude_from_critical_path?: boolean
           id?: string
           kind?: Database["public"]["Enums"]["schedule_item_kind"]
           parent_anchor?:

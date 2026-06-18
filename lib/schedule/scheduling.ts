@@ -149,7 +149,14 @@ export function computeCriticalPath(
       i.kind === "work" &&
       i.start_date &&
       i.end_date &&
-      !i.recurrence_parent_id
+      !i.recurrence_parent_id &&
+      // Items flagged off the critical path (e.g. a completion-target
+      // milestone that isn't real on-site work) are dropped from the CPM
+      // graph entirely, so they never read as critical and never extend the
+      // computed project finish. Their predecessor edges are ignored too —
+      // such markers normally sit at the tail of the schedule with no
+      // successors, so this matches the intent of "don't count this item".
+      !i.exclude_from_critical_path
   )
   if (workItems.length === 0) return new Set()
 
@@ -322,7 +329,14 @@ export function computeScheduleAnalysis(
       i.kind === "work" &&
       i.start_date &&
       i.end_date &&
-      !i.recurrence_parent_id
+      !i.recurrence_parent_id &&
+      // Items flagged off the critical path (e.g. a completion-target
+      // milestone that isn't real on-site work) are dropped from the CPM
+      // graph entirely, so they never read as critical and never extend the
+      // computed project finish. Their predecessor edges are ignored too —
+      // such markers normally sit at the tail of the schedule with no
+      // successors, so this matches the intent of "don't count this item".
+      !i.exclude_from_critical_path
   )
   if (workItems.length === 0)
     return {

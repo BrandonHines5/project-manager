@@ -73,6 +73,10 @@ const ScheduleItemInput = z
       .enum(["not_started", "in_progress", "complete", "delayed"])
       .default("not_started"),
     priority: z.enum(["low", "medium", "high"]).nullish(),
+    // When true, the item is excluded from the critical-path calculation —
+    // for schedule markers (e.g. a completion target) that aren't real
+    // on-site work and shouldn't drive the project finish.
+    exclude_from_critical_path: z.boolean().default(false),
     recurrence_rule: Recurrence,
     // Smart-template conditions (e.g. ["walkout"]). Optional so callers
     // that don't send the field (bulk ops, copy-to-targets) leave the
@@ -214,6 +218,9 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     duration_days: duration,
     status: parsed.status,
     priority: parsed.priority ?? null,
+    // Only meaningful for work items (CPM ignores to-dos), but storing it
+    // unconditionally keeps the column honest if an item's kind ever flips.
+    exclude_from_critical_path: parsed.exclude_from_critical_path,
     recurrence_rule: (parsed.recurrence_rule ?? null) as RecurrenceRule | null,
     parent_anchor: anchorFinal,
     parent_offset_days: offsetFinal,

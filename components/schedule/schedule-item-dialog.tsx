@@ -110,6 +110,11 @@ export function ScheduleItemDialog({
     return ""
   })
   const [dueDate, setDueDate] = useState(item?.due_date ?? "")
+  // Work-item-only: keep this item off the critical path (e.g. a completion
+  // target that isn't real on-site work).
+  const [excludeFromCritical, setExcludeFromCritical] = useState(
+    item?.exclude_from_critical_path ?? false
+  )
   // Anchor: when on, the to-do's due_date is computed from the parent's
   // chosen anchor date + offset, and the manual `dueDate` field is hidden.
   const [anchorEnabled, setAnchorEnabled] = useState(
@@ -265,6 +270,9 @@ export function ScheduleItemDialog({
         ? Math.trunc(Number(anchorOffset) || 0)
         : null,
       status,
+      // Only work items appear on the critical path, so the flag is only
+      // meaningful there — send false for to-dos.
+      exclude_from_critical_path: kind === "work" ? excludeFromCritical : false,
       priority: kind === "todo" ? (priority || null) : null,
       recurrence_rule: kind === "todo" ? recurrence : null,
       template_tags: parseTagsInput(templateTagsText),
@@ -451,6 +459,25 @@ export function ScheduleItemDialog({
                     onChange={(e) => onChangeEndDate(e.target.value)}
                   />
                 </Field>
+                <div className="sm:col-span-2">
+                  <label className="flex items-start gap-2 text-xs cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={excludeFromCritical}
+                      onChange={(e) => setExcludeFromCritical(e.target.checked)}
+                      className="h-4 w-4 mt-0.5"
+                    />
+                    <span>
+                      Exclude from critical path
+                      <span className="block text-muted">
+                        For schedule markers like a completion target that
+                        aren&apos;t real on-site work — keeps them off the
+                        critical path and out of the project-finish
+                        calculation.
+                      </span>
+                    </span>
+                  </label>
+                </div>
               </>
             ) : (
               <>
