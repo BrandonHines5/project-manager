@@ -255,9 +255,12 @@ export function computeCriticalPath(
  *   - critical: the longest dependency chain (see computeLongestChain).
  *   - floatDays: not used under the longest-chain model; kept in the return
  *     shape (always empty) so callers don't have to change.
- *   - projectFinishEpochDay: the latest end date across the considered work
- *     items — the actual finish shown on the calendar. Multiply by 86400000
- *     to convert back to an ISO date for display.
+ *   - projectFinishEpochDay: the latest end date across dated, non-recurring
+ *     work items — the actual finish shown on the calendar. This intentionally
+ *     ignores `exclude_from_critical_path`: that flag suppresses chain
+ *     membership only, and the Gantt still draws those bars, so the finish
+ *     date must account for them too. Multiply by 86400000 to convert back to
+ *     an ISO date for display.
  */
 export type ScheduleAnalysis = {
   critical: Set<string>
@@ -269,15 +272,17 @@ export function computeScheduleAnalysis(
   items: ScheduleItem[],
   predecessors: Predecessor[]
 ): ScheduleAnalysis {
-  const workItems = items.filter(
+  // Project finish reflects every dated, non-recurring work item the Gantt
+  // renders — NOT just chain-eligible ones — so an excluded trailing item
+  // can't make the reported finish earlier than a visible bar.
+  const datedWorkItems = items.filter(
     (i) =>
       i.kind === "work" &&
       i.start_date &&
       i.end_date &&
-      !i.recurrence_parent_id &&
-      !i.exclude_from_critical_path
+      !i.recurrence_parent_id
   )
-  if (workItems.length === 0)
+  if (datedWorkItems.length === 0)
     return {
       critical: new Set(),
       floatDays: new Map(),
@@ -287,7 +292,7 @@ export function computeScheduleAnalysis(
   const toEpochDay = (iso: string) =>
     Math.round(new Date(iso).getTime() / 86400000)
   let projectFinishEpochDay = Number.NEGATIVE_INFINITY
-  for (const it of workItems) {
+  for (const it of datedWorkItems) {
     const e = toEpochDay(it.end_date!)
     if (e > projectFinishEpochDay) projectFinishEpochDay = e
   }
