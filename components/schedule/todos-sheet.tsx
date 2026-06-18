@@ -21,10 +21,12 @@ type StatusFilter = "all" | "open" | "complete"
 // left to the per-to-do dialog (the pencil button) since they're relational.
 export function TodosSheet({
   data,
+  hideComplete,
   onEdit,
   onAddTodo,
 }: {
   data: ScheduleData
+  hideComplete: boolean
   onEdit: (id: string) => void
   onAddTodo: () => void
 }) {
@@ -34,6 +36,10 @@ export function TodosSheet({
     let list = data.items.filter(
       (i) => i.kind === "todo" && !i.recurrence_parent_id
     )
+    // Schedule-wide "hide complete" wins over the local status filter.
+    if (hideComplete) {
+      list = list.filter((t) => t.status !== "complete")
+    }
     if (statusFilter === "open") {
       list = list.filter((t) => t.status !== "complete")
     } else if (statusFilter === "complete") {
@@ -47,7 +53,7 @@ export function TodosSheet({
       if (b.due_date == null) return -1
       return a.due_date.localeCompare(b.due_date)
     })
-  }, [data.items, statusFilter])
+  }, [data.items, statusFilter, hideComplete])
 
   return (
     <div className="space-y-3">
