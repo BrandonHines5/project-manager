@@ -21,13 +21,20 @@ const DENSITY = {
 
 export function GanttView({
   data,
+  hideComplete,
   onEdit,
 }: {
   data: ScheduleData
+  hideComplete: boolean
   onEdit: (id: string) => void
 }) {
   const items = data.items.filter(
-    (i) => i.kind === "work" && i.start_date && i.end_date && !i.recurrence_parent_id
+    (i) =>
+      i.kind === "work" &&
+      i.start_date &&
+      i.end_date &&
+      !i.recurrence_parent_id &&
+      (!hideComplete || i.status !== "complete")
   )
 
   const [showCritical, setShowCritical] = useState(true)
