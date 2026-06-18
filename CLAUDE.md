@@ -55,7 +55,7 @@
 
 - `npm run dev` to develop; `npx tsc --noEmit` + `npx eslint .` for checks; `npx next build` to verify production build.
 - Verify UI changes by running the app and clicking through — type checks don't catch UI regressions.
-- Commit early, push to `claude/buildertrend-replacement-JsF4R`.
+- Commit early. Cut feature branches from `main` and open PRs against `main` — that's the active integration branch where all recent work lands. (The old `claude/buildertrend-replacement-JsF4R` branch is stale and far behind `main`; don't target it.)
 - **Pull requests**: open as ready-for-review (not draft) so CodeRabbit reviews immediately, and subscribe to PR activity right after opening.
 
 ## User environment
