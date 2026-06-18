@@ -120,27 +120,33 @@ export function recomputeAnchoredDueDate(
   return addDays(basis, offsetDays)
 }
 
+
 /**
- * Critical Path Method on scheduled work items.
+ * Critical path = the single longest chain of dependency-linked work items.
  *
- * Returns the set of work-item IDs that have zero slack — i.e. items where
- * pushing the start date by one day would push the whole project's end date
- * by one day. Standard CPM:
- *   - Forward pass: ES = max(predecessor EF + lag) across all dep types
- *     (FS uses pred.EF, SS uses pred.ES, FF/SF use the corresponding edges).
- *     EF = ES + duration - 1 (days are inclusive).
- *   - Backward pass: LF = min(successor LS-equivalent), LS = LF - duration + 1.
- *   - slack = LS - ES; critical if slack == 0.
+ * We deliberately do NOT use classic zero-float CPM here. On a hand-scheduled
+ * plan where the stored dates carry slack/gaps (very common — tasks are placed
+ * on the calendar with breathing room, not packed tight against their
+ * predecessors), zero-float CPM collapses to just the latest-finishing item
+ * and reports everything else as non-critical. Builders read the critical path
+ * as "the spine of sequential work that runs longest end to end", so that's
+ * what we surface: the longest connected chain through the predecessor graph.
  *
- * Implementation notes:
- *   - Operates on epoch-day numbers (UTC midnight / 86400000) so we don't have
- *     to convert back and forth from ISO strings inside the loop.
- *   - Skips items missing dates. They can't be on the critical path because
- *     they aren't on the calendar.
- *   - Returns an empty set on cycles (defense in depth — cycles are blocked at
+ * Path length = sum of each task's duration (inclusive days) + the lag on each
+ * connecting edge. We walk the DAG in topological order, track the longest
+ * length ending at each item and the edge we arrived by, then reconstruct the
+ * winning chain back from its endpoint.
+ *
+ * Notes:
+ *   - Only dated, non-recurring work items that aren't flagged
+ *     `exclude_from_critical_path` participate.
+ *   - Dependency type doesn't change chain membership — any predecessor edge
+ *     links two tasks — but the edge lag still counts toward path length.
+ *   - Operates on epoch-day numbers (UTC midnight / 86400000).
+ *   - Returns an empty set on a cycle (defense in depth — cycles are blocked at
  *     save time, but a stale dataset shouldn't crash the renderer).
  */
-export function computeCriticalPath(
+export function computeLongestChain(
   items: ScheduleItem[],
   predecessors: Predecessor[]
 ): Set<string> {
@@ -150,12 +156,6 @@ export function computeCriticalPath(
       i.start_date &&
       i.end_date &&
       !i.recurrence_parent_id &&
-      // Items flagged off the critical path (e.g. a completion-target
-      // milestone that isn't real on-site work) are dropped from the CPM
-      // graph entirely, so they never read as critical and never extend the
-      // computed project finish. Their predecessor edges are ignored too —
-      // such markers normally sit at the tail of the schedule with no
-      // successors, so this matches the intent of "don't count this item".
       !i.exclude_from_critical_path
   )
   if (workItems.length === 0) return new Set()
@@ -163,9 +163,14 @@ export function computeCriticalPath(
   const toEpochDay = (iso: string) =>
     Math.round(new Date(iso).getTime() / 86400000)
 
-  const byId = new Map<string, ScheduleItem>(
-    workItems.map((i) => [i.id, i])
-  )
+  const byId = new Map<string, ScheduleItem>(workItems.map((i) => [i.id, i]))
+  const duration = new Map<string, number>()
+  for (const it of workItems) {
+    const s = toEpochDay(it.start_date!)
+    const e = toEpochDay(it.end_date!)
+    duration.set(it.id, Math.max(1, e - s + 1))
+  }
+
   const incoming = new Map<string, Predecessor[]>()
   const outgoing = new Map<string, Predecessor[]>()
   for (const p of predecessors) {
@@ -174,13 +179,6 @@ export function computeCriticalPath(
     if (!outgoing.has(p.predecessor_id)) outgoing.set(p.predecessor_id, [])
     incoming.get(p.item_id)!.push(p)
     outgoing.get(p.predecessor_id)!.push(p)
-  }
-
-  const duration = new Map<string, number>()
-  for (const it of workItems) {
-    const s = toEpochDay(it.start_date!)
-    const e = toEpochDay(it.end_date!)
-    duration.set(it.id, Math.max(1, e - s + 1))
   }
 
   // Topological order via Kahn's algorithm.
@@ -202,117 +200,67 @@ export function computeCriticalPath(
   }
   if (order.length !== workItems.length) return new Set() // cycle
 
-  // Forward pass. For items with no predecessors, ES is anchored to the
-  // user's scheduled start (so the chart's calendar isn't re-baselined).
-  // For items WITH predecessors, ES is derived purely from those edges —
-  // anchoring to the actual start would let any user-scheduled slack
-  // collapse the calculated ES onto LS and falsely report slack = 0 only
-  // for the last item. With pure predecessor-driven ES, every item on the
-  // longest chain correctly shows zero slack.
-  const es = new Map<string, number>()
-  const ef = new Map<string, number>()
+  // Longest path by duration (+ edge lag). best[id] = longest length of a
+  // chain ending at id; prevOf[id] = the predecessor we arrived from on that
+  // longest chain (null when id begins its own chain).
+  const best = new Map<string, number>()
+  const prevOf = new Map<string, string | null>()
   for (const id of order) {
-    const it = byId.get(id)!
     const dur = duration.get(id)!
-    const incomingEdges = incoming.get(id) ?? []
-    let earliest: number
-    if (incomingEdges.length === 0) {
-      earliest = toEpochDay(it.start_date!)
-    } else {
-      earliest = Number.NEGATIVE_INFINITY
-      for (const p of incomingEdges) {
-        const pred = byId.get(p.predecessor_id)!
-        const predES = es.get(pred.id)!
-        const predEF = ef.get(pred.id)!
-        let candidate: number
-        switch (p.dep_type) {
-          case "FS":
-            candidate = predEF + p.lag_days + 1
-            break
-          case "SS":
-            candidate = predES + p.lag_days
-            break
-          case "FF":
-            candidate = predEF + p.lag_days - dur + 1
-            break
-          case "SF":
-            candidate = predES + p.lag_days - dur + 1
-            break
-          default:
-            candidate = predEF + p.lag_days + 1
-        }
-        if (candidate > earliest) earliest = candidate
+    let bestLen = dur
+    let bestPrev: string | null = null
+    for (const p of incoming.get(id) ?? []) {
+      const cand = (best.get(p.predecessor_id) ?? 0) + p.lag_days + dur
+      if (cand > bestLen) {
+        bestLen = cand
+        bestPrev = p.predecessor_id
       }
     }
-    es.set(id, earliest)
-    ef.set(id, earliest + dur - 1)
+    best.set(id, bestLen)
+    prevOf.set(id, bestPrev)
   }
 
-  // Project finish = max EF across all items.
-  const projectFinish = Math.max(...Array.from(ef.values()))
-
-  // Backward pass.
-  const lf = new Map<string, number>()
-  const ls = new Map<string, number>()
-  for (const id of [...order].reverse()) {
-    const dur = duration.get(id)!
-    let latest = projectFinish
-    const outs = outgoing.get(id) ?? []
-    if (outs.length > 0) {
-      latest = Infinity
-      for (const p of outs) {
-        const succLS = ls.get(p.item_id)!
-        const succLF = lf.get(p.item_id)!
-        let candidate: number
-        switch (p.dep_type) {
-          case "FS":
-            // succ LS = pred LF + lag + 1, so pred LF = succ LS - lag - 1
-            candidate = succLS - p.lag_days - 1
-            break
-          case "SS":
-            // pred LS = succ LS - lag, pred LF = pred LS + dur - 1
-            candidate = succLS - p.lag_days + dur - 1
-            break
-          case "FF":
-            candidate = succLF - p.lag_days
-            break
-          case "SF":
-            // Forward SF (above): succ.EF = pred.ES + lag.
-            // Inverse: pred.ES_max = succ.LF - lag.
-            // Then pred.LF = pred.LS_max + dur - 1
-            //              = (succ.LF - lag) + dur - 1.
-            candidate = succLF - p.lag_days + dur - 1
-            break
-          default:
-            candidate = succLS - p.lag_days - 1
-        }
-        if (candidate < latest) latest = candidate
-      }
-    }
-    lf.set(id, latest)
-    ls.set(id, latest - dur + 1)
-  }
-
-  const critical = new Set<string>()
-  for (const id of order) {
-    if ((ls.get(id) ?? 0) - (es.get(id) ?? 0) === 0) {
-      critical.add(id)
+  // Endpoint of the overall longest chain, then walk the prev pointers back.
+  let endId: string | null = null
+  let endLen = Number.NEGATIVE_INFINITY
+  for (const [id, len] of best) {
+    if (len > endLen) {
+      endLen = len
+      endId = id
     }
   }
-  return critical
+  const chain = new Set<string>()
+  let cur: string | null = endId
+  while (cur) {
+    chain.add(cur)
+    cur = prevOf.get(cur) ?? null
+  }
+  return chain
 }
 
 /**
- * Same forward+backward pass as computeCriticalPath, but returns a richer
- * payload:
- *   - critical: same Set as computeCriticalPath
- *   - floatDays: Map<itemId, float in days>. 0 ⇒ on the critical path; N ⇒
- *     this item can slip by N days without moving the project finish.
- *   - projectFinishEpochDay: the EF of the latest item across the network.
- *     Multiply by 86400000 to convert back to an ISO date for display.
- *
- * Same skips and cycle behavior as computeCriticalPath — items without dates
- * are excluded from the map; a cyclic graph yields an empty result.
+ * The critical path the UI highlights — the longest dependency chain. Thin
+ * wrapper kept for existing call sites (the schedule list's "Next N critical
+ * items" panel).
+ */
+export function computeCriticalPath(
+  items: ScheduleItem[],
+  predecessors: Predecessor[]
+): Set<string> {
+  return computeLongestChain(items, predecessors)
+}
+
+/**
+ * Richer payload for the Gantt:
+ *   - critical: the longest dependency chain (see computeLongestChain).
+ *   - floatDays: not used under the longest-chain model; kept in the return
+ *     shape (always empty) so callers don't have to change.
+ *   - projectFinishEpochDay: the latest end date across dated, non-recurring
+ *     work items — the actual finish shown on the calendar. This intentionally
+ *     ignores `exclude_from_critical_path`: that flag suppresses chain
+ *     membership only, and the Gantt still draws those bars, so the finish
+ *     date must account for them too. Multiply by 86400000 to convert back to
+ *     an ISO date for display.
  */
 export type ScheduleAnalysis = {
   critical: Set<string>
@@ -324,21 +272,17 @@ export function computeScheduleAnalysis(
   items: ScheduleItem[],
   predecessors: Predecessor[]
 ): ScheduleAnalysis {
-  const workItems = items.filter(
+  // Project finish reflects every dated, non-recurring work item the Gantt
+  // renders — NOT just chain-eligible ones — so an excluded trailing item
+  // can't make the reported finish earlier than a visible bar.
+  const datedWorkItems = items.filter(
     (i) =>
       i.kind === "work" &&
       i.start_date &&
       i.end_date &&
-      !i.recurrence_parent_id &&
-      // Items flagged off the critical path (e.g. a completion-target
-      // milestone that isn't real on-site work) are dropped from the CPM
-      // graph entirely, so they never read as critical and never extend the
-      // computed project finish. Their predecessor edges are ignored too —
-      // such markers normally sit at the tail of the schedule with no
-      // successors, so this matches the intent of "don't count this item".
-      !i.exclude_from_critical_path
+      !i.recurrence_parent_id
   )
-  if (workItems.length === 0)
+  if (datedWorkItems.length === 0)
     return {
       critical: new Set(),
       floatDays: new Map(),
@@ -347,130 +291,15 @@ export function computeScheduleAnalysis(
 
   const toEpochDay = (iso: string) =>
     Math.round(new Date(iso).getTime() / 86400000)
-
-  const byId = new Map(workItems.map((i) => [i.id, i]))
-  const incoming = new Map<string, Predecessor[]>()
-  const outgoing = new Map<string, Predecessor[]>()
-  for (const p of predecessors) {
-    if (!byId.has(p.item_id) || !byId.has(p.predecessor_id)) continue
-    if (!incoming.has(p.item_id)) incoming.set(p.item_id, [])
-    if (!outgoing.has(p.predecessor_id)) outgoing.set(p.predecessor_id, [])
-    incoming.get(p.item_id)!.push(p)
-    outgoing.get(p.predecessor_id)!.push(p)
-  }
-
-  const duration = new Map<string, number>()
-  for (const it of workItems) {
-    const s = toEpochDay(it.start_date!)
+  let projectFinishEpochDay = Number.NEGATIVE_INFINITY
+  for (const it of datedWorkItems) {
     const e = toEpochDay(it.end_date!)
-    duration.set(it.id, Math.max(1, e - s + 1))
+    if (e > projectFinishEpochDay) projectFinishEpochDay = e
   }
 
-  const inDeg = new Map<string, number>(
-    workItems.map((i) => [i.id, incoming.get(i.id)?.length ?? 0])
-  )
-  const queue: string[] = []
-  for (const [id, deg] of inDeg) if (deg === 0) queue.push(id)
-  const order: string[] = []
-  while (queue.length) {
-    const cur = queue.shift()!
-    order.push(cur)
-    for (const out of outgoing.get(cur) ?? []) {
-      const next = out.item_id
-      const d = (inDeg.get(next) ?? 0) - 1
-      inDeg.set(next, d)
-      if (d === 0) queue.push(next)
-    }
+  return {
+    critical: computeLongestChain(items, predecessors),
+    floatDays: new Map(),
+    projectFinishEpochDay,
   }
-  if (order.length !== workItems.length)
-    return {
-      critical: new Set(),
-      floatDays: new Map(),
-      projectFinishEpochDay: null,
-    }
-
-  const es = new Map<string, number>()
-  const ef = new Map<string, number>()
-  for (const id of order) {
-    const it = byId.get(id)!
-    const dur = duration.get(id)!
-    const incomingEdges = incoming.get(id) ?? []
-    let earliest: number
-    if (incomingEdges.length === 0) {
-      earliest = toEpochDay(it.start_date!)
-    } else {
-      earliest = Number.NEGATIVE_INFINITY
-      for (const p of incomingEdges) {
-        const pred = byId.get(p.predecessor_id)!
-        const predES = es.get(pred.id)!
-        const predEF = ef.get(pred.id)!
-        let candidate: number
-        switch (p.dep_type) {
-          case "FS":
-            candidate = predEF + p.lag_days + 1
-            break
-          case "SS":
-            candidate = predES + p.lag_days
-            break
-          case "FF":
-            candidate = predEF + p.lag_days - dur + 1
-            break
-          case "SF":
-            candidate = predES + p.lag_days - dur + 1
-            break
-          default:
-            candidate = predEF + p.lag_days + 1
-        }
-        if (candidate > earliest) earliest = candidate
-      }
-    }
-    es.set(id, earliest)
-    ef.set(id, earliest + dur - 1)
-  }
-
-  const projectFinish = Math.max(...Array.from(ef.values()))
-
-  const lf = new Map<string, number>()
-  const ls = new Map<string, number>()
-  for (const id of [...order].reverse()) {
-    const dur = duration.get(id)!
-    let latest = projectFinish
-    const outs = outgoing.get(id) ?? []
-    if (outs.length > 0) {
-      latest = Infinity
-      for (const p of outs) {
-        const succLS = ls.get(p.item_id)!
-        const succLF = lf.get(p.item_id)!
-        let candidate: number
-        switch (p.dep_type) {
-          case "FS":
-            candidate = succLS - p.lag_days - 1
-            break
-          case "SS":
-            candidate = succLS - p.lag_days + dur - 1
-            break
-          case "FF":
-            candidate = succLF - p.lag_days
-            break
-          case "SF":
-            candidate = succLF - p.lag_days + dur - 1
-            break
-          default:
-            candidate = succLS - p.lag_days - 1
-        }
-        if (candidate < latest) latest = candidate
-      }
-    }
-    lf.set(id, latest)
-    ls.set(id, latest - dur + 1)
-  }
-
-  const critical = new Set<string>()
-  const floatDays = new Map<string, number>()
-  for (const id of order) {
-    const slack = (ls.get(id) ?? 0) - (es.get(id) ?? 0)
-    floatDays.set(id, slack)
-    if (slack === 0) critical.add(id)
-  }
-  return { critical, floatDays, projectFinishEpochDay: projectFinish }
 }
