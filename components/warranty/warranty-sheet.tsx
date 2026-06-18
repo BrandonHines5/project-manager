@@ -109,7 +109,7 @@ export function WarrantySheet({
       <div className="space-y-5">
         {homes.map((home) => (
           <HomeCard
-            key={home.id}
+            key={`${home.id}-${home.warranty_end_date ?? ""}`}
             home={home}
             companies={companies}
             showCompleted={showCompleted}
@@ -131,6 +131,8 @@ function HomeCard({
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
+  // Seeded from props; the parent remounts this card (key includes
+  // warranty_end_date) when the persisted value changes, reseeding cleanly.
   const [warrantyEnd, setWarrantyEnd] = useState(home.warranty_end_date ?? "")
 
   const visible = showCompleted
@@ -321,7 +323,11 @@ function WarrantyRow({
 
   function saveResolution() {
     const next = resolution.trim()
-    if (next === (item.warranty_resolution ?? "").trim()) return
+    const current = (item.warranty_resolution ?? "").trim()
+    if (next === current) {
+      if (resolution !== current) setResolution(current) // normalize whitespace
+      return
+    }
     patch({ warranty_resolution: next || null })
   }
 

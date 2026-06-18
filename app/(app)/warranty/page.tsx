@@ -98,11 +98,12 @@ export default async function WarrantyPage() {
   // Earliest "date noted" first, then earliest due, within each home.
   for (const arr of itemsByProject.values()) {
     arr.sort((a, b) => {
-      const an = a.warranty_date_noted ?? ""
-      const bn = b.warranty_date_noted ?? ""
+      // Undated items sort last (consistent with due_date handling below).
+      const an = a.warranty_date_noted ?? "9999-12-31"
+      const bn = b.warranty_date_noted ?? "9999-12-31"
       if (an !== bn) return an.localeCompare(bn)
-      const ad = a.due_date ?? "9999"
-      const bd = b.due_date ?? "9999"
+      const ad = a.due_date ?? "9999-12-31"
+      const bd = b.due_date ?? "9999-12-31"
       return ad.localeCompare(bd)
     })
   }
