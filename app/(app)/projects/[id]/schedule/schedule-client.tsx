@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useMemo } from "react"
-import { Plus, List, BarChart3, CheckSquare, Table } from "lucide-react"
+import { Plus, List, BarChart3, CheckSquare, Table, Eye, EyeOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { Tables } from "@/lib/db/types"
@@ -29,6 +29,9 @@ type View = "list" | "gantt" | "todos" | "sheet"
 
 export function ScheduleClient({ data }: { data: ScheduleData }) {
   const [view, setView] = useState<View>("list")
+  // Schedule-wide toggle: hide completed items across every view. Lives here
+  // so it persists as the user switches between List / To-dos / Sheet / Gantt.
+  const [hideComplete, setHideComplete] = useState(false)
   const [dialogState, setDialogState] = useState<
     | { mode: "create"; kind: "work" | "todo"; parentId?: string }
     | { mode: "edit"; itemId: string }
@@ -63,6 +66,26 @@ export function ScheduleClient({ data }: { data: ScheduleData }) {
           />
         </div>
         <div className="flex items-center gap-2 ml-auto">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setHideComplete((v) => !v)}
+            title={
+              hideComplete
+                ? "Show completed items across the schedule"
+                : "Hide completed items across the schedule"
+            }
+          >
+            {hideComplete ? (
+              <>
+                <Eye className="h-3.5 w-3.5" /> Show complete
+              </>
+            ) : (
+              <>
+                <EyeOff className="h-3.5 w-3.5" /> Hide complete
+              </>
+            )}
+          </Button>
           <div className="inline-flex rounded-md border border-border-strong bg-surface p-0.5">
             <button
               onClick={() => setView("list")}
@@ -133,6 +156,7 @@ export function ScheduleClient({ data }: { data: ScheduleData }) {
         <ScheduleListView
           data={data}
           projectId={data.project_id}
+          hideComplete={hideComplete}
           onEdit={(id) => setDialogState({ mode: "edit", itemId: id })}
           onAddTodo={(parentId) =>
             setDialogState({ mode: "create", kind: "todo", parentId })
@@ -142,6 +166,7 @@ export function ScheduleClient({ data }: { data: ScheduleData }) {
       {view === "todos" && (
         <TodosView
           data={data}
+          hideComplete={hideComplete}
           onEdit={(id) => setDialogState({ mode: "edit", itemId: id })}
           onAddTodo={() => setDialogState({ mode: "create", kind: "todo" })}
         />
@@ -149,6 +174,7 @@ export function ScheduleClient({ data }: { data: ScheduleData }) {
       {view === "sheet" && (
         <TodosSheet
           data={data}
+          hideComplete={hideComplete}
           onEdit={(id) => setDialogState({ mode: "edit", itemId: id })}
           onAddTodo={() => setDialogState({ mode: "create", kind: "todo" })}
         />
@@ -156,6 +182,7 @@ export function ScheduleClient({ data }: { data: ScheduleData }) {
       {view === "gantt" && (
         <GanttView
           data={data}
+          hideComplete={hideComplete}
           onEdit={(id) => setDialogState({ mode: "edit", itemId: id })}
         />
       )}

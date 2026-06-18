@@ -13,8 +13,6 @@ import {
   ChevronsUpDown,
   Paperclip,
   Zap,
-  Eye,
-  EyeOff,
 } from "lucide-react"
 import { cn, formatDateRange, formatDate } from "@/lib/utils"
 import { AvatarStack } from "@/components/ui/avatar"
@@ -37,11 +35,13 @@ import type { Tables } from "@/lib/db/types"
 export function ScheduleListView({
   data,
   projectId,
+  hideComplete,
   onEdit,
   onAddTodo,
 }: {
   data: ScheduleData
   projectId: string
+  hideComplete: boolean
   onEdit: (id: string) => void
   onAddTodo: (parentId?: string) => void
 }) {
@@ -73,10 +73,10 @@ export function ScheduleListView({
       .slice(0, 2)
   }, [data.items, data.predecessors, workItems])
 
-  // "Hide complete" hides finished work items and to-dos to declutter the
-  // list. A completed work item stays visible while it still has open to-dos
-  // under it, so the remaining tasks aren't hidden along with their parent.
-  const [hideComplete, setHideComplete] = useState(false)
+  // "Hide complete" (driven by the schedule-wide toggle) hides finished work
+  // items and to-dos to declutter the list. A completed work item stays
+  // visible while it still has open to-dos under it, so the remaining tasks
+  // aren't hidden along with their parent.
   const visibleWorkItems = useMemo(() => {
     if (!hideComplete) return workItems
     return workItems.filter(
@@ -144,59 +144,37 @@ export function ScheduleListView({
 
   return (
     <div className="space-y-4">
-      {/* Critical-path summary + hide-complete toggle */}
-      <div className="bg-surface border border-border rounded-lg px-4 py-3 flex items-start justify-between gap-3 flex-wrap">
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted font-medium">
-            <Zap className="h-3.5 w-3.5 text-red-500" />
-            Next 2 Critical Path Items
-          </div>
-          {nextCriticalItems.length > 0 ? (
-            <ol className="mt-1.5 space-y-1">
-              {nextCriticalItems.map((it, i) => (
-                <li key={it.id} className="flex items-baseline gap-2 text-sm">
-                  <span className="text-muted tabular-nums">{i + 1}.</span>
-                  <button
-                    type="button"
-                    onClick={() => onEdit(it.id)}
-                    className="text-left min-w-0 cursor-pointer hover:underline"
-                  >
-                    <span className="font-medium text-foreground">
-                      {it.title}
-                    </span>
-                    <span className="ml-2 text-xs text-muted">
-                      {formatDateRange(it.start_date, it.end_date)}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p className="mt-1.5 text-sm text-muted">
-              No incomplete critical-path items.
-            </p>
-          )}
+      {/* Critical-path summary */}
+      <div className="bg-surface border border-border rounded-lg px-4 py-3">
+        <div className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted font-medium">
+          <Zap className="h-3.5 w-3.5 text-red-500" />
+          Next 2 Critical Path Items
         </div>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => setHideComplete((v) => !v)}
-          title={
-            hideComplete
-              ? "Show completed items"
-              : "Hide completed items from the list"
-          }
-        >
-          {hideComplete ? (
-            <>
-              <Eye className="h-3.5 w-3.5" /> Show complete
-            </>
-          ) : (
-            <>
-              <EyeOff className="h-3.5 w-3.5" /> Hide complete
-            </>
-          )}
-        </Button>
+        {nextCriticalItems.length > 0 ? (
+          <ol className="mt-1.5 space-y-1">
+            {nextCriticalItems.map((it, i) => (
+              <li key={it.id} className="flex items-baseline gap-2 text-sm">
+                <span className="text-muted tabular-nums">{i + 1}.</span>
+                <button
+                  type="button"
+                  onClick={() => onEdit(it.id)}
+                  className="text-left min-w-0 cursor-pointer hover:underline"
+                >
+                  <span className="font-medium text-foreground">
+                    {it.title}
+                  </span>
+                  <span className="ml-2 text-xs text-muted">
+                    {formatDateRange(it.start_date, it.end_date)}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="mt-1.5 text-sm text-muted">
+            No incomplete critical-path items.
+          </p>
+        )}
       </div>
 
       {hideComplete &&

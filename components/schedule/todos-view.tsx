@@ -34,10 +34,12 @@ const PRIORITY_RANK: Record<Enums<"todo_priority">, number> = {
 
 export function TodosView({
   data,
+  hideComplete,
   onEdit,
   onAddTodo,
 }: {
   data: ScheduleData
+  hideComplete: boolean
   onEdit: (id: string) => void
   onAddTodo: () => void
 }) {
@@ -50,6 +52,11 @@ export function TodosView({
     let list = data.items.filter(
       (i) => i.kind === "todo" && !i.recurrence_parent_id
     )
+
+    // Schedule-wide "hide complete" wins over the local status filter.
+    if (hideComplete) {
+      list = list.filter((t) => t.status !== "complete")
+    }
 
     // Status filter
     if (statusFilter === "open") {
@@ -117,6 +124,7 @@ export function TodosView({
     statusFilter,
     priorityFilter,
     assigneeFilter,
+    hideComplete,
   ])
 
   const assigneeOptions = useMemo(() => {
