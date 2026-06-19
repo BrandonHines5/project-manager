@@ -210,12 +210,23 @@ async function fetchLiveRentalInfo(): Promise<Map<string, LiveRental>> {
   const crm = createCrmClient()
   if (!crm) return map
   try {
-    const [{ data: rentals }, { data: clients }] = await Promise.all([
+    const [rentalsRes, clientsRes] = await Promise.all([
       crm
         .from("rentals")
         .select("id, property_address, property_owner, client_id, client_id_2"),
       crm.from("clients").select("id, name"),
     ])
+    // Supabase returns errors on the result object rather than throwing, so log
+    // them explicitly — otherwise a bad CRM key / renamed table fails silently
+    // and the page just shows cached data with no clue why.
+    if (rentalsRes.error || clientsRes.error) {
+      console.warn(
+        "[warranty] live CRM rental read failed; using cache:",
+        rentalsRes.error ?? clientsRes.error
+      )
+    }
+    const rentals = rentalsRes.data
+    const clients = clientsRes.data
     const nameById = new Map<string, string>()
     for (const c of (clients ?? []) as { id: string; name: string | null }[]) {
       if (c.name) nameById.set(c.id, c.name)
