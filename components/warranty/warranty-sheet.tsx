@@ -4,7 +4,7 @@ import { useLayoutEffect, useMemo, useRef, useState, useTransition } from "react
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { Plus, Trash2, Download } from "lucide-react"
+import { Plus, Trash2, Download, RefreshCw } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input, Textarea, Select } from "@/components/ui/input"
@@ -23,34 +23,40 @@ import {
   createWarrantyItem,
   deleteWarrantyItem,
 } from "@/app/actions/warranty"
+import {
+  updateRentalItem,
+  createRentalItem,
+  deleteRentalItem,
+  syncRentalsFromCrm,
+} from "@/app/actions/rentals"
 
 type Status = Enums<"schedule_item_status">
-// "not_covered" is a warranty-only virtual status backed by the
-// warranty_no_action flag (not a real schedule_item_status enum value).
 type StatusValue = Status | "not_covered"
+export type TrackerKind = "warranty" | "rental"
 
-export type WarrantyItem = {
+export type TrackerItem = {
   id: string
-  project_id: string
+  kind: TrackerKind
+  card_id: string // home (project) id or rental_property id
   title: string
+  date_noted: string | null
+  resolution: string | null
+  who_fixing: string | null
   due_date: string | null
   status: Status
-  warranty_date_noted: string | null
-  warranty_resolution: string | null
-  warranty_who_fixing: string | null
-  warranty_no_action: boolean
+  no_action: boolean
   updated_at: string
 }
 
-export type WarrantyHome = {
+export type TrackerCard = {
   id: string
-  project_number: string
-  name: string
-  address: string | null
-  client_name: string | null
-  client_name_2: string | null
+  kind: TrackerKind
+  number: string | null
+  address: string
+  subtitle: string
   warranty_end_date: string | null
-  items: WarrantyItem[]
+  href: string | null
+  items: TrackerItem[]
 }
 
 const STATUS_OPTIONS: { value: StatusValue; label: string }[] = [
@@ -80,84 +86,128 @@ const STATUS_TONE: Record<
   not_covered: "muted",
 }
 
-// An item is "open" — counted and shown by default — unless it's complete or
-// has been dispositioned as not-covered / no-action.
-function isOpen(item: WarrantyItem): boolean {
-  return item.status !== "complete" && !item.warranty_no_action
+// Status filter options (drives the default "open only" behaviour).
+const FILTER_OPTIONS: { value: string; label: string }[] = [
+  { value: "open", label: "Open items" },
+  { value: "all", label: "All statuses" },
+  { value: "not_started", label: "Not started" },
+  { value: "in_progress", label: "In progress" },
+  { value: "delayed", label: "Delayed" },
+  { value: "complete", label: "Complete" },
+  { value: "not_covered", label: "Not covered / No action" },
+]
+
+function isOpen(item: TrackerItem): boolean {
+  return item.status !== "complete" && !item.no_action
 }
 
-function statusValue(item: WarrantyItem): StatusValue {
-  return item.warranty_no_action ? "not_covered" : item.status
+function statusValue(item: TrackerItem): StatusValue {
+  return item.no_action ? "not_covered" : item.status
 }
 
-function ownerName(h: WarrantyHome): string {
-  const names = [h.client_name, h.client_name_2].filter(
-    (n): n is string => !!n && n.trim().length > 0
-  )
-  return names.length ? names.join(" & ") : "—"
+function matchesStatusFilter(item: TrackerItem, filter: string): boolean {
+  switch (filter) {
+    case "all":
+      return true
+    case "open":
+      return isOpen(item)
+    case "not_covered":
+      return item.no_action
+    case "complete":
+      return item.status === "complete" && !item.no_action
+    default:
+      return item.status === filter && !item.no_action
+  }
 }
 
-export function WarrantySheet({ homes }: { homes: WarrantyHome[] }) {
+export function WarrantySheet({ cards }: { cards: TrackerCard[] }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
-  const [showCompleted, setShowCompleted] = useState(false)
+  const [typeFilter, setTypeFilter] = useState<"all" | TrackerKind>("all")
+  const [statusFilter, setStatusFilter] = useState("open")
+  const [whoFilter, setWhoFilter] = useState("all")
   const [addOpen, setAddOpen] = useState(false)
-  const [addHomeId, setAddHomeId] = useState(homes[0]?.id ?? "")
+  const [addKind, setAddKind] = useState<TrackerKind>("warranty")
+  const [addCardId, setAddCardId] = useState("")
 
-  const openCount = useMemo(
-    () => homes.reduce((sum, h) => sum + h.items.filter(isOpen).length, 0),
-    [homes]
+  // Distinct "who is fixing it" values across the type-filtered cards.
+  const whoOptions = useMemo(() => {
+    const set = new Set<string>()
+    for (const c of cards) {
+      if (typeFilter !== "all" && c.kind !== typeFilter) continue
+      for (const it of c.items) {
+        const w = (it.who_fixing ?? "").trim()
+        if (w) set.add(w)
+      }
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b))
+  }, [cards, typeFilter])
+
+  function itemPasses(item: TrackerItem): boolean {
+    if (!matchesStatusFilter(item, statusFilter)) return false
+    if (whoFilter !== "all" && (item.who_fixing ?? "").trim() !== whoFilter)
+      return false
+    return true
+  }
+
+  const visibleCards = cards
+    .filter((c) => typeFilter === "all" || c.kind === typeFilter)
+    .map((c) => ({ card: c, items: c.items.filter(itemPasses) }))
+    .filter((x) => x.items.length > 0)
+
+  const warrantyCount = cards.filter((c) => c.kind === "warranty").length
+  const rentalCount = cards.filter((c) => c.kind === "rental").length
+  const openCount = cards.reduce(
+    (sum, c) => sum + c.items.filter(isOpen).length,
+    0
   )
 
-  // Hide homes with no open items unless the user opts to show completed.
-  const visibleHomes = showCompleted
-    ? homes
-    : homes.filter((h) => h.items.some(isOpen))
+  const addCards = cards.filter((c) => c.kind === addKind)
 
-  function exportOpenItems() {
+  function exportItems() {
     const headers = [
+      "Type",
       "Address",
-      "Owner Name",
+      "Owner / Tenant",
       "Warranty End Date",
       "Date Noted",
-      "Owner Noted Issue",
+      "Noted Issue",
       "Resolution",
       "Who is Fixing It",
       "When Are They Fixing It",
       "Status",
     ]
     const rows: string[][] = []
-    for (const h of homes) {
-      for (const it of h.items) {
-        if (!isOpen(it)) continue
+    for (const { card, items } of visibleCards) {
+      for (const it of items) {
         rows.push([
-          h.address ?? "",
-          ownerName(h),
-          h.warranty_end_date ?? "",
-          it.warranty_date_noted ?? "",
+          card.kind === "warranty" ? "Warranty" : "Rental",
+          card.address,
+          card.subtitle.replace(/^(Owner|Tenant): /, ""),
+          card.warranty_end_date ?? "",
+          it.date_noted ?? "",
           it.title,
-          it.warranty_resolution ?? "",
-          it.warranty_who_fixing ?? "",
+          it.resolution ?? "",
+          it.who_fixing ?? "",
           it.due_date ?? "",
           STATUS_LABEL[statusValue(it)],
         ])
       }
     }
     if (rows.length === 0) {
-      toast.info("No open warranty items to export")
+      toast.info("No items to export for the current filters")
       return
     }
     const csv = [headers, ...rows]
       .map((r) => r.map(csvCell).join(","))
       .join("\r\n")
-    // Prepend a BOM so Excel reads UTF-8 (names, em dashes) correctly.
     const blob = new Blob(["﻿" + csv], {
       type: "text/csv;charset=utf-8;",
     })
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
-    a.download = `warranty-open-items-${todayISO()}.csv`
+    a.download = `warranty-rental-${todayISO()}.csv`
     document.body.appendChild(a)
     a.click()
     a.remove()
@@ -165,12 +215,16 @@ export function WarrantySheet({ homes }: { homes: WarrantyHome[] }) {
   }
 
   function addItem() {
-    if (!addHomeId) return
+    if (!addCardId) return
     startTransition(async () => {
       try {
-        await createWarrantyItem({ project_id: addHomeId })
-        const home = homes.find((h) => h.id === addHomeId)
-        toast.success(`Added item to ${home?.address ?? "home"}`)
+        if (addKind === "warranty") {
+          await createWarrantyItem({ project_id: addCardId })
+        } else {
+          await createRentalItem({ rental_property_id: addCardId })
+        }
+        const card = cards.find((c) => c.id === addCardId)
+        toast.success(`Added item to ${card?.address ?? "property"}`)
         setAddOpen(false)
         router.refresh()
       } catch (e) {
@@ -179,51 +233,102 @@ export function WarrantySheet({ homes }: { homes: WarrantyHome[] }) {
     })
   }
 
+  function syncRentals() {
+    startTransition(async () => {
+      try {
+        const res = await syncRentalsFromCrm()
+        if (res.ok) {
+          toast.success(`Synced ${res.synced} rental properties from CRM`)
+          router.refresh()
+        } else {
+          toast.error(res.error)
+        }
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Sync failed")
+      }
+    })
+  }
+
+  function openAdd() {
+    const kind: TrackerKind = typeFilter === "rental" ? "rental" : "warranty"
+    setAddKind(kind)
+    setAddCardId(cards.find((c) => c.kind === kind)?.id ?? "")
+    setAddOpen(true)
+  }
+
   return (
     <div>
-      <div className="sticky top-0 z-20 -mx-4 md:-mx-6 mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-border bg-background/95 px-4 md:px-6 py-3 backdrop-blur">
-        <div className="flex items-center gap-6 text-sm">
-          <Stat label="In warranty" value={homes.length} />
-          <Stat label="Open items" value={openCount} />
+      <div className="sticky top-0 z-20 -mx-4 md:-mx-6 mb-5 border-b border-border bg-background/95 px-4 md:px-6 py-3 backdrop-blur">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-6 text-sm">
+            <Stat label="Warranty" value={warrantyCount} />
+            <Stat label="Rentals" value={rentalCount} />
+            <Stat label="Open items" value={openCount} />
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={syncRentals}
+              disabled={pending}
+              title="Refresh rental properties from the CRM"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Sync rentals
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={exportItems}
+            >
+              <Download className="h-4 w-4" />
+              Export
+            </Button>
+            <Button type="button" size="sm" onClick={openAdd}>
+              <Plus className="h-4 w-4" />
+              Add item
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          <label className="flex items-center gap-2 text-sm text-muted cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={showCompleted}
-              onChange={(e) => setShowCompleted(e.target.checked)}
-              className="h-4 w-4 rounded border-border-strong accent-brand-600"
-            />
-            Show completed
-          </label>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={exportOpenItems}
-          >
-            <Download className="h-4 w-4" />
-            Export open
-          </Button>
-          <Button type="button" size="sm" onClick={() => setAddOpen(true)}>
-            <Plus className="h-4 w-4" />
-            Add warranty item
-          </Button>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <FilterSelect
+            label="Type"
+            value={typeFilter}
+            onChange={(v) => setTypeFilter(v as "all" | TrackerKind)}
+            options={[
+              { value: "all", label: "Warranty + Rentals" },
+              { value: "warranty", label: "Warranty only" },
+              { value: "rental", label: "Rentals only" },
+            ]}
+          />
+          <FilterSelect
+            label="Status"
+            value={statusFilter}
+            onChange={setStatusFilter}
+            options={FILTER_OPTIONS}
+          />
+          <FilterSelect
+            label="Who is fixing"
+            value={whoFilter}
+            onChange={setWhoFilter}
+            options={[
+              { value: "all", label: "Anyone" },
+              ...whoOptions.map((w) => ({ value: w, label: w })),
+            ]}
+          />
         </div>
       </div>
 
-      {visibleHomes.length === 0 ? (
+      {visibleCards.length === 0 ? (
         <p className="text-sm text-muted py-8 text-center">
-          No open warranty items. 🎉 Toggle “Show completed” to see closed items.
+          No items match the current filters.
         </p>
       ) : (
         <div className="space-y-5">
-          {visibleHomes.map((home) => (
-            <HomeCard
-              key={home.id}
-              home={home}
-              showCompleted={showCompleted}
-            />
+          {visibleCards.map(({ card, items }) => (
+            <TrackerCardView key={card.id} card={card} items={items} />
           ))}
         </div>
       )}
@@ -231,23 +336,39 @@ export function WarrantySheet({ homes }: { homes: WarrantyHome[] }) {
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent size="sm">
           <DialogHeader>
-            <DialogTitle>Add warranty item</DialogTitle>
+            <DialogTitle>Add item</DialogTitle>
           </DialogHeader>
           <DialogBody>
-            <label className="text-sm font-medium">Home</label>
+            <label className="text-sm font-medium">Type</label>
             <Select
-              value={addHomeId}
-              onChange={(e) => setAddHomeId(e.target.value)}
+              value={addKind}
+              onChange={(e) => {
+                const k = e.target.value as TrackerKind
+                setAddKind(k)
+                setAddCardId(cards.find((c) => c.kind === k)?.id ?? "")
+              }}
+              className="mt-1 mb-3"
+            >
+              <option value="warranty">Warranty</option>
+              <option value="rental">Rental</option>
+            </Select>
+            <label className="text-sm font-medium">
+              {addKind === "warranty" ? "Home" : "Rental property"}
+            </label>
+            <Select
+              value={addCardId}
+              onChange={(e) => setAddCardId(e.target.value)}
               className="mt-1"
             >
-              {homes.map((h) => (
-                <option key={h.id} value={h.id}>
-                  {h.address || h.name} ({h.project_number})
+              {addCards.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.address}
+                  {c.number ? ` (${c.number})` : ""}
                 </option>
               ))}
             </Select>
             <p className="text-xs text-muted mt-2">
-              A blank item is added to this home; fill in the details inline.
+              A blank item is added; fill in the details inline.
             </p>
           </DialogBody>
           <DialogFooter>
@@ -259,7 +380,11 @@ export function WarrantySheet({ homes }: { homes: WarrantyHome[] }) {
             >
               Cancel
             </Button>
-            <Button type="button" onClick={addItem} disabled={pending || !addHomeId}>
+            <Button
+              type="button"
+              onClick={addItem}
+              disabled={pending || !addCardId}
+            >
               Add item
             </Button>
           </DialogFooter>
@@ -269,45 +394,50 @@ export function WarrantySheet({ homes }: { homes: WarrantyHome[] }) {
   )
 }
 
-function HomeCard({
-  home,
-  showCompleted,
+function TrackerCardView({
+  card,
+  items,
 }: {
-  home: WarrantyHome
-  showCompleted: boolean
+  card: TrackerCard
+  items: TrackerItem[]
 }) {
-  const visible = showCompleted ? home.items : home.items.filter(isOpen)
-  const openCount = home.items.filter(isOpen).length
+  const openCount = card.items.filter(isOpen).length
+  const header =
+    card.kind === "warranty" ? (
+      <Link href={card.href ?? "#"} className="group inline-block">
+        <div className="font-mono text-[11px] text-muted">{card.number}</div>
+        <div className="font-medium text-sm group-hover:text-brand-600 truncate">
+          {card.address}
+        </div>
+      </Link>
+    ) : (
+      <div>
+        <div className="font-mono text-[11px] text-muted">Rental</div>
+        <div className="font-medium text-sm truncate">{card.address}</div>
+      </div>
+    )
 
   return (
     <section className="bg-surface border border-border rounded-lg overflow-hidden">
       <div className="flex flex-wrap items-start justify-between gap-4 px-4 py-3 border-b border-border bg-background/40">
         <div className="min-w-0">
-          <Link
-            href={`/projects/${home.id}/schedule`}
-            className="group inline-block"
-          >
-            <div className="font-mono text-[11px] text-muted">
-              {home.project_number}
-            </div>
-            <div className="font-medium text-sm group-hover:text-brand-600 truncate">
-              {home.address || home.name}
-            </div>
-          </Link>
-          <div className="text-xs text-muted mt-0.5">
-            Owner: {ownerName(home)}
-          </div>
+          {header}
+          <div className="text-xs text-muted mt-0.5">{card.subtitle}</div>
         </div>
         <div className="flex items-center gap-4">
-          <div className="text-right">
-            <div className="text-[11px] text-muted uppercase tracking-wide">
-              Warranty end
+          {card.kind === "warranty" && (
+            <div className="text-right">
+              <div className="text-[11px] text-muted uppercase tracking-wide">
+                Warranty end
+              </div>
+              {/* Read-only — sourced from the CRM. */}
+              <div className="text-sm font-medium tabular-nums">
+                {card.warranty_end_date
+                  ? formatDate(card.warranty_end_date)
+                  : "—"}
+              </div>
             </div>
-            {/* Read-only — sourced from the CRM (completion date + 1 year). */}
-            <div className="text-sm font-medium tabular-nums">
-              {home.warranty_end_date ? formatDate(home.warranty_end_date) : "—"}
-            </div>
-          </div>
+          )}
           <Badge tone={openCount ? "warning" : "success"}>
             {openCount} open
           </Badge>
@@ -322,7 +452,7 @@ function HomeCard({
                 Date noted
               </th>
               <th className="text-left font-medium px-3 py-2">
-                Owner noted issue
+                Noted issue
               </th>
               <th className="text-left font-medium px-3 py-2">Resolution</th>
               <th className="text-left font-medium px-3 py-2 w-44">
@@ -336,20 +466,9 @@ function HomeCard({
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {visible.length === 0 ? (
-              <tr>
-                <td
-                  colSpan={7}
-                  className="px-3 py-4 text-sm text-muted text-center"
-                >
-                  No open warranty items. 🎉
-                </td>
-              </tr>
-            ) : (
-              visible.map((item) => (
-                <WarrantyRow key={`${item.id}-${item.updated_at}`} item={item} />
-              ))
-            )}
+            {items.map((item) => (
+              <TrackerRow key={`${item.id}-${item.updated_at}`} item={item} />
+            ))}
           </tbody>
         </table>
       </div>
@@ -357,31 +476,51 @@ function HomeCard({
   )
 }
 
-function WarrantyRow({ item }: { item: WarrantyItem }) {
+type ItemPatch = Partial<{
+  title: string
+  date_noted: string | null
+  resolution: string | null
+  who_fixing: string | null
+  due_date: string | null
+  status: Status
+  no_action: boolean
+}>
+
+function dispatchPatch(item: TrackerItem, patch: ItemPatch) {
+  if (item.kind === "warranty") {
+    const w: Parameters<typeof updateWarrantyItem>[0] = {
+      id: item.id,
+      project_id: item.card_id,
+    }
+    if ("title" in patch) w.title = patch.title
+    if ("date_noted" in patch) w.warranty_date_noted = patch.date_noted
+    if ("resolution" in patch) w.warranty_resolution = patch.resolution
+    if ("who_fixing" in patch) w.warranty_who_fixing = patch.who_fixing
+    if ("due_date" in patch) w.due_date = patch.due_date
+    if ("status" in patch) w.status = patch.status
+    if ("no_action" in patch) w.warranty_no_action = patch.no_action
+    return updateWarrantyItem(w)
+  }
+  return updateRentalItem({ id: item.id, ...patch })
+}
+
+function TrackerRow({ item }: { item: TrackerItem }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
-  const [dateNoted, setDateNoted] = useState(item.warranty_date_noted ?? "")
+  const [dateNoted, setDateNoted] = useState(item.date_noted ?? "")
   const [title, setTitle] = useState(item.title)
-  const [resolution, setResolution] = useState(item.warranty_resolution ?? "")
-  const [whoFixing, setWhoFixing] = useState(item.warranty_who_fixing ?? "")
+  const [resolution, setResolution] = useState(item.resolution ?? "")
+  const [whoFixing, setWhoFixing] = useState(item.who_fixing ?? "")
   const [dueDate, setDueDate] = useState(item.due_date ?? "")
 
   const today = todayISO()
   const overdue = !!item.due_date && item.due_date < today && isOpen(item)
   const current = statusValue(item)
 
-  function patch(
-    fields: Omit<Parameters<typeof updateWarrantyItem>[0], "id" | "project_id">,
-    successMsg?: string
-  ) {
+  function patch(fields: ItemPatch) {
     startTransition(async () => {
       try {
-        await updateWarrantyItem({
-          id: item.id,
-          project_id: item.project_id,
-          ...fields,
-        })
-        if (successMsg) toast.success(successMsg)
+        await dispatchPatch(item, fields)
         router.refresh()
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Could not save")
@@ -392,7 +531,7 @@ function WarrantyRow({ item }: { item: WarrantyItem }) {
   function saveTitle() {
     const next = title.trim()
     if (!next) {
-      setTitle(item.title) // required — revert empty edits
+      setTitle(item.title)
       return
     }
     if (next === item.title) return
@@ -401,18 +540,18 @@ function WarrantyRow({ item }: { item: WarrantyItem }) {
 
   function saveDateNoted() {
     const next = dateNoted || null
-    if (next === (item.warranty_date_noted ?? null)) return
-    patch({ warranty_date_noted: next })
+    if (next === (item.date_noted ?? null)) return
+    patch({ date_noted: next })
   }
 
   function saveResolution() {
     const next = resolution.trim()
-    const cur = (item.warranty_resolution ?? "").trim()
+    const cur = (item.resolution ?? "").trim()
     if (next === cur) {
-      if (resolution !== cur) setResolution(cur) // normalize whitespace
+      if (resolution !== cur) setResolution(cur)
       return
     }
-    patch({ warranty_resolution: next || null })
+    patch({ resolution: next || null })
   }
 
   function saveDueDate() {
@@ -421,31 +560,35 @@ function WarrantyRow({ item }: { item: WarrantyItem }) {
     patch({ due_date: next })
   }
 
+  function saveWhoFixing() {
+    const next = whoFixing.trim()
+    const cur = (item.who_fixing ?? "").trim()
+    if (next === cur) {
+      if (whoFixing !== cur) setWhoFixing(cur)
+      return
+    }
+    patch({ who_fixing: next || null })
+  }
+
   function handleStatus(value: StatusValue) {
     if (value === current) return
     if (value === "not_covered") {
-      patch({ warranty_no_action: true })
+      patch({ no_action: true })
     } else {
-      patch({ status: value, warranty_no_action: false })
+      patch({ status: value, no_action: false })
     }
-  }
-
-  function saveWhoFixing() {
-    const next = whoFixing.trim()
-    const cur = (item.warranty_who_fixing ?? "").trim()
-    if (next === cur) {
-      if (whoFixing !== cur) setWhoFixing(cur) // normalize whitespace
-      return
-    }
-    patch({ warranty_who_fixing: next || null })
   }
 
   function handleDelete() {
-    if (!confirm("Delete this warranty item? This can't be undone.")) return
+    if (!confirm("Delete this item? This can't be undone.")) return
     startTransition(async () => {
       try {
-        await deleteWarrantyItem({ id: item.id, project_id: item.project_id })
-        toast.success("Warranty item deleted")
+        if (item.kind === "warranty") {
+          await deleteWarrantyItem({ id: item.id, project_id: item.card_id })
+        } else {
+          await deleteRentalItem({ id: item.id })
+        }
+        toast.success("Item deleted")
         router.refresh()
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Could not delete")
@@ -469,7 +612,7 @@ function WarrantyRow({ item }: { item: WarrantyItem }) {
         <AutoTextarea
           value={title}
           disabled={pending}
-          placeholder="Describe the owner's issue…"
+          placeholder="Describe the issue…"
           onValueChange={setTitle}
           onBlur={saveTitle}
         />
@@ -531,8 +674,8 @@ function WarrantyRow({ item }: { item: WarrantyItem }) {
           onClick={handleDelete}
           disabled={pending}
           className="text-muted hover:text-danger cursor-pointer disabled:opacity-50"
-          title="Delete warranty item"
-          aria-label="Delete warranty item"
+          title="Delete item"
+          aria-label="Delete item"
         >
           <Trash2 className="h-4 w-4" />
         </button>
@@ -541,13 +684,40 @@ function WarrantyRow({ item }: { item: WarrantyItem }) {
   )
 }
 
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  options: { value: string; label: string }[]
+}) {
+  return (
+    <label className="flex items-center gap-1.5 text-xs text-muted">
+      <span className="uppercase tracking-wide">{label}</span>
+      <Select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-8 w-auto text-sm text-foreground"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </Select>
+    </label>
+  )
+}
+
 function csvCell(v: string): string {
   if (/[",\n\r]/.test(v)) return '"' + v.replace(/"/g, '""') + '"'
   return v
 }
 
-// Textarea that grows to fit its content so long text (issue / resolution) is
-// fully visible without an inner scrollbar.
 function AutoTextarea({
   value,
   onValueChange,

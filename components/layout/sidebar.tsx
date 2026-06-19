@@ -29,7 +29,12 @@ const ITEMS: Item[] = [
   { href: "/notifications", label: "Notifications", icon: Bell },
   { href: "/companies", label: "Companies", icon: Building2, roles: ["staff"] },
   { href: "/team", label: "Team", icon: Users, roles: ["staff"] },
-  { href: "/warranty", label: "Warranty", icon: ShieldCheck, roles: ["staff"] },
+  {
+    href: "/warranty",
+    label: "Warranty / Rental",
+    icon: ShieldCheck,
+    roles: ["staff"],
+  },
   { href: "/reports", label: "Reports", icon: BarChart3, roles: ["staff"] },
   { href: "/feedback", label: "Feedback", icon: MessageSquarePlus },
 ]
