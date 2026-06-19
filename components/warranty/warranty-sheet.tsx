@@ -1,6 +1,13 @@
 "use client"
 
-import { useLayoutEffect, useMemo, useRef, useState, useTransition } from "react"
+import {
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+  type ReactNode,
+} from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
@@ -96,6 +103,11 @@ const FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: "complete", label: "Complete" },
   { value: "not_covered", label: "Not covered / No action" },
 ]
+
+// Shared column layout. On phones the row collapses to a single stacked column
+// (each field labeled); from md up it lays out as a table-like grid.
+const ROW_GRID =
+  "md:grid md:grid-cols-[9rem_minmax(12rem,1.3fr)_minmax(14rem,1.4fr)_11rem_9rem_10rem_2.5rem] md:gap-2 md:items-start"
 
 function isOpen(item: TrackerItem): boolean {
   return item.status !== "complete" && !item.no_action
@@ -444,33 +456,27 @@ function TrackerCardView({
         </div>
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-background/60 text-xs text-muted uppercase">
-            <tr>
-              <th className="text-left font-medium px-3 py-2 w-36">
-                Date noted
-              </th>
-              <th className="text-left font-medium px-3 py-2">
-                Noted issue
-              </th>
-              <th className="text-left font-medium px-3 py-2">Resolution</th>
-              <th className="text-left font-medium px-3 py-2 w-44">
-                Who is fixing it
-              </th>
-              <th className="text-left font-medium px-3 py-2 w-36">
-                When fixing
-              </th>
-              <th className="text-left font-medium px-3 py-2 w-40">Status</th>
-              <th className="px-3 py-2 w-10" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {items.map((item) => (
-              <TrackerRow key={`${item.id}-${item.updated_at}`} item={item} />
-            ))}
-          </tbody>
-        </table>
+      <div className="md:overflow-x-auto">
+        {/* Column headers — md+ only; on phones each field is labeled inline. */}
+        <div
+          className={cn(
+            "hidden bg-background/60 px-3 py-2 text-xs font-medium text-muted uppercase",
+            ROW_GRID
+          )}
+        >
+          <div>Date noted</div>
+          <div>Noted issue</div>
+          <div>Resolution</div>
+          <div>Who is fixing it</div>
+          <div>When fixing</div>
+          <div>Status</div>
+          <div />
+        </div>
+        <div className="divide-y divide-border">
+          {items.map((item) => (
+            <TrackerRow key={`${item.id}-${item.updated_at}`} item={item} />
+          ))}
+        </div>
       </div>
     </section>
   )
@@ -597,18 +603,23 @@ function TrackerRow({ item }: { item: TrackerItem }) {
   }
 
   return (
-    <tr className="align-top">
-      <td className="px-3 py-2">
+    <div
+      className={cn(
+        "grid grid-cols-1 gap-3 px-4 py-3 md:gap-2 md:px-3 md:py-2",
+        ROW_GRID
+      )}
+    >
+      <Cell label="Date noted">
         <Input
           type="date"
           value={dateNoted}
           disabled={pending}
           onChange={(e) => setDateNoted(e.target.value)}
           onBlur={saveDateNoted}
-          className="h-8"
+          className="h-8 w-full"
         />
-      </td>
-      <td className="px-3 py-2 min-w-[18rem]">
+      </Cell>
+      <Cell label="Noted issue">
         <AutoTextarea
           value={title}
           disabled={pending}
@@ -616,8 +627,8 @@ function TrackerRow({ item }: { item: TrackerItem }) {
           onValueChange={setTitle}
           onBlur={saveTitle}
         />
-      </td>
-      <td className="px-3 py-2 min-w-[20rem]">
+      </Cell>
+      <Cell label="Resolution">
         <AutoTextarea
           value={resolution}
           disabled={pending}
@@ -625,38 +636,38 @@ function TrackerRow({ item }: { item: TrackerItem }) {
           onValueChange={setResolution}
           onBlur={saveResolution}
         />
-      </td>
-      <td className="px-3 py-2">
+      </Cell>
+      <Cell label="Who is fixing it">
         <Input
           value={whoFixing}
           disabled={pending}
           placeholder="e.g. Lloyd"
-          className="h-8"
+          className="h-8 w-full"
           onChange={(e) => setWhoFixing(e.target.value)}
           onBlur={saveWhoFixing}
         />
-      </td>
-      <td className="px-3 py-2">
+      </Cell>
+      <Cell label="When fixing">
         <Input
           type="date"
           value={dueDate}
           disabled={pending}
           onChange={(e) => setDueDate(e.target.value)}
           onBlur={saveDueDate}
-          className={cn("h-8", overdue && "border-danger text-danger")}
+          className={cn("h-8 w-full", overdue && "border-danger text-danger")}
         />
         {overdue && (
           <div className="text-[11px] text-danger font-medium mt-0.5">
             Overdue
           </div>
         )}
-      </td>
-      <td className="px-3 py-2">
+      </Cell>
+      <Cell label="Status">
         <Select
           value={current}
           disabled={pending}
           onChange={(e) => handleStatus(e.target.value as StatusValue)}
-          className="h-8"
+          className="h-8 w-full"
         >
           {STATUS_OPTIONS.map((s) => (
             <option key={s.value} value={s.value}>
@@ -667,20 +678,34 @@ function TrackerRow({ item }: { item: TrackerItem }) {
         <div className="mt-1">
           <Badge tone={STATUS_TONE[current]}>{STATUS_LABEL[current]}</Badge>
         </div>
-      </td>
-      <td className="px-3 py-2">
+      </Cell>
+      <div className="flex md:justify-center md:pt-1">
         <button
           type="button"
           onClick={handleDelete}
           disabled={pending}
-          className="text-muted hover:text-danger cursor-pointer disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 text-muted hover:text-danger cursor-pointer disabled:opacity-50"
           title="Delete item"
           aria-label="Delete item"
         >
           <Trash2 className="h-4 w-4" />
+          <span className="text-sm md:hidden">Delete</span>
         </button>
-      </td>
-    </tr>
+      </div>
+    </div>
+  )
+}
+
+// One field within a tracker row. Shows an inline label on phones (where the
+// row is stacked); the label is hidden from md up because the header provides it.
+function Cell({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <div className="md:hidden mb-1 text-[11px] uppercase tracking-wide text-muted">
+        {label}
+      </div>
+      {children}
+    </div>
   )
 }
 
