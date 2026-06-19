@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireSession } from "@/lib/auth"
+import { brandForProjectType } from "@/lib/brand"
 import { PricingClient } from "./pricing-client"
 import type { PricingData } from "./pricing-client"
 
@@ -17,10 +18,12 @@ export default async function PricingPage({
 
   const { data: project } = await supabase
     .from("projects")
-    .select("id, name, project_number, contract_price")
+    .select("id, name, project_number, contract_price, project_type, address")
     .eq("id", projectId)
     .maybeSingle()
   if (!project) notFound()
+
+  const brand = brandForProjectType(project.project_type)
 
   const [{ data: decisions }, { data: payments }] = await Promise.all([
     supabase
@@ -43,10 +46,17 @@ export default async function PricingPage({
 
   const data: PricingData = {
     project_id: projectId,
+    project_name: project.name,
+    project_number: project.project_number,
+    project_address: project.address,
     role: profile.role,
     contract_price: project.contract_price,
     approved_decisions: decisions ?? [],
     payments: payments ?? [],
+    brand: {
+      name: brand.name,
+      logo: brand.logo,
+    },
   }
 
   return <PricingClient data={data} />

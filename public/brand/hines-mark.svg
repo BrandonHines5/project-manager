@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="Hines Homes">
+  <rect x="6" y="6" width="52" height="52" rx="2.5" stroke="#ffffff" stroke-width="3"/>
+  <g fill="#ffffff">
+    <rect x="11" y="30" width="42" height="4"/>
+    <rect x="11" y="40" width="42" height="4"/>
+    <path d="M13 50 L13 24 L15.5 18 L18 24 L18 50 Z"/>
+    <path d="M24 50 L24 24 L26.5 18 L29 24 L29 50 Z"/>
+    <path d="M35 50 L35 24 L37.5 18 L40 24 L40 50 Z"/>
+    <path d="M46 50 L46 24 L48.5 18 L51 24 L51 50 Z"/>
+  </g>
+</svg>
