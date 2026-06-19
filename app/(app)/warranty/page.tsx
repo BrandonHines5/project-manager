@@ -36,6 +36,7 @@ export default async function WarrantyPage() {
     warranty_date_noted: string | null
     warranty_resolution: string | null
     warranty_who_fixing: string | null
+    warranty_no_action: boolean
     updated_at: string
   }
 
@@ -47,7 +48,7 @@ export default async function WarrantyPage() {
     const { data: items, error: itemsErr } = await supabase
       .from("schedule_items")
       .select(
-        "id, project_id, title, due_date, status, warranty_date_noted, warranty_resolution, warranty_who_fixing, updated_at"
+        "id, project_id, title, due_date, status, warranty_date_noted, warranty_resolution, warranty_who_fixing, warranty_no_action, updated_at"
       )
       .in("project_id", projectIds)
       .eq("kind", "todo")
@@ -67,6 +68,7 @@ export default async function WarrantyPage() {
       warranty_date_noted: r.warranty_date_noted,
       warranty_resolution: r.warranty_resolution,
       warranty_who_fixing: r.warranty_who_fixing,
+      warranty_no_action: r.warranty_no_action,
       updated_at: r.updated_at,
     })
     itemsByProject.set(r.project_id, arr)
@@ -96,7 +98,7 @@ export default async function WarrantyPage() {
   }))
 
   return (
-    <div className="max-w-7xl mx-auto px-4 md:px-6 py-5">
+    <div className="px-4 md:px-6 py-5">
       <div className="mb-5">
         <h1 className="text-lg font-semibold flex items-center gap-2">
           <ShieldCheck className="h-5 w-5 text-brand-600" />
