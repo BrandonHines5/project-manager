@@ -3,26 +3,31 @@ import type { Enums } from "@/lib/db/types"
 // Client-facing branding is driven by a project's type. Residential jobs
 // present under Hines Homes; commercial jobs present under MJV Building Group.
 // Per product decision, the color palette is shared — only the name + logo
-// abbreviation differ — so a Brand is just the displayed name and its short
-// logo mark.
+// differ. A Brand carries the displayed name and the paths to its logo assets
+// (a white square mark for the colored nav tiles and a full-color logo for
+// light backgrounds such as the printable Pricing PDF).
 
 export type Brand = {
   key: "hines" | "mjv"
   name: string
-  /** Short mark shown in the square logo tile (no image asset needed). */
-  abbr: string
+  /** White square mark for the brand-colored nav tiles (in /public). */
+  mark: string
+  /** Full-color logo for light backgrounds (PDF header, etc.). */
+  logo: string
 }
 
 export const HINES_HOMES: Brand = {
   key: "hines",
   name: "Hines Homes",
-  abbr: "HH",
+  mark: "/brand/hines-mark.svg",
+  logo: "/brand/hines-logo.svg",
 }
 
 export const MJV_BUILDING_GROUP: Brand = {
   key: "mjv",
   name: "MJV Building Group",
-  abbr: "MJV",
+  mark: "/brand/mjv-mark.svg",
+  logo: "/brand/mjv-logo.svg",
 }
 
 export const PROJECT_TYPE_LABEL: Record<Enums<"project_type">, string> = {

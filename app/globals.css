@@ -51,3 +51,80 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #c7d0db; border-radius: 6px; }
 ::-webkit-scrollbar-thumb:hover { background: #aeb7c2; }
+
+/* ---------------------------------------------------------------------------
+   Pricing PDF export. The printable document lives in the Pricing page as
+   #pricing-print-root. It's hidden on screen; when the user hits "Download
+   PDF" we call window.print(), hide all app chrome, and render only this
+   clean black-on-white document (with the project's brand logo).
+   --------------------------------------------------------------------------- */
+#pricing-print-root { display: none; }
+
+@media print {
+  @page { margin: 0.6in; }
+
+  /* Hide everything, then reveal only the print document. */
+  body * { visibility: hidden; }
+  #pricing-print-root,
+  #pricing-print-root * { visibility: visible; }
+
+  #pricing-print-root {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    color: #15263b;
+    font-size: 12px;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  #pricing-print-root .pp-header {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    border-bottom: 2px solid #0d2543;
+    padding-bottom: 12px;
+    margin-bottom: 18px;
+  }
+  #pricing-print-root .pp-logo { width: 120px; height: auto; }
+  #pricing-print-root .pp-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: #0d2543;
+  }
+  #pricing-print-root .pp-project { font-size: 14px; font-weight: 600; margin-top: 2px; }
+  #pricing-print-root .pp-sub { font-size: 11px; color: #6b7888; margin-top: 1px; }
+
+  #pricing-print-root .pp-h2 {
+    font-size: 13px;
+    font-weight: 700;
+    color: #0d2543;
+    margin: 18px 0 6px;
+  }
+  #pricing-print-root .pp-empty { font-size: 11px; color: #6b7888; }
+
+  #pricing-print-root .pp-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 4px;
+  }
+  #pricing-print-root .pp-table th,
+  #pricing-print-root .pp-table td {
+    border: 1px solid #dde3eb;
+    padding: 6px 8px;
+    text-align: left;
+    vertical-align: top;
+  }
+  #pricing-print-root .pp-table th {
+    background: #f4f6f8;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6b7888;
+  }
+  #pricing-print-root .pp-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #pricing-print-root .pp-cap { text-transform: capitalize; }
+  #pricing-print-root .pp-strong td { font-weight: 700; background: #f4f6f8; }
+}

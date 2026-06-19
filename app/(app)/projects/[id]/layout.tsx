@@ -80,7 +80,9 @@ export default async function ProjectDetailLayout({
             return (
               <div className="flex items-center gap-2 mb-2">
                 <div className="h-7 w-7 rounded-md bg-brand-500 text-white flex items-center justify-center font-bold text-[11px]">
-                  {brand.abbr}
+                  {/* Static SVG mark from /public — next/image adds no benefit for SVGs. */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={brand.mark} alt={brand.name} className="h-5 w-5" />
                 </div>
                 <span className="text-sm font-semibold">{brand.name}</span>
               </div>

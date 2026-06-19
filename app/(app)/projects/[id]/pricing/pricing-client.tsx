@@ -4,7 +4,7 @@ import { useState, useTransition, useMemo } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { Plus, Trash2, Receipt, DollarSign } from "lucide-react"
+import { Plus, Trash2, Receipt, DollarSign, FileDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { EmptyState } from "@/components/ui/empty"
@@ -26,9 +26,13 @@ import {
 } from "@/app/actions/payments"
 import type { Tables, Enums } from "@/lib/db/types"
 import type { UserRole } from "@/lib/auth"
+import type { Brand } from "@/lib/brand"
 
 export type PricingData = {
   project_id: string
+  project_name: string
+  project_number: string
+  project_address: string | null
   role: UserRole
   contract_price: number | null
   approved_decisions: Pick<
@@ -36,6 +40,7 @@ export type PricingData = {
     "id" | "number" | "title" | "kind" | "cost_delta" | "status" | "approved_at"
   >[]
   payments: Tables<"project_payments">[]
+  brand: Pick<Brand, "name" | "logo">
 }
 
 export function PricingClient({ data }: { data: PricingData }) {
@@ -61,6 +66,19 @@ export function PricingClient({ data }: { data: PricingData }) {
 
   return (
     <div className="max-w-5xl mx-auto px-4 md:px-6 py-5 space-y-6">
+      {/* Page header + PDF export */}
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-lg font-semibold tracking-tight">Pricing</h1>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => window.print()}
+          title="Download a PDF of this pricing page"
+        >
+          <FileDown className="h-3.5 w-3.5" /> Download PDF
+        </Button>
+      </div>
+
       {/* Summary band */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <SummaryCell label="Contract" value={formatCurrency(totals.contract)} />
@@ -227,6 +245,144 @@ export function PricingClient({ data }: { data: PricingData }) {
           projectId={data.project_id}
           onClose={() => setEditPayment(null)}
         />
+      )}
+
+      {/* Print-only document: shown only when the browser prints / saves to PDF. */}
+      <PricingPrintDocument data={data} totals={totals} />
+    </div>
+  )
+}
+
+// A clean, self-contained document rendered only in the print stylesheet (see
+// `#pricing-print-root` rules in globals.css). It includes the project's brand
+// logo so the saved PDF presents under Hines Homes or MJV Building Group.
+function PricingPrintDocument({
+  data,
+  totals,
+}: {
+  data: PricingData
+  totals: {
+    contract: number
+    approvedDelta: number
+    newTotal: number
+    paid: number
+    balance: number
+  }
+}) {
+  return (
+    <div id="pricing-print-root">
+      <div className="pp-header">
+        {/* Static SVG logo from /public — next/image adds no benefit for SVGs. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={data.brand.logo} alt={data.brand.name} className="pp-logo" />
+        <div className="pp-meta">
+          <div className="pp-title">Pricing Summary</div>
+          <div className="pp-project">{data.project_name}</div>
+          <div className="pp-sub">
+            Project #{data.project_number}
+            {data.project_address ? ` · ${data.project_address}` : ""}
+          </div>
+          <div className="pp-sub">Generated {formatDate(todayISO())}</div>
+        </div>
+      </div>
+
+      <table className="pp-table">
+        <tbody>
+          <tr>
+            <td>Contract</td>
+            <td className="pp-num">{formatCurrency(totals.contract)}</td>
+          </tr>
+          <tr>
+            <td>Approved changes</td>
+            <td className="pp-num">
+              {(totals.approvedDelta >= 0 ? "+" : "") +
+                formatCurrency(totals.approvedDelta)}
+            </td>
+          </tr>
+          <tr className="pp-strong">
+            <td>New contract total</td>
+            <td className="pp-num">{formatCurrency(totals.newTotal)}</td>
+          </tr>
+          <tr>
+            <td>Paid</td>
+            <td className="pp-num">{formatCurrency(totals.paid)}</td>
+          </tr>
+          <tr className="pp-strong">
+            <td>Balance due</td>
+            <td className="pp-num">{formatCurrency(totals.balance)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2 className="pp-h2">Approved decisions</h2>
+      {data.approved_decisions.length === 0 ? (
+        <p className="pp-empty">No approved decisions.</p>
+      ) : (
+        <table className="pp-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Title</th>
+              <th>Approved</th>
+              <th className="pp-num">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.approved_decisions.map((d) => (
+              <tr key={d.id}>
+                <td>#{d.number}</td>
+                <td>
+                  {d.title} ({d.kind === "change_order" ? "CO" : "Sel"})
+                </td>
+                <td>{d.approved_at ? formatDate(d.approved_at) : "—"}</td>
+                <td className="pp-num">
+                  {(d.cost_delta ?? 0) >= 0 ? "+" : ""}
+                  {formatCurrency(d.cost_delta ?? 0)}
+                </td>
+              </tr>
+            ))}
+            <tr className="pp-strong">
+              <td colSpan={3}>Total approved deltas</td>
+              <td className="pp-num">
+                {(totals.approvedDelta >= 0 ? "+" : "") +
+                  formatCurrency(totals.approvedDelta)}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      )}
+
+      <h2 className="pp-h2">Payments received</h2>
+      {data.payments.length === 0 ? (
+        <p className="pp-empty">No payments recorded.</p>
+      ) : (
+        <table className="pp-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Method</th>
+              <th>Reference / notes</th>
+              <th className="pp-num">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.payments.map((p) => (
+              <tr key={p.id}>
+                <td>{formatDate(p.paid_on)}</td>
+                <td className="pp-cap">{p.method}</td>
+                <td>
+                  {p.reference || "—"}
+                  {p.notes ? ` — ${p.notes}` : ""}
+                </td>
+                <td className="pp-num">{formatCurrency(p.amount)}</td>
+              </tr>
+            ))}
+            <tr className="pp-strong">
+              <td colSpan={3}>Total paid</td>
+              <td className="pp-num">{formatCurrency(totals.paid)}</td>
+            </tr>
+          </tbody>
+        </table>
       )}
     </div>
   )
