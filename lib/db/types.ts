@@ -1148,6 +1148,98 @@ export type Database = {
           },
         ]
       }
+      rental_properties: {
+        Row: {
+          address: string
+          created_at: string
+          crm_rental_id: string | null
+          id: string
+          lease_status: string | null
+          property_owner: string | null
+          synced_at: string
+          tenant_name: string | null
+          updated_at: string
+        }
+        Insert: {
+          address: string
+          created_at?: string
+          crm_rental_id?: string | null
+          id?: string
+          lease_status?: string | null
+          property_owner?: string | null
+          synced_at?: string
+          tenant_name?: string | null
+          updated_at?: string
+        }
+        Update: {
+          address?: string
+          created_at?: string
+          crm_rental_id?: string | null
+          id?: string
+          lease_status?: string | null
+          property_owner?: string | null
+          synced_at?: string
+          tenant_name?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      rental_items: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          date_noted: string | null
+          due_date: string | null
+          id: string
+          no_action: boolean
+          position: number
+          rental_property_id: string
+          resolution: string | null
+          status: Database["public"]["Enums"]["schedule_item_status"]
+          title: string
+          updated_at: string
+          who_fixing: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          date_noted?: string | null
+          due_date?: string | null
+          id?: string
+          no_action?: boolean
+          position?: number
+          rental_property_id: string
+          resolution?: string | null
+          status?: Database["public"]["Enums"]["schedule_item_status"]
+          title: string
+          updated_at?: string
+          who_fixing?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          date_noted?: string | null
+          due_date?: string | null
+          id?: string
+          no_action?: boolean
+          position?: number
+          rental_property_id?: string
+          resolution?: string | null
+          status?: Database["public"]["Enums"]["schedule_item_status"]
+          title?: string
+          updated_at?: string
+          who_fixing?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rental_items_rental_property_id_fkey"
+            columns: ["rental_property_id"]
+            isOneToOne: false
+            referencedRelation: "rental_properties"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       schedule_assignments: {
         Row: {
           company_id: string | null
@@ -1334,6 +1426,7 @@ export type Database = {
           warranty_date_noted: string | null
           warranty_resolution: string | null
           warranty_who_fixing: string | null
+          warranty_no_action: boolean
         }
         Insert: {
           baseline_end_date?: string | null
@@ -1366,6 +1459,7 @@ export type Database = {
           warranty_date_noted?: string | null
           warranty_resolution?: string | null
           warranty_who_fixing?: string | null
+          warranty_no_action?: boolean
         }
         Update: {
           baseline_end_date?: string | null
@@ -1398,6 +1492,7 @@ export type Database = {
           warranty_date_noted?: string | null
           warranty_resolution?: string | null
           warranty_who_fixing?: string | null
+          warranty_no_action?: boolean
         }
         Relationships: [
           {

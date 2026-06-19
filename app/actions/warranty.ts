@@ -41,6 +41,7 @@ const WarrantyItemInput = z.object({
   status: z
     .enum(["not_started", "in_progress", "complete", "delayed"])
     .optional(),
+  warranty_no_action: z.boolean().optional(),
 })
 
 export async function updateWarrantyItem(
@@ -65,6 +66,8 @@ export async function updateWarrantyItem(
     update.warranty_who_fixing = fields.warranty_who_fixing
   if (fields.due_date !== undefined) update.due_date = fields.due_date
   if (fields.status !== undefined) update.status = fields.status
+  if (fields.warranty_no_action !== undefined)
+    update.warranty_no_action = fields.warranty_no_action
   if (Object.keys(update).length === 0) return
 
   const supabase = await createSupabaseServerClient()
@@ -122,29 +125,6 @@ export async function deleteWarrantyItem(
     .delete()
     .eq("id", parsed.id)
     .eq("project_id", parsed.project_id)
-  if (error) throw new Error(error.message)
-  revalidatePath("/warranty")
-}
-
-// ---------------------------------------------------------------------------
-// Per-home (project) edits
-// ---------------------------------------------------------------------------
-
-const WarrantyEndInput = z.object({
-  project_id: z.string().min(1),
-  warranty_end_date: nullableDate,
-})
-
-export async function updateProjectWarrantyEnd(
-  input: z.input<typeof WarrantyEndInput>
-) {
-  await requireStaff()
-  const parsed = WarrantyEndInput.parse(input)
-  const supabase = await createSupabaseServerClient()
-  const { error } = await supabase
-    .from("projects")
-    .update({ warranty_end_date: parsed.warranty_end_date ?? null })
-    .eq("id", parsed.project_id)
   if (error) throw new Error(error.message)
   revalidatePath("/warranty")
 }
