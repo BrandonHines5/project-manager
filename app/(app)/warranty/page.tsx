@@ -6,7 +6,6 @@ import { WarrantySheet } from "@/components/warranty/warranty-sheet"
 import type {
   WarrantyHome,
   WarrantyItem,
-  WarrantyCompany,
 } from "@/components/warranty/warranty-sheet"
 import type { Enums } from "@/lib/db/types"
 
@@ -36,47 +35,24 @@ export default async function WarrantyPage() {
     status: Enums<"schedule_item_status">
     warranty_date_noted: string | null
     warranty_resolution: string | null
+    warranty_who_fixing: string | null
     updated_at: string
   }
 
   let itemRows: ItemRow[] = []
-  const assigneeByItem = new Map<string, string>()
-  let companies: WarrantyCompany[] = []
 
   if (projectIds.length) {
-    const [{ data: items, error: itemsErr }, { data: comps, error: compErr }] =
-      await Promise.all([
-        // Every to-do on a warranty home IS a warranty issue. We load all of
-        // them (open + complete) and let the grid filter — default is open.
-        supabase
-          .from("schedule_items")
-          .select(
-            "id, project_id, title, due_date, status, warranty_date_noted, warranty_resolution, updated_at"
-          )
-          .in("project_id", projectIds)
-          .eq("kind", "todo"),
-        supabase.from("companies").select("id, name").order("name"),
-      ])
+    // Every to-do on a warranty home IS a warranty issue. We load all of
+    // them (open + complete) and let the grid filter — default is open.
+    const { data: items, error: itemsErr } = await supabase
+      .from("schedule_items")
+      .select(
+        "id, project_id, title, due_date, status, warranty_date_noted, warranty_resolution, warranty_who_fixing, updated_at"
+      )
+      .in("project_id", projectIds)
+      .eq("kind", "todo")
     if (itemsErr) throw new Error(itemsErr.message)
-    if (compErr) throw new Error(compErr.message)
     itemRows = items ?? []
-    companies = comps ?? []
-
-    const itemIds = itemRows.map((i) => i.id)
-    if (itemIds.length) {
-      // "Who is Fixing It" = the company assigned to the issue.
-      const { data: assignments, error: aErr } = await supabase
-        .from("schedule_assignments")
-        .select("schedule_item_id, company_id")
-        .in("schedule_item_id", itemIds)
-        .not("company_id", "is", null)
-      if (aErr) throw new Error(aErr.message)
-      for (const a of assignments ?? []) {
-        if (a.company_id && !assigneeByItem.has(a.schedule_item_id)) {
-          assigneeByItem.set(a.schedule_item_id, a.company_id)
-        }
-      }
-    }
   }
 
   const itemsByProject = new Map<string, WarrantyItem[]>()
@@ -90,7 +66,7 @@ export default async function WarrantyPage() {
       status: r.status,
       warranty_date_noted: r.warranty_date_noted,
       warranty_resolution: r.warranty_resolution,
-      company_id: assigneeByItem.get(r.id) ?? null,
+      warranty_who_fixing: r.warranty_who_fixing,
       updated_at: r.updated_at,
     })
     itemsByProject.set(r.project_id, arr)
@@ -139,7 +115,7 @@ export default async function WarrantyPage() {
           description="Move a project to the Warranty status from its edit dialog to track open warranty items here."
         />
       ) : (
-        <WarrantySheet homes={homes} companies={companies} />
+        <WarrantySheet homes={homes} />
       )}
     </div>
   )
