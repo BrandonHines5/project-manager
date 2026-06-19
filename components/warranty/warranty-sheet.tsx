@@ -13,13 +13,10 @@ import {
   updateWarrantyItem,
   createWarrantyItem,
   deleteWarrantyItem,
-  setWarrantyAssignee,
   updateProjectWarrantyEnd,
 } from "@/app/actions/warranty"
 
 type Status = Enums<"schedule_item_status">
-
-export type WarrantyCompany = { id: string; name: string }
 
 export type WarrantyItem = {
   id: string
@@ -29,7 +26,7 @@ export type WarrantyItem = {
   status: Status
   warranty_date_noted: string | null
   warranty_resolution: string | null
-  company_id: string | null
+  warranty_who_fixing: string | null
   updated_at: string
 }
 
@@ -70,13 +67,7 @@ function ownerName(h: WarrantyHome): string {
   return names.length ? names.join(" & ") : "—"
 }
 
-export function WarrantySheet({
-  homes,
-  companies,
-}: {
-  homes: WarrantyHome[]
-  companies: WarrantyCompany[]
-}) {
+export function WarrantySheet({ homes }: { homes: WarrantyHome[] }) {
   const [showCompleted, setShowCompleted] = useState(false)
 
   const openCount = useMemo(
@@ -111,7 +102,6 @@ export function WarrantySheet({
           <HomeCard
             key={`${home.id}-${home.warranty_end_date ?? ""}`}
             home={home}
-            companies={companies}
             showCompleted={showCompleted}
           />
         ))}
@@ -122,11 +112,9 @@ export function WarrantySheet({
 
 function HomeCard({
   home,
-  companies,
   showCompleted,
 }: {
   home: WarrantyHome
-  companies: WarrantyCompany[]
   showCompleted: boolean
 }) {
   const router = useRouter()
@@ -242,11 +230,7 @@ function HomeCard({
               </tr>
             ) : (
               visible.map((item) => (
-                <WarrantyRow
-                  key={`${item.id}-${item.updated_at}`}
-                  item={item}
-                  companies={companies}
-                />
+                <WarrantyRow key={`${item.id}-${item.updated_at}`} item={item} />
               ))
             )}
           </tbody>
@@ -268,18 +252,13 @@ function HomeCard({
   )
 }
 
-function WarrantyRow({
-  item,
-  companies,
-}: {
-  item: WarrantyItem
-  companies: WarrantyCompany[]
-}) {
+function WarrantyRow({ item }: { item: WarrantyItem }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [dateNoted, setDateNoted] = useState(item.warranty_date_noted ?? "")
   const [title, setTitle] = useState(item.title)
   const [resolution, setResolution] = useState(item.warranty_resolution ?? "")
+  const [whoFixing, setWhoFixing] = useState(item.warranty_who_fixing ?? "")
   const [dueDate, setDueDate] = useState(item.due_date ?? "")
 
   const today = todayISO()
@@ -342,21 +321,14 @@ function WarrantyRow({
     patch({ status })
   }
 
-  function handleAssignee(companyId: string) {
-    const next = companyId || null
-    if (next === item.company_id) return
-    startTransition(async () => {
-      try {
-        await setWarrantyAssignee({
-          id: item.id,
-          project_id: item.project_id,
-          company_id: next,
-        })
-        router.refresh()
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not save")
-      }
-    })
+  function saveWhoFixing() {
+    const next = whoFixing.trim()
+    const current = (item.warranty_who_fixing ?? "").trim()
+    if (next === current) {
+      if (whoFixing !== current) setWhoFixing(current) // normalize whitespace
+      return
+    }
+    patch({ warranty_who_fixing: next || null })
   }
 
   function handleDelete() {
@@ -407,19 +379,14 @@ function WarrantyRow({
         />
       </td>
       <td className="px-3 py-2">
-        <Select
-          value={item.company_id ?? ""}
+        <Input
+          value={whoFixing}
           disabled={pending}
-          onChange={(e) => handleAssignee(e.target.value)}
+          placeholder="e.g. Lloyd"
           className="h-8"
-        >
-          <option value="">Unassigned</option>
-          {companies.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </Select>
+          onChange={(e) => setWhoFixing(e.target.value)}
+          onBlur={saveWhoFixing}
+        />
       </td>
       <td className="px-3 py-2">
         <Input

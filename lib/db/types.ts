@@ -1333,6 +1333,7 @@ export type Database = {
           updated_at: string
           warranty_date_noted: string | null
           warranty_resolution: string | null
+          warranty_who_fixing: string | null
         }
         Insert: {
           baseline_end_date?: string | null
@@ -1364,6 +1365,7 @@ export type Database = {
           updated_at?: string
           warranty_date_noted?: string | null
           warranty_resolution?: string | null
+          warranty_who_fixing?: string | null
         }
         Update: {
           baseline_end_date?: string | null
@@ -1395,6 +1397,7 @@ export type Database = {
           updated_at?: string
           warranty_date_noted?: string | null
           warranty_resolution?: string | null
+          warranty_who_fixing?: string | null
         }
         Relationships: [
           {

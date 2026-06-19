@@ -31,6 +31,12 @@ const WarrantyItemInput = z.object({
     .nullable()
     .optional()
     .or(z.literal("").transform(() => null)),
+  warranty_who_fixing: z
+    .string()
+    .max(500)
+    .nullable()
+    .optional()
+    .or(z.literal("").transform(() => null)),
   due_date: nullableDate,
   status: z
     .enum(["not_started", "in_progress", "complete", "delayed"])
@@ -55,6 +61,8 @@ export async function updateWarrantyItem(
     update.warranty_date_noted = fields.warranty_date_noted
   if (fields.warranty_resolution !== undefined)
     update.warranty_resolution = fields.warranty_resolution
+  if (fields.warranty_who_fixing !== undefined)
+    update.warranty_who_fixing = fields.warranty_who_fixing
   if (fields.due_date !== undefined) update.due_date = fields.due_date
   if (fields.status !== undefined) update.status = fields.status
   if (Object.keys(update).length === 0) return
@@ -115,58 +123,6 @@ export async function deleteWarrantyItem(
     .eq("id", parsed.id)
     .eq("project_id", parsed.project_id)
   if (error) throw new Error(error.message)
-  revalidatePath("/warranty")
-}
-
-// ---------------------------------------------------------------------------
-// "Who is Fixing It" — single company assignment
-// ---------------------------------------------------------------------------
-
-// The worksheet's "Who is Fixing It" is always a vendor/sub, so we model it as a
-// single company assignment. We only ever touch *company* rows for the item —
-// any internal-profile assignments made elsewhere are left untouched.
-const SetWarrantyAssigneeInput = z.object({
-  id: z.string().min(1),
-  project_id: z.string().min(1),
-  company_id: z.string().uuid().nullable(),
-})
-
-export async function setWarrantyAssignee(
-  input: z.input<typeof SetWarrantyAssigneeInput>
-) {
-  await requireStaff()
-  const parsed = SetWarrantyAssigneeInput.parse(input)
-  const supabase = await createSupabaseServerClient()
-
-  // Verify the item belongs to the project (RLS also gates this, but scoping
-  // makes the write explicit and avoids cross-project assignment).
-  const { data: item, error: itemErr } = await supabase
-    .from("schedule_items")
-    .select("id")
-    .eq("id", parsed.id)
-    .eq("project_id", parsed.project_id)
-    .maybeSingle()
-  if (itemErr) throw new Error(itemErr.message)
-  if (!item) throw new Error("Warranty item not found")
-
-  // Replace the existing company assignment(s) for this item.
-  const { error: delErr } = await supabase
-    .from("schedule_assignments")
-    .delete()
-    .eq("schedule_item_id", parsed.id)
-    .not("company_id", "is", null)
-  if (delErr) throw new Error(delErr.message)
-
-  if (parsed.company_id) {
-    const { error: insErr } = await supabase
-      .from("schedule_assignments")
-      .insert({
-        schedule_item_id: parsed.id,
-        company_id: parsed.company_id,
-        profile_id: null,
-      })
-    if (insErr) throw new Error(insErr.message)
-  }
   revalidatePath("/warranty")
 }
 
