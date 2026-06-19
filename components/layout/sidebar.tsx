@@ -61,6 +61,7 @@ export function SidebarBrand({
       className="px-5 h-14 flex items-center gap-2 border-b border-white/10"
     >
       <div className="h-8 w-8 rounded-md bg-brand-500 text-white flex items-center justify-center font-bold text-sm">
+        {/* Static SVG mark from /public — next/image adds no benefit for SVGs. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={brand.mark} alt={brand.name} className="h-6 w-6" />
       </div>

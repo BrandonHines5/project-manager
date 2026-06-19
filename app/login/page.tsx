@@ -18,6 +18,7 @@ export default async function LoginPage() {
       <div className="w-full max-w-md">
         <div className="mb-6 text-center">
           <div className="inline-flex h-12 w-12 items-center justify-center rounded-lg bg-brand-500 text-white text-xl font-bold shadow-sm">
+            {/* Static SVG mark from /public — next/image adds no benefit for SVGs. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/brand/hines-mark.svg" alt="Hines Homes" className="h-9 w-9" />
           </div>

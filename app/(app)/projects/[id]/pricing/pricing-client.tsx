@@ -26,6 +26,7 @@ import {
 } from "@/app/actions/payments"
 import type { Tables, Enums } from "@/lib/db/types"
 import type { UserRole } from "@/lib/auth"
+import type { Brand } from "@/lib/brand"
 
 export type PricingData = {
   project_id: string
@@ -39,7 +40,7 @@ export type PricingData = {
     "id" | "number" | "title" | "kind" | "cost_delta" | "status" | "approved_at"
   >[]
   payments: Tables<"project_payments">[]
-  brand: { name: string; logo: string }
+  brand: Pick<Brand, "name" | "logo">
 }
 
 export function PricingClient({ data }: { data: PricingData }) {
@@ -271,6 +272,7 @@ function PricingPrintDocument({
   return (
     <div id="pricing-print-root">
       <div className="pp-header">
+        {/* Static SVG logo from /public — next/image adds no benefit for SVGs. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={data.brand.logo} alt={data.brand.name} className="pp-logo" />
         <div className="pp-meta">
@@ -335,7 +337,7 @@ function PricingPrintDocument({
                 <td>{d.approved_at ? formatDate(d.approved_at) : "—"}</td>
                 <td className="pp-num">
                   {(d.cost_delta ?? 0) >= 0 ? "+" : ""}
-                  {formatCurrency(d.cost_delta)}
+                  {formatCurrency(d.cost_delta ?? 0)}
                 </td>
               </tr>
             ))}

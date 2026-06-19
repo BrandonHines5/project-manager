@@ -31,6 +31,7 @@ export function Topbar({
       <div className="flex items-center gap-2 md:hidden">
         <MobileNav role={role} brand={brand} />
         <div className="h-8 w-8 rounded-md bg-brand-500 text-white flex items-center justify-center text-sm font-bold">
+          {/* Static SVG mark from /public — next/image adds no benefit for SVGs. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={brand.mark} alt={brand.name} className="h-6 w-6" />
         </div>

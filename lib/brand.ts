@@ -3,15 +3,13 @@ import type { Enums } from "@/lib/db/types"
 // Client-facing branding is driven by a project's type. Residential jobs
 // present under Hines Homes; commercial jobs present under MJV Building Group.
 // Per product decision, the color palette is shared — only the name + logo
-// differ. A Brand carries the displayed name, a short text fallback, and the
-// paths to its logo assets (a white square mark for the colored nav tiles and
-// a full-color logo for light backgrounds such as the printable Pricing PDF).
+// differ. A Brand carries the displayed name and the paths to its logo assets
+// (a white square mark for the colored nav tiles and a full-color logo for
+// light backgrounds such as the printable Pricing PDF).
 
 export type Brand = {
   key: "hines" | "mjv"
   name: string
-  /** Short text fallback for the square logo tile. */
-  abbr: string
   /** White square mark for the brand-colored nav tiles (in /public). */
   mark: string
   /** Full-color logo for light backgrounds (PDF header, etc.). */
@@ -21,7 +19,6 @@ export type Brand = {
 export const HINES_HOMES: Brand = {
   key: "hines",
   name: "Hines Homes",
-  abbr: "HH",
   mark: "/brand/hines-mark.svg",
   logo: "/brand/hines-logo.svg",
 }
@@ -29,7 +26,6 @@ export const HINES_HOMES: Brand = {
 export const MJV_BUILDING_GROUP: Brand = {
   key: "mjv",
   name: "MJV Building Group",
-  abbr: "MJV",
   mark: "/brand/mjv-mark.svg",
   logo: "/brand/mjv-logo.svg",
 }
