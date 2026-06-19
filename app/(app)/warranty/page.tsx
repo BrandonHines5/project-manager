@@ -1,5 +1,6 @@
 import { ShieldCheck } from "lucide-react"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { createCrmClient } from "@/lib/supabase/crm"
 import { requireStaff } from "@/lib/auth"
 import { EmptyState } from "@/components/ui/empty"
 import { WarrantySheet } from "@/components/warranty/warranty-sheet"
@@ -28,7 +29,7 @@ export default async function WarrantyPage() {
         .order("project_number"),
       supabase
         .from("rental_properties")
-        .select("id, address, tenant_name, property_owner")
+        .select("id, crm_rental_id, address, tenant_name, property_owner")
         .order("address"),
     ])
   if (projErr) throw new Error(projErr.message)
@@ -148,18 +149,27 @@ export default async function WarrantyPage() {
     }
   })
 
-  const rentalCards: TrackerCard[] = (properties ?? []).map((p) => ({
-    id: p.id,
-    kind: "rental",
-    number: null,
-    address: p.address,
-    subtitle: `Tenant: ${p.tenant_name || "—"}${
-      p.property_owner ? ` · Owner: ${p.property_owner}` : ""
-    }`,
-    warranty_end_date: null,
-    href: null,
-    items: rentalByProperty.get(p.id) ?? [],
-  }))
+  // Live read of property identity (address / tenant / owner) straight from the
+  // CRM database, keyed by crm_rental_id. Falls back to the local cache when the
+  // CRM connection isn't configured or a read fails — the page never breaks.
+  const liveByCrmId = await fetchLiveRentalInfo()
+
+  const rentalCards: TrackerCard[] = (properties ?? []).map((p) => {
+    const live = p.crm_rental_id ? liveByCrmId.get(p.crm_rental_id) : undefined
+    const address = live?.address ?? p.address
+    const tenant = live?.tenant ?? p.tenant_name
+    const owner = live?.owner ?? p.property_owner
+    return {
+      id: p.id,
+      kind: "rental",
+      number: null,
+      address,
+      subtitle: `Tenant: ${tenant || "—"}${owner ? ` · Owner: ${owner}` : ""}`,
+      warranty_end_date: null,
+      href: null,
+      items: rentalByProperty.get(p.id) ?? [],
+    }
+  })
 
   const cards = [...warrantyCards, ...rentalCards]
 
@@ -188,4 +198,48 @@ export default async function WarrantyPage() {
       )}
     </div>
   )
+}
+
+type LiveRental = { address: string | null; tenant: string | null; owner: string | null }
+
+// Reads rental property identity directly from the CRM database (any columns,
+// no per-column API). Returns an empty map — so the page falls back to the
+// local cache — when the CRM connection isn't configured or a read fails.
+async function fetchLiveRentalInfo(): Promise<Map<string, LiveRental>> {
+  const map = new Map<string, LiveRental>()
+  const crm = createCrmClient()
+  if (!crm) return map
+  try {
+    const [{ data: rentals }, { data: clients }] = await Promise.all([
+      crm
+        .from("rentals")
+        .select("id, property_address, property_owner, client_id, client_id_2"),
+      crm.from("clients").select("id, name"),
+    ])
+    const nameById = new Map<string, string>()
+    for (const c of (clients ?? []) as { id: string; name: string | null }[]) {
+      if (c.name) nameById.set(c.id, c.name)
+    }
+    type CrmRental = {
+      id: string
+      property_address: string | null
+      property_owner: string | null
+      client_id: string | null
+      client_id_2: string | null
+    }
+    for (const r of (rentals ?? []) as CrmRental[]) {
+      const tenant = [r.client_id, r.client_id_2]
+        .map((id) => (id ? nameById.get(id) : null))
+        .filter((n): n is string => !!n)
+        .join(" & ")
+      map.set(r.id, {
+        address: r.property_address || null,
+        tenant: tenant || null,
+        owner: r.property_owner,
+      })
+    }
+  } catch (e) {
+    console.warn("[warranty] live CRM rental read failed; using cache:", e)
+  }
+  return map
 }
