@@ -15,6 +15,11 @@ export const metadata = { title: "Warranty / Rental — Hines Homes" }
 
 type Status = Enums<"schedule_item_status">
 
+/**
+ * Warranty / Rental tracker. Lists homes in the warranty phase (local projects
+ * with status='warranty') and rental properties, each with their open issues,
+ * and offers an "Add project" action to adopt warranty homes from the CRM.
+ */
 export default async function WarrantyPage() {
   await requireStaff()
   const supabase = await createSupabaseServerClient()
@@ -206,9 +211,11 @@ export default async function WarrantyPage() {
 
 type LiveRental = { address: string | null; tenant: string | null; owner: string | null }
 
-// Reads rental property identity directly from the CRM database (any columns,
-// no per-column API). Returns an empty map — so the page falls back to the
-// local cache — when the CRM connection isn't configured or a read fails.
+/**
+ * Reads rental property identity directly from the CRM database (any columns,
+ * no per-column API). Returns an empty map — so the page falls back to the
+ * local cache — when the CRM connection isn't configured or a read fails.
+ */
 async function fetchLiveRentalInfo(): Promise<Map<string, LiveRental>> {
   const map = new Map<string, LiveRental>()
   const crm = createCrmClient()

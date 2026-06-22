@@ -6,6 +6,7 @@ import { toast } from "sonner"
 import { Building2, Search, Loader2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import {
   Dialog,
   DialogContent,
@@ -113,13 +114,13 @@ export function AddWarrantyProjectButton() {
           </DialogHeader>
           <DialogBody>
             <div className="relative mb-3">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
-              <input
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted z-10" />
+              <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search by address, owner, or job #"
                 disabled={loading || !!loadError}
-                className="w-full h-9 pl-8 pr-2 text-sm rounded-md border border-border bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 disabled:opacity-50"
+                className="pl-8"
               />
             </div>
 

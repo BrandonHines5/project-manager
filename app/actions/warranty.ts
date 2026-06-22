@@ -46,6 +46,11 @@ const WarrantyItemInput = z.object({
   warranty_no_action: z.boolean().optional(),
 })
 
+/**
+ * Saves an inline edit from the warranty grid. Applies only the warranty
+ * columns it's handed, so editing one cell never disturbs the to-do's
+ * assignments / checklist / predecessors. No-ops when nothing changed.
+ */
 export async function updateWarrantyItem(
   input: z.input<typeof WarrantyItemInput>
 ) {
@@ -89,6 +94,10 @@ const CreateWarrantyItemInput = z.object({
   title: z.string().trim().max(500).optional(),
 })
 
+/**
+ * Adds a blank warranty issue (a to-do) to a home and returns its id, so the
+ * grid can render an empty editable row immediately after.
+ */
 export async function createWarrantyItem(
   input: z.input<typeof CreateWarrantyItemInput>
 ) {
@@ -116,6 +125,7 @@ const DeleteWarrantyItemInput = z.object({
   project_id: z.string().min(1),
 })
 
+/** Permanently removes a warranty issue row from a home. */
 export async function deleteWarrantyItem(
   input: z.input<typeof DeleteWarrantyItemInput>
 ) {
@@ -164,6 +174,7 @@ type CrmProjectRow = {
   warranty_end_date: string | null
 }
 
+/** Joins a CRM street address and city into one display line (e.g. "123 Main St, Springfield"), or null when both are blank. */
 function crmAddress(street: string | null, city: string | null): string | null {
   return (
     [street, city]
@@ -173,6 +184,7 @@ function crmAddress(street: string | null, city: string | null): string | null {
   )
 }
 
+/** Joins the CRM's two owner-name slots into one "A & B" display string, or null when both are blank. */
 function crmOwner(name: string | null, name2: string | null): string | null {
   return (
     [name, name2]
@@ -182,10 +194,13 @@ function crmOwner(name: string | null, name2: string | null): string | null {
   )
 }
 
-// Lists CRM homes that have a warranty period (warranty_end_date set) and are
-// NOT already in this app, so staff can adopt them for warranty tracking.
-// Returns a typed result rather than throwing — Next masks thrown messages in
-// production, and "CRM not configured" needs to reach the user verbatim.
+/**
+ * Lists CRM homes that have a warranty period (warranty_end_date set) and are
+ * NOT already in this app, so staff can adopt them for warranty tracking.
+ * Dedupes against local projects on project_number (the shared key). Returns a
+ * typed result rather than throwing — Next masks thrown messages in
+ * production, and "CRM not configured" needs to reach the user verbatim.
+ */
 export async function listCrmWarrantyProjects(): Promise<
   { ok: true; projects: CrmWarrantyProject[] } | { ok: false; error: string }
 > {
@@ -243,10 +258,13 @@ type CrmProjectFullRow = CrmProjectRow & {
 
 const AddCrmProjectInput = z.object({ crm_id: z.string().min(1) })
 
-// Adopts one CRM project as a local warranty project. Copies the home's
-// identity (number, address, owner, warranty end date) and stamps
-// status='warranty' so it shows up on this page. Best-effort dashboard webhook
-// keeps the CRM's pm_attached_at in sync, mirroring createProject.
+/**
+ * Adopts one CRM project as a local warranty project. Copies the home's
+ * identity (number, address, owner, warranty end date) and stamps
+ * status='warranty' so it shows up on this page. Maps a duplicate
+ * project_number to a friendly message and fires a best-effort dashboard
+ * webhook to keep the CRM's pm_attached_at in sync, mirroring createProject.
+ */
 export async function addWarrantyProjectFromCrm(
   input: z.input<typeof AddCrmProjectInput>
 ): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
