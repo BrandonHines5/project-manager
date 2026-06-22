@@ -25,7 +25,7 @@ export type SidebarProject = {
   status: Enums<"project_status">
 }
 
-type StatusFilter = "open" | "active" | "closed" | "all"
+type StatusFilter = "open" | "active" | "warranty" | "closed" | "all"
 type Mode = "jobs" | "templates"
 
 // Templates are projects whose project_number starts with "TEMPLATE" — staff
@@ -149,6 +149,7 @@ export function ProjectListSidebar({
       if (mode === "jobs") {
         if (status === "open" && !OPEN_STATUSES.includes(p.status)) return false
         if (status === "active" && p.status !== "active") return false
+        if (status === "warranty" && p.status !== "warranty") return false
         if (status === "closed" && OPEN_STATUSES.includes(p.status)) return false
       }
       if (!q) return true
@@ -201,9 +202,11 @@ export function ProjectListSidebar({
       ? "Open"
       : status === "active"
         ? "Active"
-        : status === "closed"
-          ? "Closed"
-          : "All"
+        : status === "warranty"
+          ? "Warranty"
+          : status === "closed"
+            ? "Closed"
+            : "All"
 
   return (
     <aside className="hidden lg:flex lg:flex-col w-[300px] shrink-0 border-r border-border bg-surface">
@@ -275,7 +278,7 @@ export function ProjectListSidebar({
           </button>
           {statusOpen && (
             <div className="absolute right-0 top-9 z-20 w-36 rounded-md border border-border bg-surface shadow-md py-1 text-sm">
-              {(["open", "active", "closed", "all"] as StatusFilter[]).map(
+              {(["open", "active", "warranty", "closed", "all"] as StatusFilter[]).map(
                 (s) => (
                   <button
                     key={s}

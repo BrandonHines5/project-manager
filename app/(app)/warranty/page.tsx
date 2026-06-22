@@ -4,6 +4,7 @@ import { createCrmClient } from "@/lib/supabase/crm"
 import { requireStaff } from "@/lib/auth"
 import { EmptyState } from "@/components/ui/empty"
 import { WarrantySheet } from "@/components/warranty/warranty-sheet"
+import { AddWarrantyProjectButton } from "@/components/warranty/add-warranty-project"
 import type {
   TrackerCard,
   TrackerItem,
@@ -14,6 +15,11 @@ export const metadata = { title: "Warranty / Rental — Hines Homes" }
 
 type Status = Enums<"schedule_item_status">
 
+/**
+ * Warranty / Rental tracker. Lists homes in the warranty phase (local projects
+ * with status='warranty') and rental properties, each with their open issues,
+ * and offers an "Add project" action to adopt warranty homes from the CRM.
+ */
 export default async function WarrantyPage() {
   await requireStaff()
   const supabase = await createSupabaseServerClient()
@@ -175,16 +181,19 @@ export default async function WarrantyPage() {
 
   return (
     <div className="px-4 md:px-6 py-5">
-      <div className="mb-5">
-        <h1 className="text-lg font-semibold flex items-center gap-2">
-          <ShieldCheck className="h-5 w-5 text-brand-600" />
-          Warranty / Rental
-        </h1>
-        <p className="text-sm text-muted mt-0.5">
-          Track open warranty items for homes in the warranty phase and open
-          issues at rental properties. Edit any cell inline — changes save
-          automatically.
-        </p>
+      <div className="mb-5 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-lg font-semibold flex items-center gap-2">
+            <ShieldCheck className="h-5 w-5 text-brand-600" />
+            Warranty / Rental
+          </h1>
+          <p className="text-sm text-muted mt-0.5">
+            Track open warranty items for homes in the warranty phase and open
+            issues at rental properties. Edit any cell inline — changes save
+            automatically.
+          </p>
+        </div>
+        <AddWarrantyProjectButton />
       </div>
 
       {cards.length === 0 ? (
@@ -202,9 +211,11 @@ export default async function WarrantyPage() {
 
 type LiveRental = { address: string | null; tenant: string | null; owner: string | null }
 
-// Reads rental property identity directly from the CRM database (any columns,
-// no per-column API). Returns an empty map — so the page falls back to the
-// local cache — when the CRM connection isn't configured or a read fails.
+/**
+ * Reads rental property identity directly from the CRM database (any columns,
+ * no per-column API). Returns an empty map — so the page falls back to the
+ * local cache — when the CRM connection isn't configured or a read fails.
+ */
 async function fetchLiveRentalInfo(): Promise<Map<string, LiveRental>> {
   const map = new Map<string, LiveRental>()
   const crm = createCrmClient()
