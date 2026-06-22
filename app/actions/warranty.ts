@@ -3,7 +3,9 @@
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { createCrmClient } from "@/lib/supabase/crm"
 import { requireStaff } from "@/lib/auth"
+import { sendDashboardWebhook } from "@/lib/dashboard"
 import type { TablesUpdate } from "@/lib/db/types"
 
 // Empty-string -> null so a cleared date input clears the column.
@@ -127,4 +129,196 @@ export async function deleteWarrantyItem(
     .eq("project_id", parsed.project_id)
   if (error) throw new Error(error.message)
   revalidatePath("/warranty")
+}
+
+// ---------------------------------------------------------------------------
+// Adopt a project from the CRM for warranty tracking
+// ---------------------------------------------------------------------------
+//
+// Older homes were managed entirely outside this app (in the CRM), but once
+// they enter their warranty period the team needs to track the punch list
+// here. These two actions let staff pull such a home straight from the CRM
+// `projects` table and create a local project (status='warranty') for it.
+
+// One CRM project the user can adopt. Identity comes from the CRM; we only
+// surface what the picker needs to render a row.
+export type CrmWarrantyProject = {
+  crm_id: string
+  project_number: string
+  address: string
+  owner: string | null
+  warranty_end_date: string | null
+  status: string | null
+}
+
+// Raw shape we read from the CRM `projects` table (it's an untyped client, so
+// we narrow it ourselves). Mirrors lib/supabase/crm.ts usage in rentals.ts.
+type CrmProjectRow = {
+  id: string
+  project_number: string | null
+  street_address: string | null
+  city: string | null
+  client_name: string | null
+  client_name_2: string | null
+  project_status: string | null
+  warranty_end_date: string | null
+}
+
+function crmAddress(street: string | null, city: string | null): string | null {
+  return (
+    [street, city]
+      .map((v) => v?.trim())
+      .filter((v): v is string => !!v)
+      .join(", ") || null
+  )
+}
+
+function crmOwner(name: string | null, name2: string | null): string | null {
+  return (
+    [name, name2]
+      .map((v) => v?.trim())
+      .filter((v): v is string => !!v)
+      .join(" & ") || null
+  )
+}
+
+// Lists CRM homes that have a warranty period (warranty_end_date set) and are
+// NOT already in this app, so staff can adopt them for warranty tracking.
+// Returns a typed result rather than throwing — Next masks thrown messages in
+// production, and "CRM not configured" needs to reach the user verbatim.
+export async function listCrmWarrantyProjects(): Promise<
+  { ok: true; projects: CrmWarrantyProject[] } | { ok: false; error: string }
+> {
+  await requireStaff()
+  const crm = createCrmClient()
+  if (!crm) {
+    return {
+      ok: false,
+      error:
+        "CRM connection not configured. Set CRM_SUPABASE_URL and CRM_SUPABASE_SERVICE_ROLE_KEY in Vercel.",
+    }
+  }
+
+  const { data: crmProjects, error: crmErr } = await crm
+    .from("projects")
+    .select(
+      "id, project_number, street_address, city, client_name, client_name_2, project_status, warranty_end_date"
+    )
+    .not("warranty_end_date", "is", null)
+    .order("warranty_end_date", { ascending: false })
+  if (crmErr) return { ok: false, error: crmErr.message }
+
+  // Exclude anything already tracked here. project_number is the shared key
+  // between the two systems, so dedupe on it.
+  const supabase = await createSupabaseServerClient()
+  const { data: existing, error: exErr } = await supabase
+    .from("projects")
+    .select("project_number")
+  if (exErr) return { ok: false, error: exErr.message }
+  const taken = new Set((existing ?? []).map((p) => p.project_number))
+
+  const projects = ((crmProjects ?? []) as CrmProjectRow[])
+    .filter((p) => p.project_number && !taken.has(p.project_number))
+    .map((p) => ({
+      crm_id: p.id,
+      project_number: p.project_number as string,
+      address: crmAddress(p.street_address, p.city) ?? (p.project_number as string),
+      owner: crmOwner(p.client_name, p.client_name_2),
+      warranty_end_date: p.warranty_end_date,
+      status: p.project_status,
+    }))
+  return { ok: true, projects }
+}
+
+// Full read for the adopt step — a few more identity columns than the list.
+type CrmProjectFullRow = CrmProjectRow & {
+  client_email: string | null
+  client_phone: string | null
+  client_email_2: string | null
+  client_phone_2: string | null
+  start_date: string | null
+  end_date: string | null
+  notes: string | null
+}
+
+const AddCrmProjectInput = z.object({ crm_id: z.string().min(1) })
+
+// Adopts one CRM project as a local warranty project. Copies the home's
+// identity (number, address, owner, warranty end date) and stamps
+// status='warranty' so it shows up on this page. Best-effort dashboard webhook
+// keeps the CRM's pm_attached_at in sync, mirroring createProject.
+export async function addWarrantyProjectFromCrm(
+  input: z.input<typeof AddCrmProjectInput>
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  const profile = await requireStaff()
+  const parsed = AddCrmProjectInput.safeParse(input)
+  if (!parsed.success) return { ok: false, error: "Invalid project." }
+
+  const crm = createCrmClient()
+  if (!crm) {
+    return {
+      ok: false,
+      error:
+        "CRM connection not configured. Set CRM_SUPABASE_URL and CRM_SUPABASE_SERVICE_ROLE_KEY in Vercel.",
+    }
+  }
+
+  const { data: row, error: crmErr } = await crm
+    .from("projects")
+    .select(
+      "id, project_number, street_address, city, client_name, client_email, client_phone, client_name_2, client_email_2, client_phone_2, project_status, warranty_end_date, start_date, end_date, notes"
+    )
+    .eq("id", parsed.data.crm_id)
+    .maybeSingle()
+  if (crmErr) return { ok: false, error: crmErr.message }
+  if (!row) return { ok: false, error: "That CRM project could not be found." }
+  const p = row as CrmProjectFullRow
+  if (!p.project_number) {
+    return { ok: false, error: "That CRM project has no project number." }
+  }
+
+  // name is NOT NULL locally; the CRM has no name column, so fall back through
+  // the most human-friendly identifiers the home actually has.
+  const name =
+    p.street_address?.trim() || p.client_name?.trim() || p.project_number
+
+  const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase
+    .from("projects")
+    .insert({
+      project_number: p.project_number,
+      name,
+      address: crmAddress(p.street_address, p.city),
+      status: "warranty",
+      client_name: p.client_name,
+      client_email: p.client_email,
+      client_phone: p.client_phone,
+      client_name_2: p.client_name_2,
+      client_email_2: p.client_email_2,
+      client_phone_2: p.client_phone_2,
+      warranty_end_date: p.warranty_end_date,
+      start_date: p.start_date,
+      target_completion_date: p.end_date,
+      notes: p.notes,
+      created_by: profile.id,
+    })
+    .select("*")
+    .single()
+  if (error) {
+    return {
+      ok: false,
+      error:
+        error.code === "23505"
+          ? `Project "${p.project_number}" is already in this app.`
+          : error.message,
+    }
+  }
+
+  // Best-effort: tell the dashboard a new project exists so it can mark the
+  // CRM row pm_attached. Never blocks the adoption.
+  await sendDashboardWebhook("project.created", data)
+
+  revalidatePath("/warranty")
+  revalidatePath("/projects")
+  return { ok: true, id: data.id as string }
 }

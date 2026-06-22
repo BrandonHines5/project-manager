@@ -4,6 +4,7 @@ import { createCrmClient } from "@/lib/supabase/crm"
 import { requireStaff } from "@/lib/auth"
 import { EmptyState } from "@/components/ui/empty"
 import { WarrantySheet } from "@/components/warranty/warranty-sheet"
+import { AddWarrantyProjectButton } from "@/components/warranty/add-warranty-project"
 import type {
   TrackerCard,
   TrackerItem,
@@ -175,16 +176,19 @@ export default async function WarrantyPage() {
 
   return (
     <div className="px-4 md:px-6 py-5">
-      <div className="mb-5">
-        <h1 className="text-lg font-semibold flex items-center gap-2">
-          <ShieldCheck className="h-5 w-5 text-brand-600" />
-          Warranty / Rental
-        </h1>
-        <p className="text-sm text-muted mt-0.5">
-          Track open warranty items for homes in the warranty phase and open
-          issues at rental properties. Edit any cell inline — changes save
-          automatically.
-        </p>
+      <div className="mb-5 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-lg font-semibold flex items-center gap-2">
+            <ShieldCheck className="h-5 w-5 text-brand-600" />
+            Warranty / Rental
+          </h1>
+          <p className="text-sm text-muted mt-0.5">
+            Track open warranty items for homes in the warranty phase and open
+            issues at rental properties. Edit any cell inline — changes save
+            automatically.
+          </p>
+        </div>
+        <AddWarrantyProjectButton />
       </div>
 
       {cards.length === 0 ? (
