@@ -10,6 +10,9 @@ export async function sendEmail(opts: {
   subject: string
   text: string
   html?: string
+  // Optional file attachments. `content` is base64-encoded bytes — Resend's
+  // expected shape. Existing callers that omit this are unaffected.
+  attachments?: { filename: string; content: string }[]
 }): Promise<{ sent: boolean; reason?: string }> {
   const key = process.env.RESEND_API_KEY
   const from = process.env.RESEND_FROM_EMAIL
@@ -34,6 +37,9 @@ export async function sendEmail(opts: {
       subject: opts.subject,
       text: opts.text,
       html: opts.html,
+      ...(opts.attachments && opts.attachments.length > 0
+        ? { attachments: opts.attachments }
+        : {}),
     })
     if (error) {
       console.error("Resend send error:", error)

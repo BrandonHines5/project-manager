@@ -11,6 +11,7 @@ import {
   Hammer,
   MessageSquarePlus,
   ShieldCheck,
+  Droplets,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { UserRole } from "@/lib/auth"
@@ -33,6 +34,12 @@ const ITEMS: Item[] = [
     href: "/warranty",
     label: "Warranty / Rental",
     icon: ShieldCheck,
+    roles: ["staff"],
+  },
+  {
+    href: "/utilities",
+    label: "Initiate Utilities",
+    icon: Droplets,
     roles: ["staff"],
   },
   { href: "/reports", label: "Reports", icon: BarChart3, roles: ["staff"] },
