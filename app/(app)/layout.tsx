@@ -32,7 +32,7 @@ export default async function AppLayout({
       .is("read_at", null),
     supabase
       .from("projects")
-      .select("id, name, project_number, address, status, project_type")
+      .select("id, name, project_number, address, status, project_type, labels")
       .order("project_number", { ascending: false }),
   ])
 
