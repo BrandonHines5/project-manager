@@ -179,8 +179,12 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
   const [form, setForm] = useState<FormState>(emptyForm())
   const [generated, setGenerated] = useState<{ filename: string; url: string }[]>([])
 
-  const set = <K extends keyof FormState>(k: K, v: FormState[K]) =>
+  const set = <K extends keyof FormState>(k: K, v: FormState[K]) => {
     setForm((f) => ({ ...f, [k]: v }))
+    // Editing answers invalidates any generated PDFs — clear the previews so a
+    // stale set can't be sent; the user must regenerate before "Send to CAW".
+    setGenerated([])
+  }
 
   const sqft = parseInt(form.squareFootage || "0", 10) || 0
   const meterWarning = sqft > METER_PROMPT_SQFT && form.meterSize === "5/8"

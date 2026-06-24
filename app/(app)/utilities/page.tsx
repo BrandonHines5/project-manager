@@ -37,9 +37,14 @@ export default async function UtilitiesPage() {
   const allPaths = (requests ?? []).flatMap((r) => r.generated_file_paths ?? [])
   const signed: Record<string, string> = {}
   if (allPaths.length) {
-    const { data } = await supabase.storage
+    const { data, error: signErr } = await supabase.storage
       .from("project-files")
       .createSignedUrls(allPaths, 3600)
+    // Don't crash the whole page on a transient signing failure — log it so a
+    // storage/RLS misconfig is visible, and render with whatever links we got.
+    if (signErr) {
+      console.warn("[utilities] signed URL generation failed:", signErr.message)
+    }
     for (const d of data ?? []) {
       if (d.path && d.signedUrl) signed[d.path] = d.signedUrl
     }

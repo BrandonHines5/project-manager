@@ -113,12 +113,21 @@ export async function saveUtilityDraft(input: SaveUtilityInputT): Promise<{ id: 
   if (!project) throw new Error("Project not found or not visible.")
 
   if (id) {
-    const { error } = await supabase
+    // Editing the answers invalidates any previously generated PDFs, so clear
+    // generated_file_paths — otherwise a later send could attach stale forms.
+    // Scope to the same project + draft status, and confirm a row was updated.
+    const { data: updated, error } = await supabase
       .from("utility_requests")
-      .update({ form_data: form })
+      .update({ form_data: form, generated_file_paths: [] })
       .eq("id", id)
+      .eq("project_id", project_id)
       .eq("status", "draft") // only drafts are editable
+      .select("id")
+      .maybeSingle()
     if (error) throw new Error(error.message)
+    if (!updated) {
+      throw new Error("Draft not found, not editable, or project mismatch.")
+    }
     revalidatePath("/utilities")
     return { id }
   }
@@ -167,6 +176,11 @@ export async function generateCawPdfs({
     .maybeSingle()
   if (error) throw new Error(error.message)
   if (!req) throw new Error("Request not found or not visible.")
+  // Only drafts may (re)generate — never replace the official attachments of a
+  // request that has already been submitted/paid.
+  if (req.status !== "draft") {
+    throw new Error("Only draft requests can generate PDFs.")
+  }
 
   const form = CawForm.safeParse(req.form_data)
   if (!form.success) throw new Error(firstIssue(form.error))
@@ -174,10 +188,7 @@ export async function generateCawPdfs({
   const filled = await fillCawForms(toRenderData(form.data))
 
   const store = await storageClient()
-  // Remove the prior set so stale PDFs don't linger.
-  if (req.generated_file_paths?.length) {
-    await store.storage.from(BUCKET).remove(req.generated_file_paths)
-  }
+  const priorPaths = req.generated_file_paths ?? []
 
   const ts = Date.now()
   const out: { key: string; filename: string; path: string; url: string }[] = []
@@ -200,6 +211,16 @@ export async function generateCawPdfs({
     .update({ generated_file_paths: paths })
     .eq("id", requestId)
   if (updErr) throw new Error(updErr.message)
+
+  // Only now that the new set is committed do we delete the old objects, so a
+  // mid-generation failure leaves the prior PDFs (and their DB paths) intact.
+  if (priorPaths.length) {
+    const stale = priorPaths.filter((p) => !paths.includes(p))
+    if (stale.length) {
+      const { error: rmErr } = await store.storage.from(BUCKET).remove(stale)
+      if (rmErr) console.warn("[generateCawPdfs] could not remove old PDFs:", rmErr.message)
+    }
+  }
 
   const urls = await getUtilitySignedUrls(paths)
   for (const o of out) o.url = urls[o.path] ?? ""
@@ -241,60 +262,82 @@ export async function sendCawForms({
   const form = CawForm.safeParse(req.form_data)
   if (!form.success) throw new Error(firstIssue(form.error))
 
-  // Download the stored PDFs and base64-encode for Resend.
-  const store = await storageClient()
-  const attachments: { filename: string; content: string }[] = []
-  let total = 0
-  for (const path of req.generated_file_paths) {
-    const { data: blob, error: dlErr } = await store.storage.from(BUCKET).download(path)
-    if (dlErr || !blob) throw new Error(`Could not read ${path}: ${dlErr?.message ?? "missing"}`)
-    const buf = Buffer.from(await blob.arrayBuffer())
-    total += buf.byteLength
-    attachments.push({
-      filename: path.split("/").pop() ?? "caw-form.pdf",
-      content: buf.toString("base64"),
+  // Atomically CLAIM the draft (draft -> submitted) BEFORE the non-idempotent
+  // email. Two concurrent senders both read "draft"; only the one whose
+  // conditional update actually flips a row may proceed — so CAW is emailed once.
+  const submittedAt = new Date().toISOString()
+  const { data: claimed, error: claimErr } = await supabase
+    .from("utility_requests")
+    .update({ status: "submitted", submitted_at: submittedAt })
+    .eq("id", requestId)
+    .eq("status", "draft")
+    .select("id")
+    .maybeSingle()
+  if (claimErr) throw new Error(claimErr.message)
+  if (!claimed) {
+    return { sent: false, reason: "This request is already being submitted." }
+  }
+
+  // After claiming, any failure must roll the status back to draft for a retry.
+  let result: { sent: boolean; reason?: string }
+  try {
+    // Download the stored PDFs and base64-encode for Resend.
+    const store = await storageClient()
+    const attachments: { filename: string; content: string }[] = []
+    let total = 0
+    for (const path of req.generated_file_paths) {
+      const { data: blob, error: dlErr } = await store.storage.from(BUCKET).download(path)
+      if (dlErr || !blob) throw new Error(`Could not read ${path}: ${dlErr?.message ?? "missing"}`)
+      const buf = Buffer.from(await blob.arrayBuffer())
+      total += buf.byteLength
+      attachments.push({
+        filename: path.split("/").pop() ?? "caw-form.pdf",
+        content: buf.toString("base64"),
+      })
+    }
+    if (total > MAX_ATTACHMENTS_BYTES) {
+      throw new Error("Generated forms are too large to email. Contact support.")
+    }
+
+    const addr = form.data.serviceAddress
+    const lines = [
+      "Please find attached the New Service application for a new construction water service request.",
+      "",
+      `Service address: ${addr}${form.data.city ? `, ${form.data.city}` : ""}${form.data.zip ? ` ${form.data.zip}` : ""}`,
+      `Applicant: ${CAW_BUILDER.companyName}`,
+      form.data.includeStandpipe
+        ? "A temporary construction standpipe is requested (see attached agreement)."
+        : "",
+      "",
+      "Attached:",
+      "  - Request For Water Service Application",
+      "  - Water Service Contract",
+      form.data.includeStandpipe ? "  - Agreement for Temporary Construction Standpipe" : "",
+      "",
+      "Thank you,",
+      CAW_BUILDER.companyName,
+    ].filter((l) => l !== "")
+
+    const { sendEmail } = await import("@/lib/email")
+    result = await sendEmail({
+      to: CAW_SUBMISSION_EMAIL,
+      subject: `New Water Service Request - ${addr}`,
+      text: lines.join("\n"),
+      attachments,
     })
+  } catch (e) {
+    result = { sent: false, reason: e instanceof Error ? e.message : "Send failed." }
   }
-  if (total > MAX_ATTACHMENTS_BYTES) {
-    return { sent: false, reason: "Generated forms are too large to email. Contact support." }
-  }
 
-  const addr = form.data.serviceAddress
-  const lines = [
-    "Please find attached the New Service application for a new construction water service request.",
-    "",
-    `Service address: ${addr}${form.data.city ? `, ${form.data.city}` : ""}${form.data.zip ? ` ${form.data.zip}` : ""}`,
-    `Applicant: ${CAW_BUILDER.companyName}`,
-    form.data.includeStandpipe
-      ? "A temporary construction standpipe is requested (see attached agreement)."
-      : "",
-    "",
-    "Attached:",
-    "  • Request For Water Service Application",
-    "  • Water Service Contract",
-    form.data.includeStandpipe ? "  • Agreement for Temporary Construction Standpipe" : "",
-    "",
-    `Thank you,`,
-    CAW_BUILDER.companyName,
-  ].filter((l) => l !== "")
-
-  const { sendEmail } = await import("@/lib/email")
-  const result = await sendEmail({
-    to: CAW_SUBMISSION_EMAIL,
-    subject: `New Water Service Request — ${addr}`,
-    text: lines.join("\n"),
-    attachments,
-  })
-
-  if (result.sent) {
-    const { error: updErr } = await supabase
+  if (!result.sent) {
+    // Roll the claim back so the request returns to draft and can be retried.
+    await supabase
       .from("utility_requests")
-      .update({ status: "submitted", submitted_at: new Date().toISOString() })
+      .update({ status: "draft", submitted_at: null })
       .eq("id", requestId)
-      .eq("status", "draft")
-    if (updErr) throw new Error(updErr.message)
-    revalidatePath("/utilities")
+      .eq("status", "submitted")
   }
+  revalidatePath("/utilities")
   return result
 }
 

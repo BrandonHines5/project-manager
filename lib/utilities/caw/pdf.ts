@@ -91,9 +91,28 @@ function loadTemplate(name: string): Buffer {
   throw new Error(`CAW template "${name}" not found. Looked in: ${tried.join(", ")}`)
 }
 
+/**
+ * Coerce text into characters the standard (WinAnsi) font can encode.
+ * pdf-lib's drawText THROWS on any glyph outside WinAnsi/CP1252, and the
+ * service address / remarks / subdivision are free-typed — a pasted em dash,
+ * curly quote, or non-Latin character would otherwise crash form generation.
+ * We map common typographics to ASCII and drop anything still unencodable.
+ */
+function sanitizeWinAnsi(s: string): string {
+  return s
+    .replace(/[‘’‚′‵]/g, "'")
+    .replace(/[“”„″]/g, '"')
+    .replace(/[–—−]/g, "-")
+    .replace(/•/g, "-")
+    .replace(/…/g, "...")
+    .replace(/[   ]/g, " ")
+    // Keep printable ASCII + Latin-1 letters; strip the rest (emoji, CJK, C1).
+    .replace(/[^\x20-\x7E¡-ÿ]/g, "")
+}
+
 /** Draw text, shrinking the font (down to MIN_SIZE) so it fits maxWidth. */
 function drawText(page: PDFPage, font: PDFFont, value: string, pos: Pt) {
-  const text = (value ?? "").trim()
+  const text = sanitizeWinAnsi((value ?? "").trim())
   if (!text) return
   let size = pos.size ?? DEFAULT_SIZE
   if (pos.maxWidth) {

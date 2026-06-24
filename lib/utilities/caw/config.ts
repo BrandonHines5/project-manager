@@ -35,14 +35,22 @@ export const CAW_PAYMENT_URL =
   process.env.CAW_PAYMENT_URL ?? "PLACEHOLDER_CAW_PAYMENT_URL"
 
 /**
- * Returns true once the operator-supplied values have been filled in (i.e. no
- * PLACEHOLDER_ left). The UI uses this to warn staff before they try to send.
+ * Whether enough is configured to EMAIL a valid application to CAW: the full
+ * builder identity plus the intake address. Deliberately NOT gated on the TIN
+ * (CAW doesn't require it for a business account, and it's supplied via env
+ * when/if needed) or on CAW_PAYMENT_URL (only used later, at the
+ * awaiting_payment step — not at send time). The UI uses this to enable "Send".
  */
 export function isCawConfigured(): boolean {
-  return (
-    !CAW_BUILDER.companyName.startsWith("PLACEHOLDER_") &&
-    !CAW_SUBMISSION_EMAIL.startsWith("PLACEHOLDER_")
-  )
+  const b = CAW_BUILDER
+  const builderReady = [
+    b.companyName,
+    b.businessPhone,
+    b.email,
+    b.mailingAddress,
+    b.preparerName,
+  ].every((v) => v.length > 0 && !v.startsWith("PLACEHOLDER_"))
+  return builderReady && !CAW_SUBMISSION_EMAIL.startsWith("PLACEHOLDER_")
 }
 
 // ---- Option enumerations (mirror the CAW PDF checkboxes/selects) ----------
