@@ -7,6 +7,7 @@ import { Resend } from "resend"
  */
 export async function sendEmail(opts: {
   to: string | string[]
+  cc?: string | string[]
   subject: string
   text: string
   html?: string
@@ -34,6 +35,7 @@ export async function sendEmail(opts: {
     const { error } = await resend.emails.send({
       from,
       to: opts.to,
+      ...(opts.cc ? { cc: opts.cc } : {}),
       subject: opts.subject,
       text: opts.text,
       html: opts.html,
