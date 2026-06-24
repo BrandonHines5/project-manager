@@ -1641,6 +1641,10 @@ export type Database = {
         Args: { p_label: string; p_schedule_item_id: string }
         Returns: string
       }
+      set_project_label: {
+        Args: { p_add: boolean; p_ids: string[]; p_label: string }
+        Returns: number
+      }
       client_decide_decision: {
         Args: { p_action: string; p_choice_id?: string; p_decision_id: string }
         Returns: Json

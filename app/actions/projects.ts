@@ -579,30 +579,21 @@ export async function setProjectLabel(
 
   const { ids, label, value } = parsed.data
   const supabase = await createSupabaseServerClient()
-  const { data: rows, error } = await supabase
-    .from("projects")
-    .select("id, labels")
-    .in("id", ids)
+  // Apply the add/remove in one atomic statement (array_append / array_remove
+  // inside a single UPDATE) via the set_project_label RPC. This avoids the
+  // read-modify-write race of fetching + rewriting each row's array, and a
+  // large selection becomes one round trip instead of one write per project.
+  // RLS still gates which rows actually change; the RPC returns the count of
+  // rows whose labels were modified (skips no-ops, never duplicates a label).
+  const { data, error } = await supabase.rpc("set_project_label", {
+    p_ids: ids,
+    p_label: label,
+    p_add: value,
+  })
   if (error) return { ok: false, error: error.message }
 
-  let updated = 0
-  for (const row of rows ?? []) {
-    const current = row.labels ?? []
-    const has = current.includes(label)
-    if (value === has) continue // already in the desired state
-    const next = value
-      ? [...current, label]
-      : current.filter((l) => l !== label)
-    const { error: upErr } = await supabase
-      .from("projects")
-      .update({ labels: next })
-      .eq("id", row.id)
-    if (upErr) return { ok: false, error: upErr.message }
-    updated++
-  }
-
   revalidatePath("/projects")
-  return { ok: true, updated }
+  return { ok: true, updated: data ?? 0 }
 }
 
 // ---------------------------------------------------------------------------
