@@ -1240,6 +1240,66 @@ export type Database = {
           },
         ]
       }
+      utility_requests: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          form_data: Json
+          generated_file_paths: string[]
+          id: string
+          paid_at: string | null
+          payment_url: string | null
+          project_id: string
+          provider: Database["public"]["Enums"]["utility_provider"]
+          status: Database["public"]["Enums"]["utility_request_status"]
+          submitted_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          form_data?: Json
+          generated_file_paths?: string[]
+          id?: string
+          paid_at?: string | null
+          payment_url?: string | null
+          project_id: string
+          provider?: Database["public"]["Enums"]["utility_provider"]
+          status?: Database["public"]["Enums"]["utility_request_status"]
+          submitted_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          form_data?: Json
+          generated_file_paths?: string[]
+          id?: string
+          paid_at?: string | null
+          payment_url?: string | null
+          project_id?: string
+          provider?: Database["public"]["Enums"]["utility_provider"]
+          status?: Database["public"]["Enums"]["utility_request_status"]
+          submitted_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "utility_requests_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "utility_requests_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       schedule_assignments: {
         Row: {
           company_id: string | null
@@ -1711,6 +1771,13 @@ export type Database = {
       schedule_parent_anchor: "start" | "end"
       todo_priority: "low" | "medium" | "high"
       user_role: "staff" | "trade" | "client"
+      utility_provider: "central_arkansas_water"
+      utility_request_status:
+        | "draft"
+        | "submitted"
+        | "awaiting_payment"
+        | "paid"
+        | "complete"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1885,6 +1952,14 @@ export const Constants = {
       schedule_parent_anchor: ["start", "end"],
       todo_priority: ["low", "medium", "high"],
       user_role: ["staff", "trade", "client"],
+      utility_provider: ["central_arkansas_water"],
+      utility_request_status: [
+        "draft",
+        "submitted",
+        "awaiting_payment",
+        "paid",
+        "complete",
+      ],
     },
   },
 } as const
