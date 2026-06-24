@@ -149,7 +149,9 @@ function parseAddress(addr: string | null): { street: string; city: string; zip:
   const parts = addr.split(",").map((s) => s.trim()).filter(Boolean)
   const street = parts[0] ?? ""
   let city = parts.length >= 2 ? parts[1] : ""
-  const zipMatch = addr.match(/\b(\d{5})(?:-\d{4})?\b/)
+  // Anchor to the end of the string (the "AR 72223" tail) so a 5-digit house
+  // number (e.g. "12345 Highway 10") isn't mistaken for the ZIP.
+  const zipMatch = addr.match(/\b(\d{5})(?:-\d{4})?\s*$/)
   const zip = zipMatch ? zipMatch[1] : ""
   // If "city" is actually "City AR 72223", trim the state+zip tail.
   city = city.replace(/\s+[A-Z]{2}\s+\d{5}(?:-\d{4})?$/, "").trim()
@@ -270,7 +272,11 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
   function advance(id: string, status: "awaiting_payment" | "paid" | "complete") {
     startTransition(async () => {
       try {
-        await updateUtilityStatus({ requestId: id, status })
+        const res = await updateUtilityStatus({ requestId: id, status })
+        if (!res.ok) {
+          toast.error(res.error ?? "Update failed.")
+          return
+        }
         router.refresh()
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Update failed.")
@@ -295,7 +301,7 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
 
       {!data.configured && (
         <div className="mb-5 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          CAW builder details aren&apos;t filled in yet (company name, TIN, phone, email,
+          CAW builder details aren&apos;t filled in yet (company name, phone, email,
           mailing address). You can generate and preview forms, but sending to CAW is
           disabled until those are set in the app config.
         </div>

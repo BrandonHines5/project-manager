@@ -253,5 +253,8 @@ function wrapAddress(addr: string): [string, string?] {
   if (comma > 0 && comma < s.length - 1) return [s.slice(0, comma).trim(), s.slice(comma + 1).trim()]
   const mid = s.lastIndexOf(" ", 30)
   if (mid > 0) return [s.slice(0, mid), s.slice(mid + 1)]
-  return [s]
+  // No comma and no early space: hard-split the long token so it spills onto the
+  // form's second address line instead of overflowing the slot.
+  const second = s.slice(30).trim()
+  return [s.slice(0, 30).trim(), second || undefined]
 }

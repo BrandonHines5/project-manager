@@ -252,7 +252,7 @@ export async function sendCawForms({
     return {
       sent: false,
       reason:
-        "CAW builder details aren't configured yet (company name / TIN / contact). Fill them in before sending.",
+        "CAW builder details aren't configured yet (company name, phone, email, mailing address). Fill them in before sending.",
     }
   }
   const supabase = await createSupabaseServerClient()
@@ -363,11 +363,18 @@ const StatusInput = z.object({
   status: z.enum(["awaiting_payment", "paid", "complete"]),
 })
 
-/** Walk a submitted request through the external pay-by-link steps. */
-export async function updateUtilityStatus(input: z.input<typeof StatusInput>) {
+/**
+ * Walk a submitted request through the external pay-by-link steps. Returns a
+ * typed result (not a throw) for the user-facing guards, because Next.js
+ * redacts thrown server-action error messages in production — so the operator
+ * would otherwise see a generic "Update failed." instead of the real reason.
+ */
+export async function updateUtilityStatus(
+  input: z.input<typeof StatusInput>
+): Promise<{ ok: boolean; error?: string }> {
   await requireStaff()
   const parsed = StatusInput.safeParse(input)
-  if (!parsed.success) throw new Error(firstIssue(parsed.error))
+  if (!parsed.success) return { ok: false, error: firstIssue(parsed.error) }
   const { requestId, status } = parsed.data
   const supabase = await createSupabaseServerClient()
 
@@ -377,7 +384,7 @@ export async function updateUtilityStatus(input: z.input<typeof StatusInput>) {
     .eq("id", requestId)
     .maybeSingle()
   if (error) throw new Error(error.message)
-  if (!req) throw new Error("Request not found or not visible.")
+  if (!req) return { ok: false, error: "Request not found or not visible." }
 
   // Guard the workflow: each step only advances from the prior state.
   const allowed: Record<string, string> = {
@@ -386,19 +393,27 @@ export async function updateUtilityStatus(input: z.input<typeof StatusInput>) {
     complete: "paid",
   }
   if (req.status !== allowed[status]) {
-    throw new Error(`Cannot move from "${req.status}" to "${status}".`)
+    return { ok: false, error: `Cannot move from "${req.status}" to "${status}".` }
   }
 
   const patch: TablesUpdate<"utility_requests"> = { status }
   if (status === "awaiting_payment") patch.payment_url = CAW_PAYMENT_URL
   if (status === "paid") patch.paid_at = new Date().toISOString()
 
-  const { error: updErr } = await supabase
+  // Bind to the expected prior state so a concurrent transition can't double-apply.
+  const { data: updated, error: updErr } = await supabase
     .from("utility_requests")
     .update(patch)
     .eq("id", requestId)
+    .eq("status", allowed[status])
+    .select("id")
+    .maybeSingle()
   if (updErr) throw new Error(updErr.message)
+  if (!updated) {
+    return { ok: false, error: "This request just changed — refresh and try again." }
+  }
   revalidatePath("/utilities")
+  return { ok: true }
 }
 
 /** Sign storage paths for preview/download (1hr). */
