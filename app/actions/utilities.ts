@@ -21,6 +21,22 @@ const BUCKET = "project-files"
 // Resend caps total message size ~40MB; stay well under it.
 const MAX_ATTACHMENTS_BYTES = 20 * 1024 * 1024
 
+// Friendly email-attachment names per form key. Stored objects are named
+// `{timestamp}-{key}.pdf`; CAW's intake reads these names, so present the real
+// form titles rather than the internal storage filename.
+const CAW_ATTACHMENT_NAMES: Record<string, string> = {
+  new_service: "CAW-Request-For-Water-Service-Application.pdf",
+  contract: "CAW-Water-Service-Contract.pdf",
+  standpipe: "CAW-Temporary-Construction-Standpipe-Agreement.pdf",
+}
+
+/** Map a stored path (`…/{timestamp}-{key}.pdf`) to a friendly attachment name. */
+function cawAttachmentName(path: string): string {
+  const base = path.split("/").pop() ?? ""
+  const key = base.replace(/\.pdf$/i, "").replace(/^\d+-/, "")
+  return CAW_ATTACHMENT_NAMES[key] ?? (base || "caw-form.pdf")
+}
+
 // ---- Validation -----------------------------------------------------------
 
 const CawForm = z.object({
@@ -116,6 +132,16 @@ export async function saveUtilityDraft(input: SaveUtilityInputT): Promise<{ id: 
   if (id) {
     // Editing the answers invalidates any previously generated PDFs, so clear
     // generated_file_paths — otherwise a later send could attach stale forms.
+    // Capture the prior paths first so we can also delete the orphaned objects
+    // from storage after the row is updated.
+    const { data: existing } = await supabase
+      .from("utility_requests")
+      .select("generated_file_paths")
+      .eq("id", id)
+      .eq("project_id", project_id)
+      .eq("status", "draft")
+      .maybeSingle()
+
     // Scope to the same project + draft status, and confirm a row was updated.
     const { data: updated, error } = await supabase
       .from("utility_requests")
@@ -128,6 +154,15 @@ export async function saveUtilityDraft(input: SaveUtilityInputT): Promise<{ id: 
     if (error) throw new Error(error.message)
     if (!updated) {
       throw new Error("Draft not found, not editable, or project mismatch.")
+    }
+    // Best-effort cleanup of the now-orphaned PDF objects. Done after the DB
+    // update so a storage hiccup never blocks the save; the rows are already
+    // gone from generated_file_paths.
+    const stale = existing?.generated_file_paths ?? []
+    if (stale.length) {
+      const store = await storageClient()
+      const { error: rmErr } = await store.storage.from(BUCKET).remove(stale)
+      if (rmErr) console.warn("[saveUtilityDraft] could not remove old PDFs:", rmErr.message)
     }
     revalidatePath("/utilities")
     return { id }
@@ -309,7 +344,7 @@ export async function sendCawForms({
       const buf = Buffer.from(await blob.arrayBuffer())
       total += buf.byteLength
       attachments.push({
-        filename: path.split("/").pop() ?? "caw-form.pdf",
+        filename: cawAttachmentName(path),
         content: buf.toString("base64"),
       })
     }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useTransition } from "react"
+import { useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { Droplets, FileDown, Send, Loader2, CheckCircle2 } from "lucide-react"
@@ -181,6 +181,9 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
   const [currentId, setCurrentId] = useState<string | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm())
   const [generated, setGenerated] = useState<{ filename: string; url: string }[]>([])
+  // Tracks the most recent job selection so a slow CRM prefill for an earlier
+  // job can't land on top of a newer one (see onSelectProject).
+  const latestPrefillProjectId = useRef<string>("")
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => {
     setForm((f) => ({ ...f, [k]: v }))
@@ -193,6 +196,7 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
   const meterWarning = sqft > METER_PROMPT_SQFT && form.meterSize === "5/8"
 
   function onSelectProject(id: string) {
+    latestPrefillProjectId.current = id
     setProjectId(id)
     setCurrentId(null)
     setGenerated([])
@@ -206,6 +210,8 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
     startTransition(async () => {
       try {
         const pre = await getCawPrefill({ projectId: id })
+        // A newer job was picked while this request was in flight — drop it.
+        if (latestPrefillProjectId.current !== id) return
         setForm((f) => ({
           ...f,
           serviceAddress: pre.serviceAddress ?? f.serviceAddress,
@@ -325,7 +331,7 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
       </div>
 
       {!data.configured && (
-        <div className="mb-5 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <div className="mb-5 rounded-md border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
           CAW builder details aren&apos;t filled in yet (company name, phone, email,
           mailing address). You can generate and preview forms, but sending to CAW is
           disabled until those are set in the app config.
@@ -506,7 +512,7 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
               {generated.length > 0 && (
                 <div className="rounded-md border border-border bg-background/50 px-4 py-3">
                   <div className="text-sm font-medium mb-2 flex items-center gap-2">
-                    <CheckCircle2 className="h-4 w-4 text-green-600" /> Generated — review before sending
+                    <CheckCircle2 className="h-4 w-4 text-success" /> Generated — review before sending
                   </div>
                   <ul className="space-y-1">
                     {generated.map((f) => (
@@ -537,7 +543,7 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
                   <Send className="h-4 w-4" /> Send to CAW
                 </Button>
                 {!data.configured && generated.length > 0 && (
-                  <span className="text-xs text-amber-700">
+                  <span className="text-xs text-warning">
                     Configure builder details to enable sending.
                   </span>
                 )}
