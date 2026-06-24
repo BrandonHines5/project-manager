@@ -171,7 +171,7 @@ export async function generateCawPdfs({
 
   const { data: req, error } = await supabase
     .from("utility_requests")
-    .select("id, project_id, status, form_data, generated_file_paths")
+    .select("id, project_id, status, form_data, generated_file_paths, updated_at")
     .eq("id", requestId)
     .maybeSingle()
   if (error) throw new Error(error.message)
@@ -206,11 +206,23 @@ export async function generateCawPdfs({
     out.push({ key: f.key, filename: f.filename, path, url: "" })
   }
 
-  const { error: updErr } = await supabase
+  // Commit the new paths only if the draft hasn't changed since we loaded it
+  // (updated_at unchanged). If another staff member saved the draft mid-render,
+  // abort and discard our uploads so we never attach PDFs built from superseded
+  // answers.
+  const { data: committed, error: updErr } = await supabase
     .from("utility_requests")
     .update({ generated_file_paths: paths })
     .eq("id", requestId)
+    .eq("status", "draft")
+    .eq("updated_at", req.updated_at)
+    .select("id")
+    .maybeSingle()
   if (updErr) throw new Error(updErr.message)
+  if (!committed) {
+    await store.storage.from(BUCKET).remove(paths)
+    throw new Error("This draft changed while generating — please regenerate.")
+  }
 
   // Only now that the new set is committed do we delete the old objects, so a
   // mid-generation failure leaves the prior PDFs (and their DB paths) intact.
@@ -259,19 +271,18 @@ export async function sendCawForms({
     return { sent: false, reason: "Generate the forms before sending." }
   }
 
-  const form = CawForm.safeParse(req.form_data)
-  if (!form.success) throw new Error(firstIssue(form.error))
-
   // Atomically CLAIM the draft (draft -> submitted) BEFORE the non-idempotent
   // email. Two concurrent senders both read "draft"; only the one whose
   // conditional update actually flips a row may proceed — so CAW is emailed once.
+  // Read the canonical form_data + paths back FROM the claim so a concurrent
+  // draft save (which clears the paths) can't slip stale PDFs past us.
   const submittedAt = new Date().toISOString()
   const { data: claimed, error: claimErr } = await supabase
     .from("utility_requests")
     .update({ status: "submitted", submitted_at: submittedAt })
     .eq("id", requestId)
     .eq("status", "draft")
-    .select("id")
+    .select("id, form_data, generated_file_paths")
     .maybeSingle()
   if (claimErr) throw new Error(claimErr.message)
   if (!claimed) {
@@ -281,11 +292,17 @@ export async function sendCawForms({
   // After claiming, any failure must roll the status back to draft for a retry.
   let result: { sent: boolean; reason?: string }
   try {
+    if (!claimed.generated_file_paths?.length) {
+      throw new Error("Generate the forms before sending.")
+    }
+    const form = CawForm.safeParse(claimed.form_data)
+    if (!form.success) throw new Error(firstIssue(form.error))
+
     // Download the stored PDFs and base64-encode for Resend.
     const store = await storageClient()
     const attachments: { filename: string; content: string }[] = []
     let total = 0
-    for (const path of req.generated_file_paths) {
+    for (const path of claimed.generated_file_paths) {
       const { data: blob, error: dlErr } = await store.storage.from(BUCKET).download(path)
       if (dlErr || !blob) throw new Error(`Could not read ${path}: ${dlErr?.message ?? "missing"}`)
       const buf = Buffer.from(await blob.arrayBuffer())
