@@ -553,6 +553,59 @@ export async function updateProject(
 }
 
 // ---------------------------------------------------------------------------
+// Labels
+// ---------------------------------------------------------------------------
+
+const SetProjectLabelInput = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(500),
+  label: z.string().trim().min(1).max(40),
+  // true = add the label to each project, false = remove it.
+  value: z.boolean(),
+})
+
+/**
+ * Adds or removes a single label across one or more projects. Drives the
+ * project-list sidebar's multi-select "Tag as Test" / "Remove Test" actions,
+ * but is generic over the label name. Idempotent per project: adding a label a
+ * project already has (or removing one it lacks) is skipped, so re-running is
+ * safe. Runs under the caller's session, so RLS still gates which rows change.
+ */
+export async function setProjectLabel(
+  input: z.input<typeof SetProjectLabelInput>
+): Promise<{ ok: true; updated: number } | { ok: false; error: string }> {
+  await requireStaff()
+  const parsed = SetProjectLabelInput.safeParse(input)
+  if (!parsed.success) return { ok: false, error: "Invalid label request." }
+
+  const { ids, label, value } = parsed.data
+  const supabase = await createSupabaseServerClient()
+  const { data: rows, error } = await supabase
+    .from("projects")
+    .select("id, labels")
+    .in("id", ids)
+  if (error) return { ok: false, error: error.message }
+
+  let updated = 0
+  for (const row of rows ?? []) {
+    const current = row.labels ?? []
+    const has = current.includes(label)
+    if (value === has) continue // already in the desired state
+    const next = value
+      ? [...current, label]
+      : current.filter((l) => l !== label)
+    const { error: upErr } = await supabase
+      .from("projects")
+      .update({ labels: next })
+      .eq("id", row.id)
+    if (upErr) return { ok: false, error: upErr.message }
+    updated++
+  }
+
+  revalidatePath("/projects")
+  return { ok: true, updated }
+}
+
+// ---------------------------------------------------------------------------
 // Duplicate
 // ---------------------------------------------------------------------------
 

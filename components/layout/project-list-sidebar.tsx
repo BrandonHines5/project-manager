@@ -1,8 +1,9 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, useTransition } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
+import { toast } from "sonner"
 import {
   Plus,
   Search,
@@ -11,11 +12,17 @@ import {
   Calendar,
   ClipboardList,
   ScrollText,
+  Tag,
   X,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
+import { setProjectLabel } from "@/app/actions/projects"
 import type { Enums } from "@/lib/db/types"
+
+// The label used to flag leftover test jobs. Surfaced as its own filter in the
+// dropdown and toggled in bulk from the multi-select footer.
+const TEST_LABEL = "Test"
 
 export type SidebarProject = {
   id: string
@@ -23,10 +30,31 @@ export type SidebarProject = {
   project_number: string
   address: string | null
   status: Enums<"project_status">
+  labels: string[]
 }
 
 type StatusFilter = "open" | "active" | "warranty" | "closed" | "all"
 type Mode = "jobs" | "templates"
+
+const STATUS_FILTERS: ReadonlyArray<StatusFilter> = [
+  "open",
+  "active",
+  "warranty",
+  "closed",
+  "all",
+]
+
+const STATUS_FILTER_LABEL: Record<StatusFilter, string> = {
+  open: "Open",
+  active: "Active",
+  warranty: "Warranty",
+  closed: "Closed",
+  all: "All",
+}
+
+// A label filter is encoded as "label:<name>" so it can share the single filter
+// dropdown with the status filters above.
+const LABEL_PREFIX = "label:"
 
 // Templates are projects whose project_number starts with "TEMPLATE" — staff
 // convention rather than a DB column. Keep the check case-insensitive so
@@ -85,9 +113,11 @@ export function ProjectListSidebar({
   const pathname = usePathname()
 
   const [query, setQuery] = useState("")
-  const [status, setStatus] = useState<StatusFilter>("open")
+  // Either a StatusFilter value ("open"…"all") or a "label:<name>" string.
+  const [filter, setFilter] = useState<string>("open")
   const [statusOpen, setStatusOpen] = useState(false)
   const [mode, setMode] = useState<Mode>("jobs")
+  const [tagPending, startTag] = useTransition()
   // Initialized empty; hydrated from localStorage on mount so SSR markup
   // stays deterministic (avoids hydration mismatch).
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
@@ -138,19 +168,38 @@ export function ProjectListSidebar({
     }
   }, [selected, hydrated])
 
+  // Distinct labels in use across jobs (templates excluded), so any label that
+  // exists on a job automatically becomes a filter option in the dropdown.
+  const jobLabels = useMemo(() => {
+    const set = new Set<string>()
+    for (const p of projects) {
+      if (isTemplate(p)) continue
+      for (const l of p.labels ?? []) set.add(l)
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b))
+  }, [projects])
+
+  const activeLabel = filter.startsWith(LABEL_PREFIX)
+    ? filter.slice(LABEL_PREFIX.length)
+    : null
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return projects.filter((p) => {
       const tpl = isTemplate(p)
       if (mode === "templates" && !tpl) return false
       if (mode === "jobs" && tpl) return false
-      // Status filter applies to Jobs only — templates are few and the status
-      // (usually "lead") isn't a meaningful filter for them.
+      // Status / label filters apply to Jobs only — templates are few and the
+      // status (usually "lead") isn't a meaningful filter for them.
       if (mode === "jobs") {
-        if (status === "open" && !OPEN_STATUSES.includes(p.status)) return false
-        if (status === "active" && p.status !== "active") return false
-        if (status === "warranty" && p.status !== "warranty") return false
-        if (status === "closed" && OPEN_STATUSES.includes(p.status)) return false
+        if (activeLabel) {
+          if (!(p.labels ?? []).includes(activeLabel)) return false
+        } else {
+          if (filter === "open" && !OPEN_STATUSES.includes(p.status)) return false
+          if (filter === "active" && p.status !== "active") return false
+          if (filter === "warranty" && p.status !== "warranty") return false
+          if (filter === "closed" && OPEN_STATUSES.includes(p.status)) return false
+        }
       }
       if (!q) return true
       return (
@@ -159,7 +208,7 @@ export function ProjectListSidebar({
         (p.address?.toLowerCase().includes(q) ?? false)
       )
     })
-  }, [projects, query, status, mode])
+  }, [projects, query, filter, activeLabel, mode])
 
   const visibleIds = useMemo(() => filtered.map((p) => p.id), [filtered])
   const allVisibleSelected =
@@ -197,16 +246,36 @@ export function ProjectListSidebar({
     router.push(`/all/${section}?ids=${ids}`)
   }
 
+  // Add or remove the "Test" label across the current multi-select. The server
+  // action is idempotent per project, so re-tagging an already-tagged job is a
+  // no-op and the toast reports only the count that actually changed.
+  function tagSelected(value: boolean) {
+    const ids = Array.from(selected)
+    if (ids.length === 0) return
+    startTag(async () => {
+      try {
+        const res = await setProjectLabel({ ids, label: TEST_LABEL, value })
+        if (!res.ok) {
+          toast.error(res.error)
+          return
+        }
+        const n = res.updated
+        toast.success(
+          value
+            ? `Tagged ${n} job${n === 1 ? "" : "s"} as ${TEST_LABEL}`
+            : `Removed ${TEST_LABEL} from ${n} job${n === 1 ? "" : "s"}`
+        )
+        router.refresh()
+      } catch (e) {
+        toast.error(
+          e instanceof Error ? e.message : "Could not update labels"
+        )
+      }
+    })
+  }
+
   const filterLabel =
-    status === "open"
-      ? "Open"
-      : status === "active"
-        ? "Active"
-        : status === "warranty"
-          ? "Warranty"
-          : status === "closed"
-            ? "Closed"
-            : "All"
+    activeLabel ?? STATUS_FILTER_LABEL[filter as StatusFilter] ?? "All"
 
   return (
     <aside className="hidden lg:flex lg:flex-col w-[300px] shrink-0 border-r border-border bg-surface">
@@ -269,32 +338,58 @@ export function ProjectListSidebar({
             onClick={() => setStatusOpen((s) => !s)}
             className={cn(
               "h-8 px-2 inline-flex items-center gap-1 rounded-md border border-border bg-background text-xs font-medium",
-              status !== "open" && "border-brand-500 text-brand-700"
+              filter !== "open" && "border-brand-500 text-brand-700"
             )}
-            title="Status filter"
+            title="Filter jobs"
           >
             <FilterIcon className="h-3.5 w-3.5" />
             <ChevronDown className="h-3 w-3" />
           </button>
           {statusOpen && (
-            <div className="absolute right-0 top-9 z-20 w-36 rounded-md border border-border bg-surface shadow-md py-1 text-sm">
-              {(["open", "active", "warranty", "closed", "all"] as StatusFilter[]).map(
-                (s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => {
-                      setStatus(s)
-                      setStatusOpen(false)
-                    }}
-                    className={cn(
-                      "block w-full text-left px-3 py-1.5 capitalize hover:bg-background",
-                      status === s && "font-medium text-brand-700"
-                    )}
-                  >
-                    {s}
-                  </button>
-                )
+            <div className="absolute right-0 top-9 z-20 w-40 rounded-md border border-border bg-surface shadow-md py-1 text-sm">
+              {STATUS_FILTERS.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => {
+                    setFilter(s)
+                    setStatusOpen(false)
+                  }}
+                  className={cn(
+                    "block w-full text-left px-3 py-1.5 hover:bg-background",
+                    filter === s && "font-medium text-brand-700"
+                  )}
+                >
+                  {STATUS_FILTER_LABEL[s]}
+                </button>
+              ))}
+              {jobLabels.length > 0 && (
+                <>
+                  <div className="my-1 border-t border-border" />
+                  <div className="px-3 pb-0.5 pt-1 text-[10px] font-medium uppercase tracking-wider text-muted">
+                    Labels
+                  </div>
+                  {jobLabels.map((l) => {
+                    const key = `${LABEL_PREFIX}${l}`
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => {
+                          setFilter(key)
+                          setStatusOpen(false)
+                        }}
+                        className={cn(
+                          "flex w-full items-center gap-1.5 px-3 py-1.5 text-left hover:bg-background",
+                          filter === key && "font-medium text-brand-700"
+                        )}
+                      >
+                        <Tag className="h-3 w-3 shrink-0" />
+                        {l}
+                      </button>
+                    )
+                  })}
+                </>
               )}
             </div>
           )}
@@ -358,9 +453,23 @@ export function ProjectListSidebar({
                       <span className="truncate">{p.name}</span>
                     </div>
                   </Link>
-                  <Badge tone={STATUS_TONE[p.status]} className="text-[10px] py-0">
-                    {STATUS_LABEL[p.status]}
-                  </Badge>
+                  <div className="flex shrink-0 items-center gap-1">
+                    {(p.labels ?? []).map((l) => (
+                      <Badge
+                        key={l}
+                        tone="warning"
+                        className="text-[10px] py-0"
+                      >
+                        {l}
+                      </Badge>
+                    ))}
+                    <Badge
+                      tone={STATUS_TONE[p.status]}
+                      className="text-[10px] py-0"
+                    >
+                      {STATUS_LABEL[p.status]}
+                    </Badge>
+                  </div>
                 </li>
               )
             })}
@@ -372,7 +481,9 @@ export function ProjectListSidebar({
       {hydrated && selected.size > 0 && (
         <SelectionFooter
           count={selected.size}
+          pending={tagPending}
           onClear={clearSelection}
+          onTag={tagSelected}
           onNavigate={navigateToAggregate}
         />
       )}
@@ -382,11 +493,15 @@ export function ProjectListSidebar({
 
 function SelectionFooter({
   count,
+  pending,
   onClear,
+  onTag,
   onNavigate,
 }: {
   count: number
+  pending: boolean
   onClear: () => void
+  onTag: (value: boolean) => void
   onNavigate: (section: "schedule" | "daily-logs" | "decisions") => void
 }) {
   return (
@@ -403,6 +518,32 @@ function SelectionFooter({
         >
           <X className="h-3 w-3" />
           Clear
+        </button>
+      </div>
+      {/* Bulk-toggle the Test label on the current selection. */}
+      <div className="px-3 pb-2 flex items-center gap-2">
+        <span className="text-[11px] uppercase tracking-wider text-muted">
+          Test label
+        </span>
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => onTag(true)}
+          className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[11px] font-medium hover:bg-background disabled:cursor-not-allowed disabled:opacity-50"
+          title="Tag selected jobs as Test"
+        >
+          <Tag className="h-3 w-3" />
+          Tag
+        </button>
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => onTag(false)}
+          className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[11px] font-medium hover:bg-background disabled:cursor-not-allowed disabled:opacity-50"
+          title="Remove the Test label from selected jobs"
+        >
+          <X className="h-3 w-3" />
+          Untag
         </button>
       </div>
       <div className="grid grid-cols-3 border-t border-border">
