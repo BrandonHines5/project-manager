@@ -13,17 +13,17 @@
 /** Builder identity used as the water-service applicant on all CAW forms. */
 export const CAW_BUILDER = {
   /** Legal company name printed as the applicant / account name. */
-  companyName: "PLACEHOLDER_BUILDER_LEGAL_NAME",
+  companyName: "Hines Homes, LLC",
   /** Federal Tax ID (EIN). PII — keep out of git, set CAW_BUILDER_TIN in Vercel. */
   tin: process.env.CAW_BUILDER_TIN ?? "",
-  businessPhone: "PLACEHOLDER_BUILDER_PHONE",
+  businessPhone: "501-802-8453",
   /** Optional alternate/secondary phone. */
   altPhone: "",
-  email: "PLACEHOLDER_BUILDER_EMAIL",
+  email: "info@hineshomes.com",
   /** Builder's mailing address (where CAW sends correspondence/bills). */
-  mailingAddress: "PLACEHOLDER_BUILDER_MAILING_ADDRESS",
+  mailingAddress: "401 Commerce Drive, Maumelle, AR 72113",
   /** Default name printed as "person filling out this form" / signature. */
-  preparerName: "PLACEHOLDER_PREPARER_NAME",
+  preparerName: "Adam Verhalen",
 } as const
 
 /** Where the filled new-service forms are emailed (CAW new-construction intake). */
