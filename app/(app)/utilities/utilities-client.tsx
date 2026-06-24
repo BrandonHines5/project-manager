@@ -14,6 +14,7 @@ import {
   generateCawPdfs,
   sendCawForms,
   updateUtilityStatus,
+  getCawPrefill,
 } from "@/app/actions/utilities"
 
 const METER_SIZES = ["5/8", "3/4", "1", "1 1/2", "2", "3", "4"] as const
@@ -196,8 +197,32 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
     setCurrentId(null)
     setGenerated([])
     const p = data.projects.find((x) => x.id === id)
+    // Instant fallback from the local address; CRM pull (below) refines it.
     const { street, city, zip } = parseAddress(p?.address ?? null)
     setForm((f) => ({ ...f, serviceAddress: street, city, zip }))
+    if (!id) return
+    // Pull the richer property details (city, subdivision, lot/block, sq ft,
+    // floors) from the CRM and merge them in where present.
+    startTransition(async () => {
+      try {
+        const pre = await getCawPrefill({ projectId: id })
+        setForm((f) => ({
+          ...f,
+          serviceAddress: pre.serviceAddress ?? f.serviceAddress,
+          city: pre.city ?? f.city,
+          zip: pre.zip ?? f.zip,
+          subdivision: pre.subdivision ?? f.subdivision,
+          block: pre.block ?? f.block,
+          lot: pre.lot ?? f.lot,
+          squareFootage: pre.squareFootage ?? f.squareFootage,
+          multiStory: pre.multiStory ?? f.multiStory,
+          floors: pre.floors ?? f.floors,
+        }))
+        if (pre.source === "crm") toast.success("Pre-filled from CRM.")
+      } catch {
+        // Best-effort — the local address parse is already applied.
+      }
+    })
   }
 
   function resetForm() {

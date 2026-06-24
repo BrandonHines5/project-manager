@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
+import { createCrmClient } from "@/lib/supabase/crm"
 import { requireStaff } from "@/lib/auth"
 import {
   CAW_BUILDER,
@@ -247,7 +248,7 @@ export async function sendCawForms({
 }: {
   requestId: string
 }): Promise<{ sent: boolean; reason?: string }> {
-  await requireStaff()
+  const sender = await requireStaff()
   if (!isCawConfigured()) {
     return {
       sent: false,
@@ -338,6 +339,8 @@ export async function sendCawForms({
     const { sendEmail } = await import("@/lib/email")
     result = await sendEmail({
       to: CAW_SUBMISSION_EMAIL,
+      // CC the staff member who sent it so they get a copy as confirmation.
+      cc: sender.email ?? undefined,
       subject: `New Water Service Request - ${addr}`,
       text: lines.join("\n"),
       attachments,
@@ -414,6 +417,89 @@ export async function updateUtilityStatus(
   }
   revalidatePath("/utilities")
   return { ok: true }
+}
+
+export type CawPrefill = {
+  serviceAddress?: string
+  city?: string
+  zip?: string
+  subdivision?: string
+  block?: string
+  lot?: string
+  squareFootage?: string
+  multiStory?: boolean
+  floors?: string
+  /** "crm" when matched in the CRM, "none" when it fell back to the local data. */
+  source: "crm" | "none"
+}
+
+/**
+ * Pull extra property details from the Hines Homes CRM (matched by
+ * project_number) to pre-fill the CAW form: city, subdivision, lot/block,
+ * square footage, and floor count. Best-effort — returns source:"none" (with
+ * just the local address) when the CRM isn't configured or has no matching row.
+ * Note: the CRM has no ZIP column, so ZIP is left for the user to enter.
+ */
+export async function getCawPrefill({
+  projectId,
+}: {
+  projectId: string
+}): Promise<CawPrefill> {
+  await requireStaff()
+  const supabase = await createSupabaseServerClient()
+  const { data: project } = await supabase
+    .from("projects")
+    .select("project_number, address")
+    .eq("id", projectId)
+    .maybeSingle()
+  if (!project) return { source: "none" }
+
+  const fallback: CawPrefill = {
+    serviceAddress: project.address ?? undefined,
+    source: "none",
+  }
+  const crm = createCrmClient()
+  if (!crm || !project.project_number) return fallback
+
+  const { data, error } = await crm
+    .from("projects_dashboard_full")
+    .select(
+      "street_address, city, lot_block, subdivision_name, total_area_without_veneer, total_area_with_veneer, floors"
+    )
+    .eq("project_number", project.project_number)
+    .maybeSingle()
+  if (error || !data) return fallback
+
+  const row = data as {
+    street_address: string | null
+    city: string | null
+    lot_block: string | null
+    subdivision_name: string | null
+    total_area_without_veneer: number | null
+    total_area_with_veneer: number | null
+    floors: number | null
+  }
+  // lot_block is stored as "{lot}-{block}" (e.g. "15-1").
+  let lot = ""
+  let block = ""
+  if (row.lot_block) {
+    const parts = row.lot_block.split(/[-/]/).map((s) => s.trim())
+    lot = parts[0] ?? ""
+    block = parts[1] ?? ""
+  }
+  const sqft = row.total_area_without_veneer ?? row.total_area_with_veneer
+  const floors = row.floors
+  return {
+    serviceAddress: row.street_address ?? project.address ?? undefined,
+    city: row.city ?? undefined,
+    subdivision: row.subdivision_name ?? undefined,
+    block: block || undefined,
+    lot: lot || undefined,
+    squareFootage: sqft != null ? String(Math.round(sqft)) : undefined,
+    multiStory: floors != null ? floors > 1 : undefined,
+    floors: floors != null && floors > 1 ? String(floors) : undefined,
+    source: "crm",
+  }
 }
 
 /** Sign storage paths for preview/download (1hr). */
