@@ -38,6 +38,13 @@ function cawAttachmentName(path: string): string {
   return CAW_ATTACHMENT_NAMES[key] ?? (base || "caw-form.pdf")
 }
 
+/** Extract a 5-digit ZIP from a CRM value (string or number), else undefined. */
+function coerceZip(v: unknown): string | undefined {
+  if (v == null) return undefined
+  const m = String(v).match(/\d{5}/)
+  return m ? m[0] : undefined
+}
+
 // ---- Validation -----------------------------------------------------------
 
 const CawForm = z.object({
@@ -497,11 +504,12 @@ export async function getCawPrefill({
   const crm = createCrmClient()
   if (!crm || !project.project_number) return fallback
 
+  // select("*") so we pick up a ZIP column whatever it's named in the view
+  // (zip / zip_code / postal_code), and so a not-yet-added column never errors
+  // the query — it just comes back undefined.
   const { data, error } = await crm
     .from("projects_dashboard_full")
-    .select(
-      "street_address, city, lot_block, subdivision_name, total_area_without_veneer, total_area_with_veneer, floors"
-    )
+    .select("*")
     .eq("project_number", project.project_number)
     .maybeSingle()
   if (error || !data) return fallback
@@ -514,6 +522,10 @@ export async function getCawPrefill({
     total_area_without_veneer: number | null
     total_area_with_veneer: number | null
     floors: number | null
+    zip?: string | number | null
+    zip_code?: string | number | null
+    postal_code?: string | number | null
+    zipcode?: string | number | null
   }
   // lot_block is stored as "{lot}-{block}" (e.g. "15-1").
   let lot = ""
@@ -525,8 +537,11 @@ export async function getCawPrefill({
   }
   const sqft = row.total_area_without_veneer ?? row.total_area_with_veneer
   const floors = row.floors
-  // CRM has no ZIP; resolve from subdivision (preferred) or city, else leave blank.
-  const zip = resolveCawZip({ subdivision: row.subdivision_name, city: row.city })
+  // Prefer a ZIP stored on the CRM record; fall back to the subdivision/city
+  // lookup table for projects whose CRM ZIP isn't filled in yet.
+  const zip =
+    coerceZip(row.zip ?? row.zip_code ?? row.postal_code ?? row.zipcode) ??
+    resolveCawZip({ subdivision: row.subdivision_name, city: row.city })
   return {
     serviceAddress: row.street_address ?? project.address ?? undefined,
     city: row.city ?? undefined,
