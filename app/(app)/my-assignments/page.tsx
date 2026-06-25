@@ -106,6 +106,72 @@ export default async function MyAssignmentsPage() {
     })
   }
 
+  // Role-based assignments: a template assigns its items to roles, and each
+  // project maps the role to a person/company. Pull in items whose role
+  // resolves to me (or my company) on a project — they have no direct
+  // profile_id/company_id, so the query above misses them. Two steps: find the
+  // (project, role) pairs that map to me, then fetch role assignments for
+  // those roles and keep only the ones on a matching project.
+  const orFilter = profile.company_id
+    ? `profile_id.eq.${profile.id},company_id.eq.${profile.company_id}`
+    : `profile_id.eq.${profile.id}`
+  const { data: myRoleMemberships, error: rmErr } = await supabase
+    .from("project_role_members")
+    .select("project_id, role_id")
+    .or(orFilter)
+  if (rmErr) throw new Error(rmErr.message)
+
+  if (myRoleMemberships && myRoleMemberships.length > 0) {
+    const myRoleKeys = new Set(
+      myRoleMemberships.map((m) => `${m.project_id}|${m.role_id}`)
+    )
+    const myRoleIds = [...new Set(myRoleMemberships.map((m) => m.role_id))]
+    const { data: roleAssignments, error: raErr } = await supabase
+      .from("schedule_assignments")
+      .select(
+        `schedule_item_id, role_id,
+         schedule_items!inner (
+           id, project_id, kind, title, status, priority,
+           start_date, end_date, due_date,
+           projects!inner ( id, name, project_number, address )
+         )`
+      )
+      .in("role_id", myRoleIds)
+    if (raErr) throw new Error(raErr.message)
+
+    for (const a of roleAssignments ?? []) {
+      const item = a.schedule_items as unknown as {
+        id: string
+        project_id: string
+        kind: "work" | "todo"
+        title: string
+        status: Enums<"schedule_item_status">
+        priority: Enums<"todo_priority"> | null
+        start_date: string | null
+        end_date: string | null
+        due_date: string | null
+        projects: { id: string; name: string; project_number: string }
+      }
+      if (!item || seen.has(item.id)) continue
+      // Only keep items whose role maps to me on THIS project.
+      if (!myRoleKeys.has(`${item.project_id}|${a.role_id}`)) continue
+      seen.add(item.id)
+      rows.push({
+        id: item.id,
+        project_id: item.project_id,
+        project_number: item.projects.project_number,
+        project_name: item.projects.name,
+        kind: item.kind,
+        title: item.title,
+        status: item.status,
+        priority: item.priority,
+        start_date: item.start_date,
+        end_date: item.end_date,
+        due_date: item.due_date,
+      })
+    }
+  }
+
   // Sort: incomplete first, then by earliest of (start_date, due_date)
   rows.sort((a, b) => {
     const aDone = a.status === "complete"

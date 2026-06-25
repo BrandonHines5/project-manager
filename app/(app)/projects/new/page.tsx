@@ -17,14 +17,15 @@ export default async function NewProjectPage() {
   const supabase = await createSupabaseServerClient()
   // Best-effort: if the dashboard integration isn't configured or the
   // dashboard is unreachable, we fall back to the "create blank" path.
-  // Templates list comes from PM itself — every existing project is a
-  // candidate template (staff name the canonical one clearly, e.g.
-  // "TEMPLATE - Standard Build").
+  // The template list is restricted to projects explicitly flagged as
+  // templates (Edit project → "Use as template") — staff copy from a curated
+  // set of templates, not from every job in the system.
   const [available, templatesResult] = await Promise.all([
     listAvailableDashboardProjects(),
     supabase
       .from("projects")
       .select("id, project_number, name, status")
+      .eq("is_template", true)
       .order("name", { ascending: true }),
   ])
   // Surface query failures in the logs but don't block the page — staff

@@ -476,6 +476,10 @@ const ProjectEditInput = z
     // logs. Optional so a partial-update caller can't silently flip an
     // existing cost-plus project back to fixed-price by omitting it.
     cost_plus: z.boolean().optional(),
+    // Marks this project as a reusable template — the only kind offered as a
+    // source in "New project → Start from template". Optional for the same
+    // reason as cost_plus: omitting it must not clear an existing flag.
+    is_template: z.boolean().optional(),
     // Branding driver. Empty string clears it back to "unset" (Hines default).
     project_type: z
       .enum([
@@ -532,6 +536,7 @@ export async function updateProject(
     notes: emptyToNull(rest.notes),
   }
   if (rest.cost_plus !== undefined) update.cost_plus = rest.cost_plus
+  if (rest.is_template !== undefined) update.is_template = rest.is_template
   if (rest.project_type !== undefined) update.project_type = rest.project_type
   // .select() forces the update to return the matched row so we can tell a
   // silent zero-rows case (wrong id, or RLS hid it) apart from a real save.
@@ -664,9 +669,11 @@ export type DuplicateProjectInputT = z.infer<typeof DuplicateProjectInput>
 
 /**
  * Clone a project's structure (schedule items + checklists + predecessors,
- * plus decisions/selections with their cost breakdowns, follow-up templates,
- * and attachments) into a brand-new project. Skips project-specific data:
- * assignments, daily logs, files, payments, project_members, comments.
+ * role-based assignments, plus decisions/selections with their cost
+ * breakdowns, follow-up templates, and attachments) into a brand-new project.
+ * Skips project-specific data: direct (person/company) assignments, daily
+ * logs, files, payments, project_members, comments. Role-based assignments DO
+ * carry forward — they resolve to people through the new project's role map.
  *
  * Intended primary use: a "template" project staff maintain as the standard
  * Hines Homes build schedule + selections, duplicated for each new build.
@@ -705,6 +712,7 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     { data: srcCostItems, error: costItemsErr },
     { data: srcFollowups, error: followupsErr },
     { data: srcAttachments, error: attachmentsErr },
+    { data: srcRoleAssignments, error: roleAssignmentsErr },
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -763,6 +771,15 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
       .select("*, decisions!inner(project_id)")
       .eq("decisions.project_id", parsed.source_project_id)
       .order("position", { ascending: true }),
+    // Role-based assignments only. A template assigns its items to roles, not
+    // to specific people — those carry forward so the new job resolves them
+    // through its own role map. Direct profile/company assignments stay
+    // project-specific and are NOT copied (unchanged behavior).
+    supabase
+      .from("schedule_assignments")
+      .select("schedule_item_id, role_id, schedule_items!inner(project_id)")
+      .eq("schedule_items.project_id", parsed.source_project_id)
+      .not("role_id", "is", null),
   ])
   const readErr =
     sourceErr ??
@@ -773,7 +790,8 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     choicesErr ??
     costItemsErr ??
     followupsErr ??
-    attachmentsErr
+    attachmentsErr ??
+    roleAssignmentsErr
   if (readErr) throw new Error(`Source read failed: ${readErr.message}`)
   if (!source) throw new Error("Source project not found")
 
@@ -869,6 +887,9 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     // Carry the cost-plus designation so a duplicated cost-plus job keeps
     // tracking labor hours instead of silently reverting to fixed-price.
     cost_plus: source.cost_plus ?? false,
+    // A job built FROM a template is a real job, never itself a template —
+    // don't inherit the source's is_template flag.
+    is_template: false,
     created_by: profile.id,
   }
   const { data: newProject, error: pErr } = await supabase
@@ -973,6 +994,32 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
       .from("todo_checklist_items")
       .insert(newChecklists)
     if (cErr) throw new Error(cErr.message)
+  }
+
+  // 3b. Copy role-based schedule assignments, mapping schedule_item_id through
+  //     idMap. Assignments on items the smart-template filter skipped fall out
+  //     naturally (idMap has no entry for them). De-dupe on (item, role) so a
+  //     source with two identical rows doesn't trip the unique index.
+  type RoleAssignRow = Tables<"schedule_assignments"> & {
+    schedule_items?: unknown
+  }
+  const roleAssignRows = (srcRoleAssignments ?? []) as RoleAssignRow[]
+  const seenRoleAssign = new Set<string>()
+  const newRoleAssignments = roleAssignRows
+    .map((a) => {
+      const newItem = idMap.get(a.schedule_item_id)
+      if (!newItem || !a.role_id) return null
+      const key = `${newItem}|${a.role_id}`
+      if (seenRoleAssign.has(key)) return null
+      seenRoleAssign.add(key)
+      return { schedule_item_id: newItem, role_id: a.role_id }
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null)
+  if (newRoleAssignments.length) {
+    const { error: raErr } = await supabase
+      .from("schedule_assignments")
+      .insert(newRoleAssignments)
+    if (raErr) throw new Error(raErr.message)
   }
 
   // 4. Copy predecessor edges, mapping both ends through idMap. Items the

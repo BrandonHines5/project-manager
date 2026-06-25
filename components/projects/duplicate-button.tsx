@@ -27,12 +27,12 @@ import {
  * template" flow (see DuplicateDialog export below).
  *
  * Copies: project shell (address, contract price, notes), schedule items
- *   + checklists + predecessors, decisions (with cost-code breakdowns,
- *   follow-up templates, and attachments). Status is reset to draft on
- *   each decision and storage objects are copied to fresh paths under
- *   the new project.
- * Skips: schedule assignments, daily logs, project_files, payments,
- *   project_members, decision_comments.
+ *   + checklists + predecessors, role-based assignments, decisions (with
+ *   cost-code breakdowns, follow-up templates, and attachments). Status is
+ *   reset to draft on each decision and storage objects are copied to fresh
+ *   paths under the new project.
+ * Skips: direct (person/company) schedule assignments, daily logs,
+ *   project_files, payments, project_members, decision_comments.
  *
  * If a new start date is provided, all schedule dates shift by the same
  * delta so the relative cadence of the template is preserved.
@@ -144,10 +144,11 @@ export function DuplicateDialog({
             <DialogTitle>Duplicate &ldquo;{sourceName}&rdquo;</DialogTitle>
             <DialogDescription>
               Copies the schedule (work items, to-dos, checklists, predecessor
-              links) AND decisions (selections + change orders, with cost
-              breakdowns, follow-up templates, and attachments). Decisions are
-              reset to draft. Assignments, job logs, project files, and
-              payments are NOT copied — those are project-specific.
+              links, role assignments) AND decisions (selections + change
+              orders, with cost breakdowns, follow-up templates, and
+              attachments). Decisions are reset to draft. Direct person/sub
+              assignments, job logs, project files, and payments are NOT
+              copied — those are project-specific.
             </DialogDescription>
           </div>
         </DialogHeader>

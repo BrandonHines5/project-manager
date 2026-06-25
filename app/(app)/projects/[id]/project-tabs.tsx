@@ -18,6 +18,7 @@ const TABS: Tab[] = [
   { label: "Decisions", slug: "decisions" },
   { label: "Files", slug: "files" },
   { label: "Pricing", slug: "pricing" },
+  { label: "Roles", slug: "roles", hideForRoles: ["client", "trade"] },
 ]
 // Trades only see Schedule (RLS handles row-level filtering); clients only see Job Logs / Files / Pricing.
 
