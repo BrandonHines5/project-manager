@@ -3,7 +3,7 @@
 import { useState, useMemo, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { Plus, Building2, Trash2, Search } from "lucide-react"
+import { Plus, Building2, Trash2, Search, BellOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
@@ -60,6 +60,9 @@ export function CompaniesClient({
           c.name.toLowerCase().includes(q) ||
           (c.trade_category ?? "").toLowerCase().includes(q) ||
           trades.includes(q) ||
+          (c.contact_name ?? "").toLowerCase().includes(q) ||
+          (c.status ?? "").toLowerCase().includes(q) ||
+          (c.city ?? "").toLowerCase().includes(q) ||
           (c.email ?? "").toLowerCase().includes(q) ||
           (c.phone ?? "").toLowerCase().includes(q)
         )
@@ -163,6 +166,9 @@ export function CompaniesClient({
                 <th className="text-left px-4 py-2.5">Name</th>
                 <th className="text-left px-4 py-2.5 w-32">Type</th>
                 <th className="text-left px-4 py-2.5">Trade / category</th>
+                <th className="text-left px-4 py-2.5 hidden lg:table-cell w-44">
+                  Status
+                </th>
                 <th className="text-left px-4 py-2.5 hidden md:table-cell">
                   Contact
                 </th>
@@ -177,7 +183,17 @@ export function CompaniesClient({
                     onClick={() => setEditing(c)}
                     className="hover:bg-background/40 cursor-pointer"
                   >
-                    <td className="px-4 py-3 font-medium">{c.name}</td>
+                    <td className="px-4 py-3 font-medium">
+                      <span className="inline-flex items-center gap-1.5">
+                        {c.name}
+                        {!c.notifications_enabled && (
+                          <BellOff
+                            className="h-3.5 w-3.5 text-muted shrink-0"
+                            aria-label="Notifications off"
+                          />
+                        )}
+                      </span>
+                    </td>
                     <td className="px-4 py-3">
                       <TypeBadge type={c.type} />
                     </td>
@@ -199,8 +215,11 @@ export function CompaniesClient({
                         "—"
                       )}
                     </td>
+                    <td className="px-4 py-3 hidden lg:table-cell text-muted">
+                      {c.status || "—"}
+                    </td>
                     <td className="px-4 py-3 hidden md:table-cell text-muted">
-                      {c.email || c.phone || "—"}
+                      {c.contact_name || c.email || c.phone || "—"}
                     </td>
                   </tr>
                 )
@@ -255,6 +274,19 @@ function CompanyDialog({
   const [phone, setPhone] = useState(company?.phone ?? "")
   const [email, setEmail] = useState(company?.email ?? "")
   const [notes, setNotes] = useState(company?.notes ?? "")
+  const [contactName, setContactName] = useState(company?.contact_name ?? "")
+  const [phoneSecondary, setPhoneSecondary] = useState(
+    company?.phone_secondary ?? ""
+  )
+  const [city, setCity] = useState(company?.city ?? "")
+  const [stateField, setStateField] = useState(company?.state ?? "")
+  const [postalCode, setPostalCode] = useState(company?.postal_code ?? "")
+  const [website, setWebsite] = useState(company?.website ?? "")
+  const [status, setStatus] = useState(company?.status ?? "")
+  // New companies default to notifications ON; existing ones reflect their flag.
+  const [notificationsEnabled, setNotificationsEnabled] = useState(
+    company ? company.notifications_enabled : true
+  )
 
   function submit() {
     if (!name.trim()) {
@@ -273,6 +305,14 @@ function CompanyDialog({
       phone: phone || null,
       email: email || null,
       notes: notes || null,
+      contact_name: contactName || null,
+      phone_secondary: phoneSecondary || null,
+      city: city || null,
+      state: stateField || null,
+      postal_code: postalCode || null,
+      website: website || null,
+      status: status || null,
+      notifications_enabled: notificationsEnabled,
     }
     startTransition(async () => {
       try {
@@ -323,6 +363,22 @@ function CompanyDialog({
                 <option value="client">Client household</option>
               </Select>
             </Field>
+            <Field label="Status">
+              <Input
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+                placeholder="e.g. Approved for Use"
+                list="company-status-options"
+              />
+              <datalist id="company-status-options">
+                <option value="Approved for Use" />
+                <option value="Interviewed" />
+                <option value="Not Contacted" />
+                <option value="Inactive" />
+                <option value="Not for Hire" />
+                <option value="Insurance Requirement Waived" />
+              </datalist>
+            </Field>
             <div className="sm:col-span-2">
               <TradeChipsEditor
                 value={trades}
@@ -330,6 +386,19 @@ function CompanyDialog({
                 suggestions={allTrades}
               />
             </div>
+            <Field label="Primary contact">
+              <Input
+                value={contactName}
+                onChange={(e) => setContactName(e.target.value)}
+              />
+            </Field>
+            <Field label="Website">
+              <Input
+                value={website}
+                onChange={(e) => setWebsite(e.target.value)}
+                placeholder="example.com"
+              />
+            </Field>
             <Field label="Phone">
               <Input
                 type="tel"
@@ -337,7 +406,14 @@ function CompanyDialog({
                 onChange={(e) => setPhone(e.target.value)}
               />
             </Field>
-            <Field label="Email">
+            <Field label="Secondary phone">
+              <Input
+                type="tel"
+                value={phoneSecondary}
+                onChange={(e) => setPhoneSecondary(e.target.value)}
+              />
+            </Field>
+            <Field label="Email" className="sm:col-span-2">
               <Input
                 type="email"
                 value={email}
@@ -350,12 +426,49 @@ function CompanyDialog({
                 onChange={(e) => setAddress(e.target.value)}
               />
             </Field>
+            <Field label="City">
+              <Input value={city} onChange={(e) => setCity(e.target.value)} />
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="State">
+                <Input
+                  value={stateField}
+                  onChange={(e) => setStateField(e.target.value)}
+                />
+              </Field>
+              <Field label="ZIP">
+                <Input
+                  value={postalCode}
+                  onChange={(e) => setPostalCode(e.target.value)}
+                />
+              </Field>
+            </div>
             <Field label="Notes" className="sm:col-span-2">
               <Textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 rows={3}
               />
+            </Field>
+            <Field label="Notifications" className="sm:col-span-2">
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={notificationsEnabled}
+                  onChange={(e) => setNotificationsEnabled(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-border-strong"
+                />
+                <span>
+                  <span className="font-medium">
+                    Send assignment notifications
+                  </span>
+                  <span className="block text-xs text-muted">
+                    When on, this company gets a text/email when assigned to a
+                    schedule item. Turn off to keep them quiet (e.g. while
+                    testing).
+                  </span>
+                </span>
+              </label>
             </Field>
           </div>
         </DialogBody>

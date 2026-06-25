@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
+import type { TablesUpdate } from "@/lib/db/types"
 
 const optStr = z.string().nullish()
 
@@ -32,6 +33,18 @@ const CompanyInput = z
     phone: optStr,
     email: optStr,
     notes: optStr,
+    // Master-list fields (migration 0055). The RPC only knows the columns
+    // above, so these are written in a follow-up update below.
+    contact_name: optStr,
+    phone_secondary: optStr,
+    city: optStr,
+    state: optStr,
+    postal_code: optStr,
+    website: optStr,
+    status: optStr,
+    // Per-company notification switch. Optional so a partial-update caller
+    // can't silently flip it; the edit dialog always sends it.
+    notifications_enabled: z.boolean().optional(),
   })
   .passthrough()
 
@@ -84,7 +97,29 @@ export async function saveCompany(input: CompanyInputT) {
     }
   )
   if (error) throw new Error(error.message)
-  void newId
+
+  // The RPC handles the core columns + trades transactionally; the master-list
+  // fields aren't part of its signature, so write them in a follow-up update
+  // on the row the RPC just upserted (newId is the company id for both insert
+  // and update paths). notifications_enabled is only written when explicitly
+  // provided so a partial caller can't flip it by omission.
+  const extra: TablesUpdate<"companies"> = {
+    contact_name: emptyToNull(parsed.contact_name),
+    phone_secondary: emptyToNull(parsed.phone_secondary),
+    city: emptyToNull(parsed.city),
+    state: emptyToNull(parsed.state),
+    postal_code: emptyToNull(parsed.postal_code),
+    website: emptyToNull(parsed.website),
+    status: emptyToNull(parsed.status),
+  }
+  if (parsed.notifications_enabled !== undefined) {
+    extra.notifications_enabled = parsed.notifications_enabled
+  }
+  const { error: extraErr } = await supabase
+    .from("companies")
+    .update(extra)
+    .eq("id", newId)
+  if (extraErr) throw new Error(extraErr.message)
 
   revalidatePath("/companies")
 }

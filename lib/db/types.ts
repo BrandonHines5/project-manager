@@ -17,36 +17,60 @@ export type Database = {
       companies: {
         Row: {
           address: string | null
+          city: string | null
+          contact_name: string | null
           created_at: string
           email: string | null
           id: string
           name: string
           notes: string | null
+          notifications_enabled: boolean
           phone: string | null
+          phone_secondary: string | null
+          postal_code: string | null
+          state: string | null
+          status: string | null
           trade_category: string | null
           type: Database["public"]["Enums"]["company_type"]
+          website: string | null
         }
         Insert: {
           address?: string | null
+          city?: string | null
+          contact_name?: string | null
           created_at?: string
           email?: string | null
           id?: string
           name: string
           notes?: string | null
+          notifications_enabled?: boolean
           phone?: string | null
+          phone_secondary?: string | null
+          postal_code?: string | null
+          state?: string | null
+          status?: string | null
           trade_category?: string | null
           type: Database["public"]["Enums"]["company_type"]
+          website?: string | null
         }
         Update: {
           address?: string | null
+          city?: string | null
+          contact_name?: string | null
           created_at?: string
           email?: string | null
           id?: string
           name?: string
           notes?: string | null
+          notifications_enabled?: boolean
           phone?: string | null
+          phone_secondary?: string | null
+          postal_code?: string | null
+          state?: string | null
+          status?: string | null
           trade_category?: string | null
           type?: Database["public"]["Enums"]["company_type"]
+          website?: string | null
         }
         Relationships: []
       }
