@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import {
   Trash2,
-  Plus,
   X,
   Eye,
   EyeOff,
@@ -94,18 +93,20 @@ export function DailyLogDrawer({
       }))
   })
 
-  const [selCompany, setSelCompany] = useState("")
   // Quick to-dos captured alongside a new log. Only offered when creating —
   // re-saving an edited log shouldn't re-create them. Assignee is encoded as
   // "p:<id>" (profile) or "c:<id>" (company), matching the server's XOR shape.
   const [todos, setTodos] = useState<QuickTodo[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  function addSub() {
-    if (!selCompany) return
-    if (subs.some((s) => s.company_id === selCompany)) return
-    setSubs([...subs, { company_id: selCompany }])
-    setSelCompany("")
+  // Commit-on-select: picking a sub stages it immediately and the dropdown
+  // resets to its placeholder (value=""). The earlier "pick then click +"
+  // flow was easy to miss — users chose a sub, hit Save, and it was never
+  // staged, so it silently vanished even though the log saved fine.
+  function addSub(id: string) {
+    if (!id) return
+    if (subs.some((s) => s.company_id === id)) return
+    setSubs([...subs, { company_id: id }])
   }
   function removeSub(idx: number) {
     setSubs(subs.filter((_, i) => i !== idx))
@@ -334,10 +335,11 @@ export function DailyLogDrawer({
                 })}
               </ul>
             )}
-            <div className="mt-2 flex gap-2">
+            <div className="mt-2">
               <Select
-                value={selCompany}
-                onChange={(e) => setSelCompany(e.target.value)}
+                value=""
+                onChange={(e) => addSub(e.target.value)}
+                aria-label="Add sub or vendor on site"
               >
                 <option value="">Add sub / vendor…</option>
                 {data.companies
@@ -349,14 +351,6 @@ export function DailyLogDrawer({
                     </option>
                   ))}
               </Select>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={addSub}
-                disabled={!selCompany}
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
             </div>
           </div>
 
