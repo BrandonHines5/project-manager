@@ -500,9 +500,13 @@ async function notifyScheduleAssignees(
     if (companyIds.length) {
       const { data: cos } = await supabase
         .from("companies")
-        .select("name, email, phone")
+        .select("name, email, phone, notifications_enabled")
         .in("id", companyIds)
       for (const c of cos ?? []) {
+        // Respect the per-company notification switch — a company with
+        // notifications turned off (e.g. imported subs during testing) gets
+        // no assignment email or SMS.
+        if (!c.notifications_enabled) continue
         if (c.email) emails.push(c.email)
         if (c.phone) {
           const e164 = normalizeE164(c.phone)
