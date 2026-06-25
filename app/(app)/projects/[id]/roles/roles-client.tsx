@@ -164,8 +164,14 @@ function RoleRow({
     () => profiles.filter((p) => p.role !== "client"),
     [profiles]
   )
-  const showPeople = kind === "staff" || kind === "any"
-  const showCompanies = kind === "company" || kind === "any"
+  // Show the kind-preferred group(s), but also always include the group that
+  // matches the currently-assigned member — otherwise a role whose kind was
+  // changed after assignment (e.g. a company filling a now-"staff" role) would
+  // render with a value that has no matching option, showing a misleading
+  // blank/Unassigned even though a member is stored.
+  const showPeople = kind === "staff" || kind === "any" || !!member?.profile_id
+  const showCompanies =
+    kind === "company" || kind === "any" || !!member?.company_id
 
   const value = member?.profile_id
     ? `p:${member.profile_id}`

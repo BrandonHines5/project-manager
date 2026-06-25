@@ -113,7 +113,10 @@ export async function deleteRole(
   const supabase = await createSupabaseServerClient()
   const { error } = await supabase.from("roles").delete().eq("id", parsed.data.id)
   if (error) return { ok: false, error: error.message }
+  // Deleting a role cascades to schedule_assignments + project_role_members,
+  // so any schedule view and My Assignments could now be stale.
   revalidatePath("/projects", "layout")
+  revalidatePath("/my-assignments")
   return { ok: true }
 }
 

@@ -79,8 +79,12 @@ where not exists (
 create table if not exists public.project_role_members (
   project_id uuid not null references public.projects(id) on delete cascade,
   role_id uuid not null references public.roles(id) on delete cascade,
-  profile_id uuid references public.profiles(id) on delete set null,
-  company_id uuid references public.companies(id) on delete set null,
+  -- ON DELETE CASCADE (not SET NULL): when the assignee profile/company is
+  -- deleted the mapping row goes away and the role is simply unfilled. SET
+  -- NULL would zero out the only non-null column and trip the one-assignee
+  -- CHECK below, which would abort the profile/company delete entirely.
+  profile_id uuid references public.profiles(id) on delete cascade,
+  company_id uuid references public.companies(id) on delete cascade,
   updated_at timestamptz not null default now(),
   updated_by uuid references public.profiles(id) on delete set null,
   primary key (project_id, role_id),
@@ -139,8 +143,10 @@ drop policy if exists roles_staff_all on public.roles;
 create policy roles_staff_all on public.roles
   for all using (public.is_staff()) with check (public.is_staff());
 
--- Project role map: staff manage; project members and the assigned trade can
--- read their own project's map so the schedule resolves role names for them.
+-- Project role map: staff manage; only the assigned trade (profile or company)
+-- reads their own membership row, so the schedule resolves role names for them.
+-- Clients are deliberately NOT granted read here — they have no Roles/Schedule
+-- UI and shouldn't see the internal role→assignee map for their job.
 drop policy if exists prm_staff_all on public.project_role_members;
 create policy prm_staff_all on public.project_role_members
   for all using (public.is_staff()) with check (public.is_staff());
@@ -149,8 +155,7 @@ create policy prm_staff_all on public.project_role_members
 drop policy if exists prm_member_read on public.project_role_members;
 create policy prm_member_read on public.project_role_members
   for select using (
-    public.is_member_of_project(project_id)
-    or profile_id = (select auth.uid())
+    profile_id = (select auth.uid())
     or exists (
       select 1 from public.profiles p
       where p.id = (select auth.uid())

@@ -325,7 +325,7 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
             })
           }
         }
-        const notifyRows = newOnes
+        const resolved = newOnes
           .map((r) =>
             r.role_id
               ? roleToMember.get(r.role_id) ?? null
@@ -335,6 +335,16 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
           profile_id: string | null
           company_id: string | null
         }[]
+        // De-dupe recipients: a person/sub can be reached both directly and
+        // via a role that resolves to them, which would otherwise double up
+        // the in-app + email/SMS notifications.
+        const notifySeen = new Set<string>()
+        const notifyRows = resolved.filter((r) => {
+          const key = `${r.profile_id ?? ""}|${r.company_id ?? ""}`
+          if (notifySeen.has(key)) return false
+          notifySeen.add(key)
+          return true
+        })
         if (notifyRows.length) {
           await notifyScheduleAssignees(
             notifyRows,
