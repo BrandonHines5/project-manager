@@ -382,8 +382,11 @@ export async function sendCawForms({
     const { sendEmail } = await import("@/lib/email")
     result = await sendEmail({
       to: CAW_SUBMISSION_EMAIL,
-      // CC the staff member who sent it so they get a copy as confirmation.
+      // CC the staff member who sent it so they get a copy as confirmation, and
+      // set them as Reply-To so CAW's response comes back to their inbox (the
+      // From address is a send-only Resend sender).
       cc: sender.email ?? undefined,
+      replyTo: sender.email ?? undefined,
       subject: `New Water Service Request - ${addr}`,
       text: lines.join("\n"),
       attachments,

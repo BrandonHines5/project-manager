@@ -8,6 +8,9 @@ import { Resend } from "resend"
 export async function sendEmail(opts: {
   to: string | string[]
   cc?: string | string[]
+  // Optional Reply-To. When the recipient hits "Reply" their response goes here
+  // instead of the (often send-only) From address. Omitted callers are unaffected.
+  replyTo?: string | string[]
   subject: string
   text: string
   html?: string
@@ -36,6 +39,7 @@ export async function sendEmail(opts: {
       from,
       to: opts.to,
       ...(opts.cc ? { cc: opts.cc } : {}),
+      ...(opts.replyTo ? { replyTo: opts.replyTo } : {}),
       subject: opts.subject,
       text: opts.text,
       html: opts.html,
