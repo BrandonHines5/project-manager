@@ -543,7 +543,9 @@ export async function getCawPrefill({
   // Prefer a ZIP stored on the CRM record; fall back to the subdivision/city
   // lookup table for projects whose CRM ZIP isn't filled in yet.
   const zip =
-    coerceZip(row.zip ?? row.zip_code ?? row.postal_code ?? row.zipcode) ??
+    [row.zip, row.zip_code, row.postal_code, row.zipcode]
+      .map(coerceZip)
+      .find((value): value is string => Boolean(value)) ??
     resolveCawZip({ subdivision: row.subdivision_name, city: row.city })
   return {
     serviceAddress: row.street_address ?? project.address ?? undefined,
