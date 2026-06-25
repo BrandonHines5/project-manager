@@ -781,24 +781,34 @@ function AssignmentsEditor({
   profiles: ScheduleData["profiles"]
   companies: ScheduleData["companies"]
 }) {
-  const [selProfile, setSelProfile] = useState("")
-  const [selCompany, setSelCompany] = useState("")
-
-  function addProfile() {
-    if (!selProfile) return
-    if (assignments.some((a) => a.profile_id === selProfile)) return
-    onChange([...assignments, { profile_id: selProfile }])
-    setSelProfile("")
+  // Commit-on-select. Picking from either dropdown stages the assignment
+  // immediately and the picker resets to its placeholder (value=""). The
+  // previous "pick then click +" flow was easy to miss — users chose a
+  // sub, hit Save, and the assignment was never staged, so it silently
+  // vanished even though the item itself saved fine ("Saved" toast, no
+  // sub). PredecessorsEditor was fixed the same way for the same reason.
+  function addProfile(id: string) {
+    if (!id) return
+    if (assignments.some((a) => a.profile_id === id)) return
+    onChange([...assignments, { profile_id: id }])
   }
-  function addCompany() {
-    if (!selCompany) return
-    if (assignments.some((a) => a.company_id === selCompany)) return
-    onChange([...assignments, { company_id: selCompany }])
-    setSelCompany("")
+  function addCompany(id: string) {
+    if (!id) return
+    if (assignments.some((a) => a.company_id === id)) return
+    onChange([...assignments, { company_id: id }])
   }
   function remove(i: number) {
     onChange(assignments.filter((_, idx) => idx !== i))
   }
+
+  // Hide already-staged entries from the pickers (same as PredecessorsEditor's
+  // `available`) so re-picking the same person/company isn't a no-op surprise.
+  const availableProfiles = profiles.filter(
+    (p) => !assignments.some((a) => a.profile_id === p.id)
+  )
+  const availableCompanies = companies.filter(
+    (c) => c.type !== "client" && !assignments.some((a) => a.company_id === c.id)
+  )
 
   return (
     <div>
@@ -831,51 +841,31 @@ function AssignmentsEditor({
         })}
       </div>
       <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
-        <div className="flex gap-2">
-          <Select
-            value={selProfile}
-            onChange={(e) => setSelProfile(e.target.value)}
-          >
-            <option value="">Add staff / user…</option>
-            {profiles.map((p) => (
-              <option key={p.id} value={p.id}>
-                {(p.full_name || p.email) + ` · ${p.role}`}
-              </option>
-            ))}
-          </Select>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={addProfile}
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-        <div className="flex gap-2">
-          <Select
-            value={selCompany}
-            onChange={(e) => setSelCompany(e.target.value)}
-          >
-            <option value="">Add subcontractor / vendor…</option>
-            {companies
-              .filter((c) => c.type !== "client")
-              .map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                  {c.trade_category ? ` (${c.trade_category})` : ""}
-                </option>
-              ))}
-          </Select>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={addCompany}
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </Button>
-        </div>
+        <Select
+          value=""
+          onChange={(e) => addProfile(e.target.value)}
+          aria-label="Add staff or user"
+        >
+          <option value="">Add staff / user…</option>
+          {availableProfiles.map((p) => (
+            <option key={p.id} value={p.id}>
+              {(p.full_name || p.email) + ` · ${p.role}`}
+            </option>
+          ))}
+        </Select>
+        <Select
+          value=""
+          onChange={(e) => addCompany(e.target.value)}
+          aria-label="Add subcontractor or vendor"
+        >
+          <option value="">Add subcontractor / vendor…</option>
+          {availableCompanies.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+              {c.trade_category ? ` (${c.trade_category})` : ""}
+            </option>
+          ))}
+        </Select>
       </div>
     </div>
   )
