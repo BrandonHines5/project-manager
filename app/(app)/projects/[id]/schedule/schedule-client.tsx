@@ -23,6 +23,10 @@ export type ScheduleData = {
   signed_urls: Record<string, string>
   profiles: Pick<Tables<"profiles">, "id" | "full_name" | "email" | "role" | "company_id">[]
   companies: Pick<Tables<"companies">, "id" | "name" | "type" | "trade_category" | "phone">[]
+  // Role catalog + this project's role → assignee map, so a schedule item
+  // assigned to a role resolves to "Role (Person)" for display.
+  roles: Pick<Tables<"roles">, "id" | "name" | "kind">[]
+  roleMembers: Pick<Tables<"project_role_members">, "role_id" | "profile_id" | "company_id">[]
 }
 
 type View = "list" | "gantt" | "todos" | "sheet"

@@ -211,10 +211,10 @@ function TemplatePickerPanel({
           </div>
           <p className="text-xs text-muted px-4 py-2 border-b border-border">
             Copies the schedule (work items, to-dos, checklists, predecessor
-            links) AND decisions (selections + change orders, with cost
-            breakdowns, follow-up templates, and attachments) into a new
-            project. Statuses are reset; assignments and project-specific
-            data are not copied.
+            links, role assignments) AND decisions (selections + change orders,
+            with cost breakdowns, follow-up templates, and attachments) into a
+            new project. Statuses are reset; direct person/sub assignments and
+            other project-specific data are not copied.
           </p>
           <ul className="divide-y divide-border max-h-[60vh] overflow-y-auto">
             {templates.map((t) => (
@@ -464,7 +464,7 @@ function ProjectFormFields({
               className="sm:col-span-2"
               hint={
                 selectedTemplate
-                  ? "We'll duplicate this project's schedule (work items, to-dos, checklists, predecessors) and decisions (with cost breakdowns + follow-up templates) into the new project. Statuses are reset; assignments aren't copied."
+                  ? "We'll duplicate this project's schedule (work items, to-dos, checklists, predecessors, role assignments) and decisions (with cost breakdowns + follow-up templates) into the new project. Statuses are reset; direct person/sub assignments aren't copied."
                   : "Optional — pick a template (e.g. \"New House Template\") to start with a pre-built schedule + selection set instead of an empty project."
               }
             >

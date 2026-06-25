@@ -1061,6 +1061,7 @@ export type Database = {
           dashboard_pulled_at: string | null
           dashboard_url: string | null
           id: string
+          is_template: boolean
           labels: string[]
           latitude: number | null
           longitude: number | null
@@ -1091,6 +1092,7 @@ export type Database = {
           dashboard_pulled_at?: string | null
           dashboard_url?: string | null
           id?: string
+          is_template?: boolean
           labels?: string[]
           latitude?: number | null
           longitude?: number | null
@@ -1121,6 +1123,7 @@ export type Database = {
           dashboard_pulled_at?: string | null
           dashboard_url?: string | null
           id?: string
+          is_template?: boolean
           labels?: string[]
           latitude?: number | null
           longitude?: number | null
@@ -1303,6 +1306,93 @@ export type Database = {
           },
         ]
       }
+      project_role_members: {
+        Row: {
+          company_id: string | null
+          profile_id: string | null
+          project_id: string
+          role_id: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          company_id?: string | null
+          profile_id?: string | null
+          project_id: string
+          role_id: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          company_id?: string | null
+          profile_id?: string | null
+          project_id?: string
+          role_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_role_members_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_role_members_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_role_members_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_role_members_role_id_fkey"
+            columns: ["role_id"]
+            isOneToOne: false
+            referencedRelation: "roles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_role_members_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      roles: {
+        Row: {
+          created_at: string
+          id: string
+          kind: string
+          name: string
+          position: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          kind?: string
+          name: string
+          position?: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          kind?: string
+          name?: string
+          position?: number
+        }
+        Relationships: []
+      }
       schedule_assignments: {
         Row: {
           company_id: string | null
@@ -1310,6 +1400,7 @@ export type Database = {
           id: string
           notified_at: string | null
           profile_id: string | null
+          role_id: string | null
           schedule_item_id: string
         }
         Insert: {
@@ -1318,6 +1409,7 @@ export type Database = {
           id?: string
           notified_at?: string | null
           profile_id?: string | null
+          role_id?: string | null
           schedule_item_id: string
         }
         Update: {
@@ -1326,6 +1418,7 @@ export type Database = {
           id?: string
           notified_at?: string | null
           profile_id?: string | null
+          role_id?: string | null
           schedule_item_id?: string
         }
         Relationships: [
@@ -1341,6 +1434,13 @@ export type Database = {
             columns: ["profile_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "schedule_assignments_role_id_fkey"
+            columns: ["role_id"]
+            isOneToOne: false
+            referencedRelation: "roles"
             referencedColumns: ["id"]
           },
           {
@@ -1733,6 +1833,11 @@ export type Database = {
         }
         Returns: string
       }
+      trade_sees_assignment_via_role: {
+        Args: { p_item: string; p_role: string }
+        Returns: boolean
+      }
+      trade_sees_item_via_role: { Args: { p_item: string }; Returns: boolean }
       validate_media_tags: { Args: { p_tags: string[] }; Returns: undefined }
     }
     Enums: {

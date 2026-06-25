@@ -33,6 +33,9 @@ const Recurrence = z
 const Assignment = z.object({
   profile_id: optStr,
   company_id: optStr,
+  // A role-based assignment (migration 0054). Resolves to a concrete person
+  // via the project's role map for display and trade visibility.
+  role_id: optStr,
 })
 
 const ChecklistItem = z.object({
@@ -113,19 +116,24 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
   const parsed = result.data
   const supabase = await createSupabaseServerClient()
 
-  // Enforce assignment XOR: exactly one of profile_id / company_id per row.
-  // Rows where neither is set are dropped silently (user added a row then
-  // didn't pick a value). Rows where both are set are a programming error.
+  // Enforce assignment XOR: exactly one of profile_id / company_id / role_id
+  // per row. Rows where none is set are dropped silently (user added a row
+  // then didn't pick a value). Rows where more than one is set are a
+  // programming error.
   const cleanedAssignments = parsed.assignments
     .map((a) => ({
       profile_id: nz(a.profile_id),
       company_id: nz(a.company_id),
+      role_id: nz(a.role_id),
     }))
-    .filter((a) => a.profile_id || a.company_id)
+    .filter((a) => a.profile_id || a.company_id || a.role_id)
   for (const a of cleanedAssignments) {
-    if (a.profile_id && a.company_id) {
+    if (
+      Number(!!a.profile_id) + Number(!!a.company_id) + Number(!!a.role_id) >
+      1
+    ) {
       throw new Error(
-        "An assignment must reference exactly one of profile or company, not both."
+        "An assignment must reference exactly one of profile, company, or role."
       )
     }
   }
@@ -136,7 +144,9 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
   // todos (work items don't carry a checklist).
   if (parsed.kind === "todo") {
     const seen = new Set(
-      cleanedAssignments.map((a) => `${a.profile_id ?? ""}|${a.company_id ?? ""}`)
+      cleanedAssignments.map(
+        (a) => `${a.profile_id ?? ""}|${a.company_id ?? ""}|${a.role_id ?? ""}`
+      )
     )
     for (const c of parsed.checklist) {
       const pid = nz(c.assignee_profile_id)
@@ -147,10 +157,11 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
         )
       }
       if (!pid && !cid) continue
-      const key = `${pid ?? ""}|${cid ?? ""}`
+      const key = `${pid ?? ""}|${cid ?? ""}|`
       if (seen.has(key)) continue
       seen.add(key)
-      cleanedAssignments.push({ profile_id: pid, company_id: cid })
+      // Checklist assignees are always concrete (profile/company), never roles.
+      cleanedAssignments.push({ profile_id: pid, company_id: cid, role_id: null })
     }
   }
 
@@ -255,7 +266,7 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
   // Replace assignments. Track who is newly assigned so we can notify.
   const { data: oldAssignments } = await supabase
     .from("schedule_assignments")
-    .select("profile_id, company_id")
+    .select("profile_id, company_id, role_id")
     .eq("schedule_item_id", id)
   const { error: aDelErr } = await supabase
     .from("schedule_assignments")
@@ -268,6 +279,7 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
       schedule_item_id: id!,
       profile_id: a.profile_id,
       company_id: a.company_id,
+      role_id: a.role_id,
     }))
     const { error: assignErr } = await supabase
       .from("schedule_assignments")
@@ -279,20 +291,68 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     // try/catch and log instead.
     const oldKeys = new Set(
       (oldAssignments ?? []).map(
-        (a) => `${a.profile_id ?? ""}|${a.company_id ?? ""}`
+        (a) => `${a.profile_id ?? ""}|${a.company_id ?? ""}|${a.role_id ?? ""}`
       )
     )
     const newOnes = rows.filter(
-      (r) => !oldKeys.has(`${r.profile_id ?? ""}|${r.company_id ?? ""}`)
+      (r) =>
+        !oldKeys.has(
+          `${r.profile_id ?? ""}|${r.company_id ?? ""}|${r.role_id ?? ""}`
+        )
     )
     if (newOnes.length) {
       try {
-        await notifyScheduleAssignees(
-          newOnes,
-          parsed.project_id,
-          id!,
-          parsed.title
-        )
+        // Role-based assignments don't name a person directly — resolve each
+        // to this project's current member (project_role_members) so the
+        // right person/sub is notified. Unfilled roles notify no one.
+        const roleIds = newOnes
+          .map((r) => r.role_id)
+          .filter(Boolean) as string[]
+        const roleToMember = new Map<
+          string,
+          { profile_id: string | null; company_id: string | null }
+        >()
+        if (roleIds.length) {
+          const { data: mems } = await supabase
+            .from("project_role_members")
+            .select("role_id, profile_id, company_id")
+            .eq("project_id", parsed.project_id)
+            .in("role_id", roleIds)
+          for (const m of mems ?? []) {
+            roleToMember.set(m.role_id, {
+              profile_id: m.profile_id,
+              company_id: m.company_id,
+            })
+          }
+        }
+        const resolved = newOnes
+          .map((r) =>
+            r.role_id
+              ? roleToMember.get(r.role_id) ?? null
+              : { profile_id: r.profile_id, company_id: r.company_id }
+          )
+          .filter(Boolean) as {
+          profile_id: string | null
+          company_id: string | null
+        }[]
+        // De-dupe recipients: a person/sub can be reached both directly and
+        // via a role that resolves to them, which would otherwise double up
+        // the in-app + email/SMS notifications.
+        const notifySeen = new Set<string>()
+        const notifyRows = resolved.filter((r) => {
+          const key = `${r.profile_id ?? ""}|${r.company_id ?? ""}`
+          if (notifySeen.has(key)) return false
+          notifySeen.add(key)
+          return true
+        })
+        if (notifyRows.length) {
+          await notifyScheduleAssignees(
+            notifyRows,
+            parsed.project_id,
+            id!,
+            parsed.title
+          )
+        }
       } catch (e) {
         console.warn(
           "[saveScheduleItem] notifyScheduleAssignees failed (non-fatal):",

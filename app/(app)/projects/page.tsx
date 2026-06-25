@@ -58,7 +58,7 @@ export default async function ProjectsPage() {
   const { data: projects } = await supabase
     .from("projects")
     .select(
-      "id, project_number, name, address, status, contract_price, start_date, target_completion_date, dashboard_url"
+      "id, project_number, name, address, status, contract_price, start_date, target_completion_date, dashboard_url, is_template"
     )
     .order("created_at", { ascending: false })
 
@@ -289,6 +289,11 @@ export default async function ProjectsPage() {
                       >
                         {p.name}
                       </Link>
+                      {p.is_template && (
+                        <Badge tone="warning" className="ml-2 align-middle">
+                          Template
+                        </Badge>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-muted hidden md:table-cell truncate max-w-xs">
                       {p.address || "—"}

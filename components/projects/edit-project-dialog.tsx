@@ -34,6 +34,7 @@ type EditableProject = {
   client_email_2: string | null
   client_phone_2: string | null
   cost_plus: boolean
+  is_template: boolean
   notes: string | null
 }
 
@@ -93,6 +94,7 @@ function EditProjectDialog({
       client_email_2: String(fd.get("client_email_2") ?? ""),
       client_phone_2: String(fd.get("client_phone_2") ?? ""),
       cost_plus: fd.get("cost_plus") === "on",
+      is_template: fd.get("is_template") === "on",
       notes: String(fd.get("notes") ?? ""),
     } as Parameters<typeof updateProject>[0]
 
@@ -197,6 +199,24 @@ function EditProjectDialog({
                   <span className="font-medium">Cost-plus job</span>
                   <span className="block text-xs text-muted">
                     Track labor hours on daily logs and roll them up per job.
+                  </span>
+                </span>
+              </label>
+            </Field>
+            <Field label="Template" className="sm:col-span-2">
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  name="is_template"
+                  defaultChecked={project.is_template}
+                  className="mt-0.5 h-4 w-4 rounded border-border-strong"
+                />
+                <span>
+                  <span className="font-medium">Use as template</span>
+                  <span className="block text-xs text-muted">
+                    Templates are the only projects offered when creating a new
+                    job from &ldquo;Start from template.&rdquo; Assign their
+                    schedule items to roles, then map roles to people per job.
                   </span>
                 </span>
               </label>

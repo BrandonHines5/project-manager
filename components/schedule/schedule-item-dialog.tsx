@@ -56,11 +56,15 @@ import { isRecurrenceRule, describeRecurrence } from "@/lib/schedule/recurrence"
 import { formatTags, parseTagsInput } from "@/lib/template-tags"
 import type { Tables, Enums } from "@/lib/db/types"
 import type { ScheduleData } from "@/app/(app)/projects/[id]/schedule/schedule-client"
-import { checklistFor, predecessorsOf, delaysFor } from "./helpers"
+import { checklistFor, predecessorsOf, delaysFor, resolveRoleLabel } from "./helpers"
 
 type Mode = "create" | "edit"
 
-type Assignment = { profile_id?: string | null; company_id?: string | null }
+type Assignment = {
+  profile_id?: string | null
+  company_id?: string | null
+  role_id?: string | null
+}
 type ChecklistItem = {
   id?: string
   label: string
@@ -192,6 +196,7 @@ export function ScheduleItemDialog({
       .map((a) => ({
         profile_id: a.profile_id ?? undefined,
         company_id: a.company_id ?? undefined,
+        role_id: a.role_id ?? undefined,
       }))
   })
   const [checklist, setChecklist] = useState<ChecklistItem[]>(() => {
@@ -600,6 +605,8 @@ export function ScheduleItemDialog({
             onChange={setAssignments}
             profiles={data.profiles}
             companies={data.companies}
+            roles={data.roles}
+            roleMembers={data.roleMembers}
           />
 
           {/* Predecessors (work only) */}
@@ -775,11 +782,15 @@ function AssignmentsEditor({
   onChange,
   profiles,
   companies,
+  roles,
+  roleMembers,
 }: {
   assignments: Assignment[]
   onChange: (v: Assignment[]) => void
   profiles: ScheduleData["profiles"]
   companies: ScheduleData["companies"]
+  roles: ScheduleData["roles"]
+  roleMembers: ScheduleData["roleMembers"]
 }) {
   // Commit-on-select. Picking from either dropdown stages the assignment
   // immediately and the picker resets to its placeholder (value=""). The
@@ -797,8 +808,20 @@ function AssignmentsEditor({
     if (assignments.some((a) => a.company_id === id)) return
     onChange([...assignments, { company_id: id }])
   }
+  function addRole(id: string) {
+    if (!id) return
+    if (assignments.some((a) => a.role_id === id)) return
+    onChange([...assignments, { role_id: id }])
+  }
   function remove(i: number) {
     onChange(assignments.filter((_, idx) => idx !== i))
+  }
+
+  // Resolve a role assignment to "Role (Person)" using this project's role map.
+  // Shared with the schedule list/Gantt views via the helper so the label
+  // can't drift between the dialog chips and the rows.
+  function roleLabel(roleId: string): string {
+    return resolveRoleLabel(roleId, { profiles, companies, roles, roleMembers })
   }
 
   // Hide already-staged entries from the pickers (same as PredecessorsEditor's
@@ -809,6 +832,9 @@ function AssignmentsEditor({
   const availableCompanies = companies.filter(
     (c) => c.type !== "client" && !assignments.some((a) => a.company_id === c.id)
   )
+  const availableRoles = roles.filter(
+    (r) => !assignments.some((a) => a.role_id === r.id)
+  )
 
   return (
     <div>
@@ -818,21 +844,38 @@ function AssignmentsEditor({
           <span className="text-xs text-muted">No one assigned yet</span>
         )}
         {assignments.map((a, i) => {
+          // Role chips are tinted differently and show the resolved name so
+          // staff see who the role currently maps to on this job.
+          const isRole = !!a.role_id
           const label = a.profile_id
             ? profiles.find((p) => p.id === a.profile_id)?.full_name ??
               profiles.find((p) => p.id === a.profile_id)?.email ??
               "?"
-            : companies.find((c) => c.id === a.company_id)?.name ?? "?"
+            : a.company_id
+              ? companies.find((c) => c.id === a.company_id)?.name ?? "?"
+              : roleLabel(a.role_id!)
           return (
             <span
-              key={`${a.profile_id ?? ""}-${a.company_id ?? ""}`}
-              className="inline-flex items-center gap-1 rounded-full bg-brand-100 text-brand-700 text-xs px-2 py-0.5"
+              key={`${a.profile_id ?? ""}-${a.company_id ?? ""}-${a.role_id ?? ""}`}
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full text-xs px-2 py-0.5",
+                isRole
+                  ? "bg-amber-100 text-amber-900"
+                  : "bg-brand-100 text-brand-700"
+              )}
             >
               {label}
               <button
                 type="button"
+                aria-label={`Remove ${label}`}
+                title={`Remove ${label}`}
                 onClick={() => remove(i)}
-                className="hover:bg-brand-500 hover:text-white rounded-full p-0.5 cursor-pointer"
+                className={cn(
+                  "rounded-full p-0.5 cursor-pointer",
+                  isRole
+                    ? "hover:bg-amber-500 hover:text-white"
+                    : "hover:bg-brand-500 hover:text-white"
+                )}
               >
                 <X className="h-3 w-3" />
               </button>
@@ -840,7 +883,19 @@ function AssignmentsEditor({
           )
         })}
       </div>
-      <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+      <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <Select
+          value=""
+          onChange={(e) => addRole(e.target.value)}
+          aria-label="Add a role"
+        >
+          <option value="">Add role…</option>
+          {availableRoles.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.name}
+            </option>
+          ))}
+        </Select>
         <Select
           value=""
           onChange={(e) => addProfile(e.target.value)}
@@ -867,6 +922,10 @@ function AssignmentsEditor({
           ))}
         </Select>
       </div>
+      <p className="text-xs text-muted mt-1.5">
+        Assign to a <span className="text-amber-900">role</span> (resolved per
+        job in the Roles tab) or directly to a person or sub.
+      </p>
     </div>
   )
 }
