@@ -13,6 +13,7 @@ import {
   CAW_SUBMISSION_EMAIL,
   CAW_PAYMENT_URL,
   isCawConfigured,
+  resolveCawZip,
 } from "@/lib/utilities/caw/config"
 import { fillCawForms, type CawRenderData } from "@/lib/utilities/caw/pdf"
 import type { TablesInsert, TablesUpdate } from "@/lib/db/types"
@@ -524,9 +525,12 @@ export async function getCawPrefill({
   }
   const sqft = row.total_area_without_veneer ?? row.total_area_with_veneer
   const floors = row.floors
+  // CRM has no ZIP; resolve from subdivision (preferred) or city, else leave blank.
+  const zip = resolveCawZip({ subdivision: row.subdivision_name, city: row.city })
   return {
     serviceAddress: row.street_address ?? project.address ?? undefined,
     city: row.city ?? undefined,
+    zip,
     subdivision: row.subdivision_name ?? undefined,
     block: block || undefined,
     lot: lot || undefined,

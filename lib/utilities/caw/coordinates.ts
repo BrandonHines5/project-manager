@@ -14,7 +14,7 @@ export const NEW_SERVICE = {
     date: { x: 98, y: 559, maxWidth: 210 },
     serviceAddress: { x: 118, y: 538, maxWidth: 168 },
     city: { x: 295, y: 538, maxWidth: 95 },
-    zip: { x: 505, y: 538, maxWidth: 90 },
+    zip: { x: 445, y: 538, maxWidth: 95 },
     subdivision: { x: 165, y: 526, maxWidth: 128 },
     block: { x: 356, y: 526, maxWidth: 38 },
     lot: { x: 455, y: 526, maxWidth: 46 },
@@ -23,15 +23,17 @@ export const NEW_SERVICE = {
     floors: { x: 424, y: 319 },
     unitsPerMeter: { x: 369, y: 308 },
     remarks: { x: 115, y: 240, size: 9, maxWidth: 430 },
-    // Account-for-business block (constant builder info).
-    fullName: { x: 352, y: 182, maxWidth: 235 },
-    ssnTin: { x: 352, y: 164, maxWidth: 235 },
-    phone: { x: 352, y: 101, maxWidth: 195 },
-    altPhone: { x: 565, y: 101, maxWidth: 195 },
-    email: { x: 352, y: 84, maxWidth: 170 },
-    fax: { x: 530, y: 84, maxWidth: 130 },
-    mailingAddress: { x: 352, y: 49, maxWidth: 235 },
-    preparerName: { x: 380, y: 29, maxWidth: 210 },
+    // Account-for-business block (constant builder info). The labels right-align
+    // to a colon column at ~x214, so values start just past it (x220); the long
+    // "Printed name..." label ends further right (x285).
+    fullName: { x: 220, y: 182, maxWidth: 360 },
+    ssnTin: { x: 220, y: 164, maxWidth: 360 },
+    phone: { x: 220, y: 101, maxWidth: 170 },
+    altPhone: { x: 470, y: 101, maxWidth: 120 },
+    email: { x: 220, y: 84, maxWidth: 360 },
+    fax: { x: 470, y: 84, maxWidth: 120 },
+    mailingAddress: { x: 220, y: 49, maxWidth: 360 },
+    preparerName: { x: 285, y: 29, maxWidth: 250 },
   } as Record<string, Pt>,
   // Single-select checkbox columns: X drawn at (x, startY - index*step), where
   // index is the option's position in the matching config array.
@@ -65,9 +67,9 @@ export const NEW_SERVICE = {
 // Page is 612 x 792 pts.
 export const STANDPIPE = {
   text: {
-    applicantName: { x: 145, y: 274, maxWidth: 185 },
-    date: { x: 372, y: 274, maxWidth: 170 },
-    signature: { x: 178, y: 228, maxWidth: 150 },
+    applicantName: { x: 145, y: 277, maxWidth: 185 },
+    date: { x: 372, y: 277, maxWidth: 170 },
+    signature: { x: 178, y: 242, maxWidth: 150 },
     serviceAddress: { x: 402, y: 228, maxWidth: 145 },
     serviceAddress2: { x: 402, y: 200, maxWidth: 145 },
   } as Record<string, Pt>,
@@ -77,10 +79,10 @@ export const STANDPIPE = {
 // Page is 612 x 792 pts.
 export const CONTRACT = {
   text: {
-    applicantTop: { x: 105, y: 653, maxWidth: 150 },
-    date: { x: 320, y: 653, maxWidth: 172 },
-    mailingAddress: { x: 95, y: 605, maxWidth: 158 },
-    serviceAddress: { x: 340, y: 605, maxWidth: 152 },
+    applicantTop: { x: 105, y: 657, maxWidth: 150 },
+    date: { x: 320, y: 657, maxWidth: 172 },
+    mailingAddress: { x: 95, y: 613, maxWidth: 158 },
+    serviceAddress: { x: 340, y: 613, maxWidth: 152 },
     applicantSignature: { x: 105, y: 64, maxWidth: 150 },
   } as Record<string, Pt>,
 } as const
