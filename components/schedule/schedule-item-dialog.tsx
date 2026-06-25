@@ -56,7 +56,7 @@ import { isRecurrenceRule, describeRecurrence } from "@/lib/schedule/recurrence"
 import { formatTags, parseTagsInput } from "@/lib/template-tags"
 import type { Tables, Enums } from "@/lib/db/types"
 import type { ScheduleData } from "@/app/(app)/projects/[id]/schedule/schedule-client"
-import { checklistFor, predecessorsOf, delaysFor } from "./helpers"
+import { checklistFor, predecessorsOf, delaysFor, resolveRoleLabel } from "./helpers"
 
 type Mode = "create" | "edit"
 
@@ -818,18 +818,10 @@ function AssignmentsEditor({
   }
 
   // Resolve a role assignment to "Role (Person)" using this project's role map.
+  // Shared with the schedule list/Gantt views via the helper so the label
+  // can't drift between the dialog chips and the rows.
   function roleLabel(roleId: string): string {
-    const role = roles.find((r) => r.id === roleId)
-    const member = roleMembers.find((m) => m.role_id === roleId)
-    let who = "unassigned"
-    if (member?.profile_id) {
-      const p = profiles.find((x) => x.id === member.profile_id)
-      if (p) who = p.full_name || p.email || "unassigned"
-    } else if (member?.company_id) {
-      const c = companies.find((x) => x.id === member.company_id)
-      if (c) who = c.name
-    }
-    return `${role?.name ?? "Role"} (${who})`
+    return resolveRoleLabel(roleId, { profiles, companies, roles, roleMembers })
   }
 
   // Hide already-staged entries from the pickers (same as PredecessorsEditor's
@@ -875,6 +867,8 @@ function AssignmentsEditor({
               {label}
               <button
                 type="button"
+                aria-label={`Remove ${label}`}
+                title={`Remove ${label}`}
                 onClick={() => remove(i)}
                 className={cn(
                   "rounded-full p-0.5 cursor-pointer",

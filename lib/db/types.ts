@@ -1833,6 +1833,11 @@ export type Database = {
         }
         Returns: string
       }
+      trade_sees_assignment_via_role: {
+        Args: { p_item: string; p_role: string }
+        Returns: boolean
+      }
+      trade_sees_item_via_role: { Args: { p_item: string }; Returns: boolean }
       validate_media_tags: { Args: { p_tags: string[] }; Returns: undefined }
     }
     Enums: {

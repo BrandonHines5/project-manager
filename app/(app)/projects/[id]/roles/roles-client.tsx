@@ -164,14 +164,12 @@ function RoleRow({
     () => profiles.filter((p) => p.role !== "client"),
     [profiles]
   )
-  // Show the kind-preferred group(s), but also always include the group that
-  // matches the currently-assigned member — otherwise a role whose kind was
-  // changed after assignment (e.g. a company filling a now-"staff" role) would
-  // render with a value that has no matching option, showing a misleading
-  // blank/Unassigned even though a member is stored.
-  const showPeople = kind === "staff" || kind === "any" || !!member?.profile_id
-  const showCompanies =
-    kind === "company" || kind === "any" || !!member?.company_id
+  // `kind` is advisory: it only orders the option groups (the preferred kind
+  // first) — it never hides a valid target. setProjectRole accepts either a
+  // profile or a company for any role, so both groups are always offered;
+  // hiding one would block valid mappings and could strand a stored value
+  // that has no matching option.
+  const peopleFirst = kind !== "company"
 
   const value = member?.profile_id
     ? `p:${member.profile_id}`
@@ -221,24 +219,36 @@ function RoleRow({
           aria-label={`Assignee for ${role.name}`}
         >
           <option value="">— Unassigned —</option>
-          {showPeople && people.length > 0 && (
-            <optgroup label="People">
-              {people.map((p) => (
-                <option key={p.id} value={`p:${p.id}`}>
-                  {(p.full_name || p.email) + ` · ${p.role}`}
-                </option>
-              ))}
-            </optgroup>
-          )}
-          {showCompanies && companies.length > 0 && (
-            <optgroup label="Subs / vendors">
-              {companies.map((c) => (
-                <option key={c.id} value={`c:${c.id}`}>
-                  {c.name}
-                  {c.trade_category ? ` (${c.trade_category})` : ""}
-                </option>
-              ))}
-            </optgroup>
+          {(peopleFirst
+            ? ([
+                ["people", people],
+                ["companies", companies],
+              ] as const)
+            : ([
+                ["companies", companies],
+                ["people", people],
+              ] as const)
+          ).map(([group]) =>
+            group === "people"
+              ? people.length > 0 && (
+                  <optgroup key="people" label="People">
+                    {people.map((p) => (
+                      <option key={p.id} value={`p:${p.id}`}>
+                        {(p.full_name || p.email) + ` · ${p.role}`}
+                      </option>
+                    ))}
+                  </optgroup>
+                )
+              : companies.length > 0 && (
+                  <optgroup key="companies" label="Subs / vendors">
+                    {companies.map((c) => (
+                      <option key={c.id} value={`c:${c.id}`}>
+                        {c.name}
+                        {c.trade_category ? ` (${c.trade_category})` : ""}
+                      </option>
+                    ))}
+                  </optgroup>
+                )
           )}
         </Select>
       </div>

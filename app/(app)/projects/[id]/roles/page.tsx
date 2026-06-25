@@ -39,6 +39,9 @@ export default async function ProjectRolesPage({
     supabase
       .from("profiles")
       .select("id, full_name, email, role")
+      // Clients can never fill a role — exclude them server-side so their
+      // names/emails aren't serialized into the page payload.
+      .neq("role", "client")
       .order("full_name", { ascending: true }),
     supabase
       .from("companies")

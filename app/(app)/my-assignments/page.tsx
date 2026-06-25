@@ -126,6 +126,12 @@ export default async function MyAssignmentsPage() {
       myRoleMemberships.map((m) => `${m.project_id}|${m.role_id}`)
     )
     const myRoleIds = [...new Set(myRoleMemberships.map((m) => m.role_id))]
+    const myProjectIds = [
+      ...new Set(myRoleMemberships.map((m) => m.project_id)),
+    ]
+    // Constrain by both role_id AND the joined item's project_id so an org-wide
+    // role (e.g. "Project Manager") doesn't pull every assignment for that role
+    // across all projects before the in-memory (project,role) pair check.
     const { data: roleAssignments, error: raErr } = await supabase
       .from("schedule_assignments")
       .select(
@@ -137,6 +143,7 @@ export default async function MyAssignmentsPage() {
          )`
       )
       .in("role_id", myRoleIds)
+      .in("schedule_items.project_id", myProjectIds)
     if (raErr) throw new Error(raErr.message)
 
     for (const a of roleAssignments ?? []) {

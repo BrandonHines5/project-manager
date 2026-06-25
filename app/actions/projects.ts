@@ -669,11 +669,20 @@ export type DuplicateProjectInputT = z.infer<typeof DuplicateProjectInput>
 
 /**
  * Clone a project's structure (schedule items + checklists + predecessors,
- * role-based assignments, plus decisions/selections with their cost
+ * role-based schedule assignments, plus decisions/selections with their cost
  * breakdowns, follow-up templates, and attachments) into a brand-new project.
- * Skips project-specific data: direct (person/company) assignments, daily
- * logs, files, payments, project_members, comments. Role-based assignments DO
- * carry forward — they resolve to people through the new project's role map.
+ *
+ * Skips project-specific data: direct (person/company) SCHEDULE assignments,
+ * daily logs, files, payments, project_members, comments. Role-based schedule
+ * assignments DO carry forward — they resolve to people through the new
+ * project's role map.
+ *
+ * Note: this "direct vs role" rule applies to schedule_assignments only.
+ * Decision follow-up TEMPLATES still copy their assignee_profile_id /
+ * assignee_company_id verbatim (pre-existing behavior) — follow-up templates
+ * don't support role targets yet, so clearing them would silently drop a
+ * template's intended follow-up owner. Adding role support there is a separate
+ * follow-up.
  *
  * Intended primary use: a "template" project staff maintain as the standard
  * Hines Homes build schedule + selections, duplicated for each new build.

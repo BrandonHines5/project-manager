@@ -134,11 +134,12 @@ create unique index if not exists uq_schedule_assignments_target
 alter table public.roles                 enable row level security;
 alter table public.project_role_members  enable row level security;
 
--- Roles are plain labels — everyone authenticated can read them (needed to
--- resolve "Role (Person)" everywhere); only staff manage the catalog.
+-- Roles are plain labels — every signed-in user can read them (needed to
+-- resolve "Role (Person)" everywhere); only staff manage the catalog. Scoped
+-- to `authenticated` so the anon API role can't read the catalog.
 drop policy if exists roles_read_all on public.roles;
 create policy roles_read_all on public.roles
-  for select using (true);
+  for select to authenticated using (true);
 drop policy if exists roles_staff_all on public.roles;
 create policy roles_staff_all on public.roles
   for all using (public.is_staff()) with check (public.is_staff());
