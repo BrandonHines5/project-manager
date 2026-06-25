@@ -382,8 +382,11 @@ export async function sendCawForms({
     const { sendEmail } = await import("@/lib/email")
     result = await sendEmail({
       to: CAW_SUBMISSION_EMAIL,
-      // CC the staff member who sent it so they get a copy as confirmation.
+      // CC the staff member who sent it so they get a copy as confirmation, and
+      // set them as Reply-To so CAW's response comes back to their inbox (the
+      // From address is a send-only Resend sender).
       cc: sender.email ?? undefined,
+      replyTo: sender.email ?? undefined,
       subject: `New Water Service Request - ${addr}`,
       text: lines.join("\n"),
       attachments,
@@ -540,7 +543,9 @@ export async function getCawPrefill({
   // Prefer a ZIP stored on the CRM record; fall back to the subdivision/city
   // lookup table for projects whose CRM ZIP isn't filled in yet.
   const zip =
-    coerceZip(row.zip ?? row.zip_code ?? row.postal_code ?? row.zipcode) ??
+    [row.zip, row.zip_code, row.postal_code, row.zipcode]
+      .map(coerceZip)
+      .find((value): value is string => Boolean(value)) ??
     resolveCawZip({ subdivision: row.subdivision_name, city: row.city })
   return {
     serviceAddress: row.street_address ?? project.address ?? undefined,
