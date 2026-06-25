@@ -48,6 +48,7 @@ export const CAW_ZIP_BY_CITY: Record<string, string> = {
   maumelle: "72113",
 }
 
+/** Normalize a subdivision/city name to a lookup key (trimmed, lowercased). */
 const normalizeKey = (s: string | null | undefined): string =>
   (s ?? "").trim().toLowerCase()
 
