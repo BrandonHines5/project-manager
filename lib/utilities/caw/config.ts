@@ -34,6 +34,39 @@ export const CAW_SUBMISSION_EMAIL =
 export const CAW_PAYMENT_URL =
   process.env.CAW_PAYMENT_URL ?? "PLACEHOLDER_CAW_PAYMENT_URL"
 
+// ---- ZIP lookup -----------------------------------------------------------
+// The CRM has no ZIP column and project addresses are often just a street, so
+// we resolve ZIP from the subdivision (most precise) and fall back to the city.
+// Keys are normalized (lowercased, trimmed). Extend these as new subdivisions /
+// cities come online — a missing match just leaves ZIP blank for the user to
+// type. Most Hines Homes jobs are in Maumelle (72113).
+export const CAW_ZIP_BY_SUBDIVISION: Record<string, string> = {
+  "natural trail estates": "72113",
+  "ridgeview trails": "72113",
+}
+export const CAW_ZIP_BY_CITY: Record<string, string> = {
+  maumelle: "72113",
+}
+
+/** Normalize a subdivision/city name to a lookup key (trimmed, lowercased). */
+const normalizeKey = (s: string | null | undefined): string =>
+  (s ?? "").trim().toLowerCase()
+
+/**
+ * Resolve a ZIP from subdivision (preferred) or city. Returns undefined when
+ * neither is known, so callers leave the field blank rather than guessing.
+ */
+export function resolveCawZip(input: {
+  subdivision?: string | null
+  city?: string | null
+}): string | undefined {
+  const bySub = CAW_ZIP_BY_SUBDIVISION[normalizeKey(input.subdivision)]
+  if (bySub) return bySub
+  const byCity = CAW_ZIP_BY_CITY[normalizeKey(input.city)]
+  if (byCity) return byCity
+  return undefined
+}
+
 /**
  * Whether enough is configured to EMAIL a valid application to CAW: the full
  * builder identity plus the intake address. Deliberately NOT gated on the TIN

@@ -528,6 +528,10 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
                       </li>
                     ))}
                   </ul>
+                  <div className="mt-3 pt-3 border-t border-border text-xs text-muted">
+                    “Send to CAW” will email these to{" "}
+                    <span className="font-medium text-foreground">{data.submissionEmail}</span>.
+                  </div>
                 </div>
               )}
 
