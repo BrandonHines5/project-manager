@@ -14,19 +14,18 @@ export default async function ProjectRolesPage({
   const { id: projectId } = await params
   const supabase = await createSupabaseServerClient()
 
-  const { data: project } = await supabase
+  // Surface read failures rather than swallowing them: this is a mutation
+  // surface, so a DB/RLS error that silently rendered every role as unassigned
+  // could lead staff to overwrite real mappings from a bad snapshot.
+  const { data: project, error: projectErr } = await supabase
     .from("projects")
     .select("id, name, is_template, project_manager")
     .eq("id", projectId)
     .maybeSingle()
+  if (projectErr) throw new Error(projectErr.message)
   if (!project) notFound()
 
-  const [
-    { data: roles },
-    { data: members },
-    { data: profiles },
-    { data: companies },
-  ] = await Promise.all([
+  const [rolesRes, membersRes, profilesRes, companiesRes] = await Promise.all([
     supabase
       .from("roles")
       .select("id, name, kind, position")
@@ -49,16 +48,19 @@ export default async function ProjectRolesPage({
       .neq("type", "client")
       .order("name", { ascending: true }),
   ])
+  const readErr =
+    rolesRes.error ?? membersRes.error ?? profilesRes.error ?? companiesRes.error
+  if (readErr) throw new Error(readErr.message)
 
   return (
     <RolesClient
       projectId={project.id}
       isTemplate={project.is_template}
       projectManager={project.project_manager}
-      roles={roles ?? []}
-      members={members ?? []}
-      profiles={profiles ?? []}
-      companies={companies ?? []}
+      roles={rolesRes.data ?? []}
+      members={membersRes.data ?? []}
+      profiles={profilesRes.data ?? []}
+      companies={companiesRes.data ?? []}
     />
   )
 }
