@@ -1067,6 +1067,69 @@ export type Database = {
           },
         ]
       }
+      project_role_members: {
+        Row: {
+          company_id: string | null
+          profile_id: string | null
+          project_id: string
+          role_id: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          company_id?: string | null
+          profile_id?: string | null
+          project_id: string
+          role_id: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          company_id?: string | null
+          profile_id?: string | null
+          project_id?: string
+          role_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_role_members_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_role_members_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_role_members_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_role_members_role_id_fkey"
+            columns: ["role_id"]
+            isOneToOne: false
+            referencedRelation: "roles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_role_members_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       projects: {
         Row: {
           address: string | null
@@ -1178,42 +1241,6 @@ export type Database = {
           },
         ]
       }
-      rental_properties: {
-        Row: {
-          address: string
-          created_at: string
-          crm_rental_id: string | null
-          id: string
-          lease_status: string | null
-          property_owner: string | null
-          synced_at: string
-          tenant_name: string | null
-          updated_at: string
-        }
-        Insert: {
-          address: string
-          created_at?: string
-          crm_rental_id?: string | null
-          id?: string
-          lease_status?: string | null
-          property_owner?: string | null
-          synced_at?: string
-          tenant_name?: string | null
-          updated_at?: string
-        }
-        Update: {
-          address?: string
-          created_at?: string
-          crm_rental_id?: string | null
-          id?: string
-          lease_status?: string | null
-          property_owner?: string | null
-          synced_at?: string
-          tenant_name?: string | null
-          updated_at?: string
-        }
-        Relationships: []
-      }
       rental_items: {
         Row: {
           created_at: string
@@ -1262,6 +1289,13 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "rental_items_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "rental_items_rental_property_id_fkey"
             columns: ["rental_property_id"]
             isOneToOne: false
@@ -1270,128 +1304,41 @@ export type Database = {
           },
         ]
       }
-      utility_requests: {
+      rental_properties: {
         Row: {
+          address: string
           created_at: string
-          created_by: string | null
-          form_data: Json
-          generated_file_paths: string[]
+          crm_rental_id: string | null
           id: string
-          paid_at: string | null
-          payment_url: string | null
-          project_id: string
-          provider: Database["public"]["Enums"]["utility_provider"]
-          status: Database["public"]["Enums"]["utility_request_status"]
-          submitted_at: string | null
+          lease_status: string | null
+          property_owner: string | null
+          synced_at: string
+          tenant_name: string | null
           updated_at: string
         }
         Insert: {
+          address: string
           created_at?: string
-          created_by?: string | null
-          form_data?: Json
-          generated_file_paths?: string[]
+          crm_rental_id?: string | null
           id?: string
-          paid_at?: string | null
-          payment_url?: string | null
-          project_id: string
-          provider?: Database["public"]["Enums"]["utility_provider"]
-          status?: Database["public"]["Enums"]["utility_request_status"]
-          submitted_at?: string | null
+          lease_status?: string | null
+          property_owner?: string | null
+          synced_at?: string
+          tenant_name?: string | null
           updated_at?: string
         }
         Update: {
+          address?: string
           created_at?: string
-          created_by?: string | null
-          form_data?: Json
-          generated_file_paths?: string[]
+          crm_rental_id?: string | null
           id?: string
-          paid_at?: string | null
-          payment_url?: string | null
-          project_id?: string
-          provider?: Database["public"]["Enums"]["utility_provider"]
-          status?: Database["public"]["Enums"]["utility_request_status"]
-          submitted_at?: string | null
+          lease_status?: string | null
+          property_owner?: string | null
+          synced_at?: string
+          tenant_name?: string | null
           updated_at?: string
         }
-        Relationships: [
-          {
-            foreignKeyName: "utility_requests_created_by_fkey"
-            columns: ["created_by"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "utility_requests_project_id_fkey"
-            columns: ["project_id"]
-            isOneToOne: false
-            referencedRelation: "projects"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      project_role_members: {
-        Row: {
-          company_id: string | null
-          profile_id: string | null
-          project_id: string
-          role_id: string
-          updated_at: string
-          updated_by: string | null
-        }
-        Insert: {
-          company_id?: string | null
-          profile_id?: string | null
-          project_id: string
-          role_id: string
-          updated_at?: string
-          updated_by?: string | null
-        }
-        Update: {
-          company_id?: string | null
-          profile_id?: string | null
-          project_id?: string
-          role_id?: string
-          updated_at?: string
-          updated_by?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "project_role_members_company_id_fkey"
-            columns: ["company_id"]
-            isOneToOne: false
-            referencedRelation: "companies"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "project_role_members_profile_id_fkey"
-            columns: ["profile_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "project_role_members_project_id_fkey"
-            columns: ["project_id"]
-            isOneToOne: false
-            referencedRelation: "projects"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "project_role_members_role_id_fkey"
-            columns: ["role_id"]
-            isOneToOne: false
-            referencedRelation: "roles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "project_role_members_updated_by_fkey"
-            columns: ["updated_by"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       roles: {
         Row: {
@@ -1611,9 +1558,9 @@ export type Database = {
           title: string
           updated_at: string
           warranty_date_noted: string | null
+          warranty_no_action: boolean
           warranty_resolution: string | null
           warranty_who_fixing: string | null
-          warranty_no_action: boolean
         }
         Insert: {
           baseline_end_date?: string | null
@@ -1644,9 +1591,9 @@ export type Database = {
           title: string
           updated_at?: string
           warranty_date_noted?: string | null
+          warranty_no_action?: boolean
           warranty_resolution?: string | null
           warranty_who_fixing?: string | null
-          warranty_no_action?: boolean
         }
         Update: {
           baseline_end_date?: string | null
@@ -1677,9 +1624,9 @@ export type Database = {
           title?: string
           updated_at?: string
           warranty_date_noted?: string | null
+          warranty_no_action?: boolean
           warranty_resolution?: string | null
           warranty_who_fixing?: string | null
-          warranty_no_action?: boolean
         }
         Relationships: [
           {
@@ -1816,6 +1763,72 @@ export type Database = {
           },
         ]
       }
+      utility_requests: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          crm_project_id: string | null
+          form_data: Json
+          generated_file_paths: string[]
+          id: string
+          job_label: string | null
+          paid_at: string | null
+          payment_url: string | null
+          project_id: string | null
+          provider: Database["public"]["Enums"]["utility_provider"]
+          status: Database["public"]["Enums"]["utility_request_status"]
+          submitted_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          crm_project_id?: string | null
+          form_data?: Json
+          generated_file_paths?: string[]
+          id?: string
+          job_label?: string | null
+          paid_at?: string | null
+          payment_url?: string | null
+          project_id?: string | null
+          provider?: Database["public"]["Enums"]["utility_provider"]
+          status?: Database["public"]["Enums"]["utility_request_status"]
+          submitted_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          crm_project_id?: string | null
+          form_data?: Json
+          generated_file_paths?: string[]
+          id?: string
+          job_label?: string | null
+          paid_at?: string | null
+          payment_url?: string | null
+          project_id?: string | null
+          provider?: Database["public"]["Enums"]["utility_provider"]
+          status?: Database["public"]["Enums"]["utility_request_status"]
+          submitted_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "utility_requests_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "utility_requests_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -1824,10 +1837,6 @@ export type Database = {
       append_checklist_item: {
         Args: { p_label: string; p_schedule_item_id: string }
         Returns: string
-      }
-      set_project_label: {
-        Args: { p_add: boolean; p_ids: string[]; p_label: string }
-        Returns: number
       }
       client_decide_decision: {
         Args: { p_action: string; p_choice_id?: string; p_decision_id: string }
@@ -1856,6 +1865,10 @@ export type Database = {
           p_type: Database["public"]["Enums"]["company_type"]
         }
         Returns: string
+      }
+      set_project_label: {
+        Args: { p_add: boolean; p_ids: string[]; p_label: string }
+        Returns: number
       }
       trade_sees_assignment_via_role: {
         Args: { p_item: string; p_role: string }

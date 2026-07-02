@@ -71,11 +71,19 @@ const CawForm = z.object({
 })
 export type CawFormT = z.infer<typeof CawForm>
 
-const SaveInput = z.object({
-  id: z.string().nullish(),
-  project_id: z.string().min(1),
-  form: CawForm,
-})
+// A request's job can live in this app (project_id), in the CRM
+// (crm_project_id), or both — the dropdown is sourced from the CRM, where most
+// active jobs have no local project row yet.
+const SaveInput = z
+  .object({
+    id: z.string().nullish(),
+    project_id: z.string().nullish(),
+    crm_project_id: z.string().nullish(),
+    form: CawForm,
+  })
+  .refine((v) => v.project_id || v.crm_project_id, {
+    message: "Pick a job first.",
+  })
 export type SaveUtilityInputT = z.input<typeof SaveInput>
 
 function firstIssue(error: z.ZodError): string {
@@ -121,21 +129,82 @@ function toRenderData(form: CawFormT): CawRenderData {
 
 // ---- Actions --------------------------------------------------------------
 
+/**
+ * Resolve the job a request points at — server-side, never trusting the
+ * client's pairing. For a CRM job we re-derive the local project link (shared
+ * key: project_number) and snapshot a display label; for a local-only job the
+ * label comes from the projects row.
+ */
+async function resolveJob(input: {
+  project_id?: string | null
+  crm_project_id?: string | null
+}): Promise<{ projectId: string | null; crmProjectId: string | null; jobLabel: string }> {
+  const supabase = await createSupabaseServerClient()
+
+  if (input.crm_project_id) {
+    const crm = createCrmClient()
+    if (!crm) {
+      throw new Error(
+        "CRM connection not configured. Set CRM_SUPABASE_URL and CRM_SUPABASE_SERVICE_ROLE_KEY in Vercel."
+      )
+    }
+    const { data, error } = await crm
+      .from("projects")
+      .select("id, project_number, street_address, city, client_name")
+      .eq("id", input.crm_project_id)
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    if (!data) throw new Error("That CRM job could not be found.")
+    const row = data as {
+      id: string
+      project_number: string | null
+      street_address: string | null
+      city: string | null
+      client_name: string | null
+    }
+    // Link the local project too when one shares the job's project_number.
+    let projectId: string | null = null
+    if (row.project_number) {
+      const { data: local } = await supabase
+        .from("projects")
+        .select("id")
+        .eq("project_number", row.project_number)
+        .limit(1)
+        .maybeSingle()
+      projectId = local?.id ?? null
+    }
+    const place = row.street_address?.trim() || row.city?.trim() || "Unknown address"
+    const client = row.client_name?.trim()
+    return {
+      projectId,
+      crmProjectId: row.id,
+      jobLabel: `${row.project_number ?? "?"} — ${place}${client ? ` (${client})` : ""}`,
+    }
+  }
+
+  // Local-only job: confirm it's visible to this staff member (RLS-scoped).
+  const { data: project } = await supabase
+    .from("projects")
+    .select("id, project_number, name")
+    .eq("id", input.project_id!)
+    .maybeSingle()
+  if (!project) throw new Error("Project not found or not visible.")
+  return {
+    projectId: project.id,
+    crmProjectId: null,
+    jobLabel: `${project.project_number} — ${project.name}`,
+  }
+}
+
 /** Create or update a draft utility request (CAW). Returns the row id. */
 export async function saveUtilityDraft(input: SaveUtilityInputT): Promise<{ id: string }> {
   const profile = await requireStaff()
   const parsed = SaveInput.safeParse(input)
   if (!parsed.success) throw new Error(firstIssue(parsed.error))
-  const { id, project_id, form } = parsed.data
+  const { id, form } = parsed.data
   const supabase = await createSupabaseServerClient()
 
-  // Confirm the project is visible to this staff member (RLS-scoped).
-  const { data: project } = await supabase
-    .from("projects")
-    .select("id")
-    .eq("id", project_id)
-    .maybeSingle()
-  if (!project) throw new Error("Project not found or not visible.")
+  const { projectId, crmProjectId, jobLabel } = await resolveJob(parsed.data)
 
   if (id) {
     // Editing the answers invalidates any previously generated PDFs, so clear
@@ -144,24 +213,36 @@ export async function saveUtilityDraft(input: SaveUtilityInputT): Promise<{ id: 
     // from storage after the row is updated.
     const { data: existing } = await supabase
       .from("utility_requests")
-      .select("generated_file_paths")
+      .select("project_id, crm_project_id, generated_file_paths")
       .eq("id", id)
-      .eq("project_id", project_id)
       .eq("status", "draft")
       .maybeSingle()
+    if (!existing) throw new Error("Draft not found or not editable.")
 
-    // Scope to the same project + draft status, and confirm a row was updated.
+    // The draft must still reference the SAME job on at least one link — a
+    // pre-CRM draft carries only project_id, a CRM-sourced one only/also
+    // crm_project_id. Updating then upgrades the row to the full linkage.
+    const sameJob =
+      (crmProjectId && existing.crm_project_id === crmProjectId) ||
+      (projectId && existing.project_id === projectId)
+    if (!sameJob) throw new Error("Draft not found, not editable, or job mismatch.")
+
     const { data: updated, error } = await supabase
       .from("utility_requests")
-      .update({ form_data: form, generated_file_paths: [] })
+      .update({
+        form_data: form,
+        generated_file_paths: [],
+        project_id: projectId,
+        crm_project_id: crmProjectId ?? existing.crm_project_id,
+        job_label: jobLabel,
+      })
       .eq("id", id)
-      .eq("project_id", project_id)
       .eq("status", "draft") // only drafts are editable
       .select("id")
       .maybeSingle()
     if (error) throw new Error(error.message)
     if (!updated) {
-      throw new Error("Draft not found, not editable, or project mismatch.")
+      throw new Error("Draft not found, not editable, or job mismatch.")
     }
     // Best-effort cleanup of the now-orphaned PDF objects. Done after the DB
     // update so a storage hiccup never blocks the save; the rows are already
@@ -177,7 +258,9 @@ export async function saveUtilityDraft(input: SaveUtilityInputT): Promise<{ id: 
   }
 
   const row: TablesInsert<"utility_requests"> = {
-    project_id,
+    project_id: projectId,
+    crm_project_id: crmProjectId,
+    job_label: jobLabel,
     provider: "central_arkansas_water",
     status: "draft",
     form_data: form,
@@ -215,7 +298,7 @@ export async function generateCawPdfs({
 
   const { data: req, error } = await supabase
     .from("utility_requests")
-    .select("id, project_id, status, form_data, generated_file_paths, updated_at")
+    .select("id, project_id, crm_project_id, status, form_data, generated_file_paths, updated_at")
     .eq("id", requestId)
     .maybeSingle()
   if (error) throw new Error(error.message)
@@ -234,11 +317,16 @@ export async function generateCawPdfs({
   const store = await storageClient()
   const priorPaths = req.generated_file_paths ?? []
 
+  // CRM-only jobs have no local project row, so their PDFs live under a
+  // crm-jobs/ prefix instead (the staff storage policy is bucket-wide).
+  const root = req.project_id
+    ? `projects/${req.project_id}`
+    : `crm-jobs/${req.crm_project_id}`
   const ts = Date.now()
   const out: { key: string; filename: string; path: string; url: string }[] = []
   const paths: string[] = []
   for (const f of filled) {
-    const path = `projects/${req.project_id}/utilities/caw/${ts}-${f.key}.pdf`
+    const path = `${root}/utilities/caw/${ts}-${f.key}.pdf`
     const { error: upErr } = await store.storage
       .from(BUCKET)
       .upload(path, Buffer.from(f.bytes), {
@@ -481,57 +569,24 @@ export type CawPrefill = {
   source: "crm" | "none"
 }
 
-/**
- * Pull extra property details from the Hines Homes CRM (matched by
- * project_number) to pre-fill the CAW form: city, subdivision, lot/block,
- * square footage, and floor count. Best-effort — returns source:"none" (with
- * just the local address) when the CRM isn't configured or has no matching row.
- * Note: the CRM has no ZIP column, so ZIP is left for the user to enter.
- */
-export async function getCawPrefill({
-  projectId,
-}: {
-  projectId: string
-}): Promise<CawPrefill> {
-  await requireStaff()
-  const supabase = await createSupabaseServerClient()
-  const { data: project } = await supabase
-    .from("projects")
-    .select("project_number, address")
-    .eq("id", projectId)
-    .maybeSingle()
-  if (!project) return { source: "none" }
+// Raw shape we read from the CRM projects_dashboard_full view (untyped client,
+// so we narrow it ourselves).
+type CrmPrefillRow = {
+  street_address: string | null
+  city: string | null
+  lot_block: string | null
+  subdivision_name: string | null
+  total_area_without_veneer: number | null
+  total_area_with_veneer: number | null
+  floors: number | null
+  zip?: string | number | null
+  zip_code?: string | number | null
+  postal_code?: string | number | null
+  zipcode?: string | number | null
+}
 
-  const fallback: CawPrefill = {
-    serviceAddress: project.address ?? undefined,
-    source: "none",
-  }
-  const crm = createCrmClient()
-  if (!crm || !project.project_number) return fallback
-
-  // select("*") so we pick up a ZIP column whatever it's named in the view
-  // (zip / zip_code / postal_code), and so a not-yet-added column never errors
-  // the query — it just comes back undefined.
-  const { data, error } = await crm
-    .from("projects_dashboard_full")
-    .select("*")
-    .eq("project_number", project.project_number)
-    .maybeSingle()
-  if (error || !data) return fallback
-
-  const row = data as {
-    street_address: string | null
-    city: string | null
-    lot_block: string | null
-    subdivision_name: string | null
-    total_area_without_veneer: number | null
-    total_area_with_veneer: number | null
-    floors: number | null
-    zip?: string | number | null
-    zip_code?: string | number | null
-    postal_code?: string | number | null
-    zipcode?: string | number | null
-  }
+/** Map a CRM dashboard row to the CAW prefill fields. */
+function prefillFromCrmRow(row: CrmPrefillRow, fallbackAddress?: string): CawPrefill {
   // lot_block is stored as "{lot}-{block}" (e.g. "15-1").
   let lot = ""
   let block = ""
@@ -550,7 +605,7 @@ export async function getCawPrefill({
       .find((value): value is string => Boolean(value)) ??
     resolveCawZip({ subdivision: row.subdivision_name, city: row.city })
   return {
-    serviceAddress: row.street_address ?? project.address ?? undefined,
+    serviceAddress: row.street_address ?? fallbackAddress ?? undefined,
     city: row.city ?? undefined,
     zip,
     subdivision: row.subdivision_name ?? undefined,
@@ -561,6 +616,63 @@ export async function getCawPrefill({
     floors: floors != null && floors > 1 ? String(floors) : undefined,
     source: "crm",
   }
+}
+
+/**
+ * Pull extra property details from the Hines Homes CRM to pre-fill the CAW
+ * form: city, ZIP, subdivision, lot/block, square footage, and floor count.
+ * Jobs picked from the CRM-sourced dropdown pass crmId (direct lookup);
+ * local-only projects pass projectId (matched by project_number). Best-effort
+ * — returns source:"none" (with just the local address, if any) when the CRM
+ * isn't configured or has no matching row.
+ */
+export async function getCawPrefill({
+  projectId,
+  crmId,
+}: {
+  projectId?: string | null
+  crmId?: string | null
+}): Promise<CawPrefill> {
+  await requireStaff()
+  const crm = createCrmClient()
+
+  if (crmId) {
+    if (!crm) return { source: "none" }
+    // select("*") so we pick up a ZIP column whatever it's named in the view
+    // (zip / zip_code / postal_code), and so a not-yet-added column never
+    // errors the query — it just comes back undefined.
+    const { data, error } = await crm
+      .from("projects_dashboard_full")
+      .select("*")
+      .eq("id", crmId)
+      .maybeSingle()
+    if (error || !data) return { source: "none" }
+    return prefillFromCrmRow(data as CrmPrefillRow)
+  }
+
+  if (!projectId) return { source: "none" }
+  const supabase = await createSupabaseServerClient()
+  const { data: project } = await supabase
+    .from("projects")
+    .select("project_number, address")
+    .eq("id", projectId)
+    .maybeSingle()
+  if (!project) return { source: "none" }
+
+  const fallback: CawPrefill = {
+    serviceAddress: project.address ?? undefined,
+    source: "none",
+  }
+  if (!crm || !project.project_number) return fallback
+
+  const { data, error } = await crm
+    .from("projects_dashboard_full")
+    .select("*")
+    .eq("project_number", project.project_number)
+    .maybeSingle()
+  if (error || !data) return fallback
+
+  return prefillFromCrmRow(data as CrmPrefillRow, project.address ?? undefined)
 }
 
 /** Sign storage paths for preview/download (1hr). */
