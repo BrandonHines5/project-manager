@@ -21,14 +21,22 @@ const METER_SIZES = ["5/8", "3/4", "1", "1 1/2", "2", "3", "4"] as const
 type MeterSize = (typeof METER_SIZES)[number]
 const METER_PROMPT_SQFT = 4000
 
+// One pickable job. Sourced from the CRM (all active jobs — In Work or
+// Upcoming), each linked to a local project when one shares its
+// project_number; falls back to the local project list when the CRM
+// connection isn't configured. `key` is the stable dropdown value.
+export type UtilityJob = {
+  key: string
+  project_id: string | null
+  crm_project_id: string | null
+  label: string
+  address: string | null
+  crm_status: "In Work" | "Upcoming" | null
+}
+
 export type UtilitiesData = {
-  projects: {
-    id: string
-    project_number: string
-    name: string
-    address: string | null
-    client_name: string | null
-  }[]
+  jobs: UtilityJob[]
+  jobsSource: "crm" | "local"
   requests: UtilityRequestRow[]
   builder: {
     companyName: string
@@ -45,7 +53,8 @@ export type UtilitiesData = {
 
 export type UtilityRequestRow = {
   id: string
-  project_id: string
+  project_id: string | null
+  crm_project_id: string | null
   project_label: string
   provider: string
   status: "draft" | "submitted" | "awaiting_payment" | "paid" | "complete"
@@ -177,13 +186,15 @@ const STATUS_LABEL: Record<UtilityRequestRow["status"], string> = {
 export function UtilitiesClient({ data }: { data: UtilitiesData }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
-  const [projectId, setProjectId] = useState("")
+  const [jobKey, setJobKey] = useState("")
   const [currentId, setCurrentId] = useState<string | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm())
   const [generated, setGenerated] = useState<{ filename: string; url: string }[]>([])
   // Tracks the most recent job selection so a slow CRM prefill for an earlier
-  // job can't land on top of a newer one (see onSelectProject).
-  const latestPrefillProjectId = useRef<string>("")
+  // job can't land on top of a newer one (see onSelectJob).
+  const latestPrefillJobKey = useRef<string>("")
+
+  const selectedJob = data.jobs.find((j) => j.key === jobKey)
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => {
     setForm((f) => ({ ...f, [k]: v }))
@@ -195,23 +206,26 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
   const sqft = parseInt(form.squareFootage || "0", 10) || 0
   const meterWarning = sqft > METER_PROMPT_SQFT && form.meterSize === "5/8"
 
-  function onSelectProject(id: string) {
-    latestPrefillProjectId.current = id
-    setProjectId(id)
+  function onSelectJob(key: string) {
+    latestPrefillJobKey.current = key
+    setJobKey(key)
     setCurrentId(null)
     setGenerated([])
-    const p = data.projects.find((x) => x.id === id)
-    // Instant fallback from the local address; CRM pull (below) refines it.
-    const { street, city, zip } = parseAddress(p?.address ?? null)
+    const job = data.jobs.find((x) => x.key === key)
+    // Instant fallback from the job's address line; CRM pull (below) refines it.
+    const { street, city, zip } = parseAddress(job?.address ?? null)
     setForm((f) => ({ ...f, serviceAddress: street, city, zip }))
-    if (!id) return
-    // Pull the richer property details (city, subdivision, lot/block, sq ft,
-    // floors) from the CRM and merge them in where present.
+    if (!key || !job) return
+    // Pull the richer property details (city, ZIP, subdivision, lot/block,
+    // sq ft, floors) from the CRM and merge them in where present.
     startTransition(async () => {
       try {
-        const pre = await getCawPrefill({ projectId: id })
+        const pre = await getCawPrefill({
+          projectId: job.project_id,
+          crmId: job.crm_project_id,
+        })
         // A newer job was picked while this request was in flight — drop it.
-        if (latestPrefillProjectId.current !== id) return
+        if (latestPrefillJobKey.current !== key) return
         setForm((f) => ({
           ...f,
           serviceAddress: pre.serviceAddress ?? f.serviceAddress,
@@ -232,31 +246,43 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
   }
 
   function resetForm() {
-    setProjectId("")
+    setJobKey("")
     setCurrentId(null)
     setGenerated([])
     setForm(emptyForm())
   }
 
   function handleContinue(req: UtilityRequestRow) {
-    setProjectId(req.project_id)
+    // Match on either link — a pre-CRM draft carries only project_id, while
+    // the dropdown entry for the same job is keyed by its CRM id.
+    const job = data.jobs.find(
+      (j) =>
+        (req.crm_project_id && j.crm_project_id === req.crm_project_id) ||
+        (req.project_id && j.project_id === req.project_id)
+    )
+    setJobKey(job?.key ?? "")
     setCurrentId(req.id)
     setForm(formFromData(req.form_data))
     setGenerated(req.files.map((f) => ({ filename: f.filename, url: f.url })))
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" })
   }
 
-  async function ensureSaved(): Promise<string> {
-    const { id } = await saveUtilityDraft({ id: currentId, project_id: projectId, form })
+  async function ensureSaved(job: UtilityJob): Promise<string> {
+    const { id } = await saveUtilityDraft({
+      id: currentId,
+      project_id: job.project_id,
+      crm_project_id: job.crm_project_id,
+      form,
+    })
     setCurrentId(id)
     return id
   }
 
   function handleSave() {
-    if (!projectId) return toast.error("Pick a job first.")
+    if (!selectedJob) return toast.error("Pick a job first.")
     startTransition(async () => {
       try {
-        await ensureSaved()
+        await ensureSaved(selectedJob)
         toast.success("Draft saved.")
         router.refresh()
       } catch (e) {
@@ -266,11 +292,11 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
   }
 
   function handleGenerate() {
-    if (!projectId) return toast.error("Pick a job first.")
+    if (!selectedJob) return toast.error("Pick a job first.")
     if (!form.serviceAddress.trim()) return toast.error("Service address is required.")
     startTransition(async () => {
       try {
-        const id = await ensureSaved()
+        const id = await ensureSaved(selectedJob)
         const { files } = await generateCawPdfs({ requestId: id })
         setGenerated(files.map((f) => ({ filename: f.filename, url: f.url })))
         toast.success(`Generated ${files.length} form${files.length === 1 ? "" : "s"}.`)
@@ -350,19 +376,34 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
                 <option value="central_arkansas_water">Central Arkansas Water</option>
               </Select>
             </Field>
-            <Field label="Job" hint="Selecting a job pre-fills the service address.">
-              <Select value={projectId} onChange={(e) => onSelectProject(e.target.value)}>
+            <Field
+              label="Job"
+              hint={
+                data.jobsSource === "crm"
+                  ? "All active jobs (In Work / Upcoming) from the CRM. Picking one pre-fills the service address."
+                  : "CRM not connected — showing this app's projects. Picking one pre-fills the service address."
+              }
+            >
+              <Select value={jobKey} onChange={(e) => onSelectJob(e.target.value)}>
                 <option value="">Choose a job…</option>
-                {data.projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.project_number} — {p.name}
-                  </option>
-                ))}
+                {data.jobsSource === "crm" ? (
+                  <>
+                    <JobGroup label="In Work" jobs={data.jobs.filter((j) => j.crm_status === "In Work")} />
+                    <JobGroup label="Upcoming" jobs={data.jobs.filter((j) => j.crm_status === "Upcoming")} />
+                    <JobGroup label="Other" jobs={data.jobs.filter((j) => j.crm_status === null)} />
+                  </>
+                ) : (
+                  data.jobs.map((j) => (
+                    <option key={j.key} value={j.key}>
+                      {j.label}
+                    </option>
+                  ))
+                )}
               </Select>
             </Field>
           </div>
 
-          {projectId && (
+          {selectedJob && (
             <>
               <Section title="Property">
                 <div className="grid sm:grid-cols-2 gap-4">
@@ -581,6 +622,20 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
         </div>
       )}
     </div>
+  )
+}
+
+/** One <optgroup> of jobs; renders nothing when the group is empty. */
+function JobGroup({ label, jobs }: { label: string; jobs: UtilityJob[] }) {
+  if (jobs.length === 0) return null
+  return (
+    <optgroup label={label}>
+      {jobs.map((j) => (
+        <option key={j.key} value={j.key}>
+          {j.label}
+        </option>
+      ))}
+    </optgroup>
   )
 }
 
