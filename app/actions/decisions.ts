@@ -94,6 +94,11 @@ const DecisionInput = z
     cost_delta: z.coerce.number().nullish(),
     markup_percent: z.coerce.number().default(0),
     cost_items: z.array(CostItem).default([]),
+    // Schedule impact — change orders only. delay_days is required there
+    // (0 = no delay); delay_days × delay_cost_per_day is folded into
+    // cost_delta so the client sees one all-in price.
+    delay_days: z.coerce.number().int().min(0).nullish(),
+    delay_cost_per_day: z.coerce.number().min(0).nullish(),
     // Allowance fields — only meaningful for selections.
     allowance_amount: z.coerce.number().nullish(),
     allowance_cost_code_id: optStr,
@@ -142,6 +147,30 @@ const DecisionInput = z
         code: z.ZodIssueCode.custom,
         message: "Per-choice cost breakdowns are only valid on selections.",
         path: ["choices"],
+      })
+    }
+    // Every change order must quote its schedule impact (0 = no delay), and a
+    // non-zero delay needs a per-day cost so the total is computable.
+    if (d.kind === "change_order") {
+      if (d.delay_days == null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "Delay (days) is required on change orders — enter 0 for no delay.",
+          path: ["delay_days"],
+        })
+      } else if (d.delay_days > 0 && d.delay_cost_per_day == null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Enter the cost per day of delay.",
+          path: ["delay_cost_per_day"],
+        })
+      }
+    } else if (d.delay_days != null || d.delay_cost_per_day != null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Delay fields are only valid on change orders.",
+        path: ["delay_days"],
       })
     }
   })
@@ -220,13 +249,22 @@ export async function saveDecision(input: DecisionInputT) {
     }
   }
 
+  // Schedule-impact cost — change orders only (zod guarantees delay_days is
+  // set there). Folded into cost_delta below so the client sees one all-in
+  // price and every cost_delta consumer (pricing rollup, dashboard webhook)
+  // includes it for free.
+  const delayCost =
+    parsed.kind === "change_order"
+      ? round2((parsed.delay_days ?? 0) * (parsed.delay_cost_per_day ?? 0))
+      : 0
+
   // Derive the client-facing cost_delta:
   // - Selection: null until approval — the RPC fills it in from the chosen
   //   choice's price (minus allowance, if set). If staff is re-saving an
   //   already-approved selection and the chosen choice's price changed, we
   //   recompute here so the pricing rollup stays accurate.
   // - Change order: marked-up total from decision-level cost_items if any,
-  //   else the manual cost_delta value.
+  //   else the manual cost_delta value — plus the delay cost either way.
   let finalCostDelta: number | null
   if (isSelection) {
     finalCostDelta = null
@@ -257,9 +295,17 @@ export async function saveDecision(input: DecisionInputT) {
       (sum, ci) => sum + ci.quantity * ci.unit_cost,
       0
     )
-    finalCostDelta = round2(subtotal * markupMul)
+    finalCostDelta = round2(subtotal * markupMul + delayCost)
   } else {
-    finalCostDelta = parsed.cost_delta ?? null
+    // Manual mode: the staff-entered value is the base price EXCLUDING delay
+    // (the drawer derives it back out of cost_delta when re-editing). A
+    // pure-delay change order (no base price) still gets a real total.
+    finalCostDelta =
+      parsed.cost_delta != null
+        ? round2(Number(parsed.cost_delta) + delayCost)
+        : delayCost !== 0
+        ? delayCost
+        : null
   }
 
   // Only touch template_tags when the caller sent them — undefined means
@@ -279,6 +325,9 @@ export async function saveDecision(input: DecisionInputT) {
       description: parsed.description ?? null,
       cost_delta: finalCostDelta,
       markup_percent: parsed.markup_percent,
+      delay_days: parsed.kind === "change_order" ? parsed.delay_days ?? null : null,
+      delay_cost_per_day:
+        parsed.kind === "change_order" ? parsed.delay_cost_per_day ?? null : null,
       allowance_amount: allowanceAmount,
       allowance_cost_code_id: allowanceCostCodeId,
       status: parsed.status,
@@ -313,6 +362,10 @@ export async function saveDecision(input: DecisionInputT) {
           description: parsed.description ?? null,
           cost_delta: finalCostDelta,
           markup_percent: parsed.markup_percent,
+          delay_days:
+            parsed.kind === "change_order" ? parsed.delay_days ?? null : null,
+          delay_cost_per_day:
+            parsed.kind === "change_order" ? parsed.delay_cost_per_day ?? null : null,
           allowance_amount: allowanceAmount,
           allowance_cost_code_id: allowanceCostCodeId,
           status: parsed.status,
@@ -692,6 +745,7 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
     .from("decisions")
     .select(
       `id, number, kind, title, description, cost_delta, markup_percent,
+       delay_days, delay_cost_per_day,
        status, due_date, approved_at, selected_choice_id,
        project_id, created_by, approved_by_client_id,
        projects:project_id (id, name, project_number, address),
@@ -773,6 +827,8 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
     description: string | null
     cost_delta: number | null
     markup_percent: number | null
+    delay_days: number | null
+    delay_cost_per_day: number | null
     due_date: string | null
     approved_at: string | null
     selected_choice_id: string | null
@@ -817,6 +873,19 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
   textLines.push(`Created by: ${creatorLabel}`)
   if (d.due_date) textLines.push(`Due date: ${formatDate(d.due_date)}`)
   textLines.push(`Cost impact: ${formatCurrency(d.cost_delta)}`)
+  // Schedule impact — quoted on every change order (null only on pre-feature
+  // rows). The delay cost is already inside cost_delta; say so.
+  const delayText =
+    d.kind === "change_order" && d.delay_days != null
+      ? d.delay_days > 0
+        ? `${d.delay_days} day${d.delay_days === 1 ? "" : "s"} × ${formatCurrency(
+            Number(d.delay_cost_per_day) || 0
+          )}/day = ${formatCurrency(
+            d.delay_days * (Number(d.delay_cost_per_day) || 0)
+          )} (included in cost impact)`
+        : "none"
+      : null
+  if (delayText) textLines.push(`Schedule delay: ${delayText}`)
   if (d.markup_percent && Number(d.markup_percent) !== 0) {
     textLines.push(`Markup: ${d.markup_percent}%`)
   }
@@ -893,6 +962,7 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
     row("Created by", escapeHtml(creatorLabel)),
     d.due_date ? row("Due date", escapeHtml(formatDate(d.due_date))) : "",
     row("Cost impact", escapeHtml(formatCurrency(d.cost_delta))),
+    delayText ? row("Schedule delay", escapeHtml(delayText)) : "",
     d.markup_percent && Number(d.markup_percent) !== 0
       ? row("Markup", `${escapeHtml(String(d.markup_percent))}%`)
       : "",
@@ -1404,6 +1474,8 @@ export async function copyDecision({
         description: src.description,
         cost_delta: src.kind === "selection" ? null : src.cost_delta,
         markup_percent: src.markup_percent,
+        delay_days: src.delay_days,
+        delay_cost_per_day: src.delay_cost_per_day,
         allowance_amount: src.allowance_amount,
         allowance_cost_code_id: src.allowance_cost_code_id,
         status: "draft",

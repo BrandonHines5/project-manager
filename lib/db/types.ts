@@ -600,6 +600,8 @@ export type Database = {
           cost_delta: number | null
           created_at: string
           created_by: string
+          delay_cost_per_day: number | null
+          delay_days: number | null
           description: string | null
           due_date: string | null
           id: string
@@ -621,6 +623,8 @@ export type Database = {
           cost_delta?: number | null
           created_at?: string
           created_by: string
+          delay_cost_per_day?: number | null
+          delay_days?: number | null
           description?: string | null
           due_date?: string | null
           id?: string
@@ -642,6 +646,8 @@ export type Database = {
           cost_delta?: number | null
           created_at?: string
           created_by?: string
+          delay_cost_per_day?: number | null
+          delay_days?: number | null
           description?: string | null
           due_date?: string | null
           id?: string

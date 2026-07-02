@@ -1167,6 +1167,8 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
         // project's pricing rollup (matches copyDecision's behavior).
         cost_delta: d.kind === "selection" ? null : d.cost_delta,
         markup_percent: d.markup_percent,
+        delay_days: d.delay_days,
+        delay_cost_per_day: d.delay_cost_per_day,
         allowance_amount: allowanceAmount,
         allowance_cost_code_id:
           allowanceAmount == null ? null : d.allowance_cost_code_id,

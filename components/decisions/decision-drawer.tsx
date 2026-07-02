@@ -137,8 +137,25 @@ export function DecisionDrawer({
     formatTags(decision?.template_tags)
   )
   const [dueDate, setDueDate] = useState<string>(decision?.due_date ?? "")
-  const [costDelta, setCostDelta] = useState<string>(
-    decision?.cost_delta != null ? String(decision.cost_delta) : ""
+  const [costDelta, setCostDelta] = useState<string>(() => {
+    if (decision?.cost_delta == null) return ""
+    // On change orders the stored cost_delta INCLUDES the delay cost
+    // (delay_days × delay_cost_per_day). The manual field edits the base
+    // price, so back the delay out; it's re-added on save and in the total
+    // preview. Exactly recoverable — both factors live on the row.
+    if (decision.kind === "change_order") {
+      const storedDelay =
+        (decision.delay_days ?? 0) * (Number(decision.delay_cost_per_day) || 0)
+      const base = Math.round((Number(decision.cost_delta) - storedDelay) * 100) / 100
+      return base === 0 ? "" : String(base)
+    }
+    return String(decision.cost_delta)
+  })
+  const [delayDays, setDelayDays] = useState<string>(
+    decision?.delay_days != null ? String(decision.delay_days) : ""
+  )
+  const [delayCostPerDay, setDelayCostPerDay] = useState<string>(
+    decision?.delay_cost_per_day != null ? String(decision.delay_cost_per_day) : ""
   )
   const [markupPercent, setMarkupPercent] = useState<string>(
     decision?.markup_percent != null && Number(decision.markup_percent) !== 0
@@ -170,6 +187,18 @@ export function DecisionDrawer({
   const markupNum = markupPercent === "" ? 0 : Number(markupPercent) || 0
   const breakdownTotal = breakdownSubtotal * (1 + markupNum / 100)
   const hasBreakdown = effectiveCostItems.length > 0
+
+  // Schedule impact (change orders only). The delay cost is part of the
+  // client price: base (breakdown total or manual value) + days × $/day.
+  const delayDaysNum = delayDays === "" ? null : Math.trunc(Number(delayDays))
+  const delayCostPerDayNum =
+    delayCostPerDay === "" ? null : Number(delayCostPerDay)
+  const delayCost =
+    kind === "change_order"
+      ? (delayDaysNum ?? 0) * (delayCostPerDayNum ?? 0)
+      : 0
+  const changeOrderTotal =
+    (hasBreakdown ? breakdownTotal : Number(costDelta) || 0) + delayCost
 
   const [status, setStatus] = useState<Enums<"decision_status">>(
     decision?.status ?? "draft"
@@ -335,6 +364,27 @@ export function DecisionDrawer({
       toast.error("Title is required")
       return
     }
+    if (kind === "change_order") {
+      if (
+        delayDays.trim() === "" ||
+        delayDaysNum == null ||
+        isNaN(delayDaysNum) ||
+        delayDaysNum < 0
+      ) {
+        toast.error("Enter the delay in days — required on change orders (0 for no delay).")
+        return
+      }
+      if (
+        delayDaysNum > 0 &&
+        (delayCostPerDay.trim() === "" ||
+          delayCostPerDayNum == null ||
+          isNaN(delayCostPerDayNum) ||
+          delayCostPerDayNum < 0)
+      ) {
+        toast.error("Enter the cost per day of delay.")
+        return
+      }
+    }
     const payload: DecisionInputT = {
       id: decision?.id,
       project_id: data.project_id,
@@ -350,6 +400,11 @@ export function DecisionDrawer({
           ? null
           : Number(costDelta),
       markup_percent: markupNum,
+      delay_days: kind === "change_order" ? delayDaysNum : null,
+      delay_cost_per_day:
+        kind === "change_order" && delayCostPerDayNum != null && !isNaN(delayCostPerDayNum)
+          ? delayCostPerDayNum
+          : null,
       cost_items: kind === "selection"
         ? []
         : effectiveCostItems.map((ci) => ({
@@ -682,44 +737,133 @@ export function DecisionDrawer({
           )}
           {/* Manual single-cost mode — change orders only. Selections capture
               cost per choice. */}
-          {!hasBreakdown && kind === "change_order" && (
+          {canEdit && !hasBreakdown && kind === "change_order" && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field
-                label={
-                  canEdit
-                    ? "Client price (no breakdown)"
-                    : kind === "change_order"
-                    ? "Cost delta"
-                    : "Price"
-                }
-                hint={
-                  canEdit
-                    ? "Used when you don't itemize the cost. Positive adds to contract, negative is a credit."
-                    : "Positive adds to contract, negative is a credit."
-                }
+                label="Client price (no breakdown)"
+                hint="Used when you don't itemize the cost. Positive adds to contract, negative is a credit. Delay cost is added on top."
               >
                 <Input
                   type="number"
                   step="0.01"
                   value={costDelta}
                   onChange={(e) => setCostDelta(e.target.value)}
-                  disabled={!canEdit}
                   placeholder="0.00"
                 />
               </Field>
-              <Field label={canEdit ? "Preview" : "Total"}>
+              <Field label="Preview (before delay)">
                 <div className="h-9 flex items-center font-mono text-sm">
                   <CostDelta value={costDelta === "" ? null : Number(costDelta)} />
                 </div>
               </Field>
             </div>
           )}
-          {!canEdit && hasBreakdown && kind === "change_order" && (
-            <Field label="Price">
-              <div className="h-9 flex items-center font-mono text-sm">
-                <CostDelta value={decision?.cost_delta ?? null} />
+          {/* Schedule impact — required on every change order. days × $/day is
+              folded into the client price on save. */}
+          {canEdit && kind === "change_order" && (
+            <div className="rounded-md border border-border-strong bg-background/30 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>
+                  <CalendarClock className="inline h-3 w-3 mr-1 text-brand-500" />
+                  Schedule delay
+                </Label>
+                <span className="text-[11px] text-muted">
+                  Shown to the client and included in the price
+                </span>
               </div>
-            </Field>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <Field
+                  label="Delay (days) — required"
+                  hint="Days this change adds to the schedule if approved by the due date. Enter 0 for no delay."
+                >
+                  <Input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={delayDays}
+                    onChange={(e) => setDelayDays(e.target.value)}
+                    placeholder="0"
+                    className="text-right tabular-nums"
+                  />
+                </Field>
+                <Field
+                  label="Cost per day"
+                  hint="Charged for each day of delay."
+                >
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={delayCostPerDay}
+                    onChange={(e) => setDelayCostPerDay(e.target.value)}
+                    placeholder="0.00"
+                    className="text-right tabular-nums"
+                  />
+                </Field>
+              </div>
+              <div className="border-t border-border pt-2 space-y-1 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-muted">
+                    Delay cost ({delayDaysNum ?? 0} day
+                    {(delayDaysNum ?? 0) === 1 ? "" : "s"} ×{" "}
+                    {formatCurrency(delayCostPerDayNum ?? 0)})
+                  </span>
+                  <span className="font-mono tabular-nums">
+                    {formatCurrency(delayCost)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between font-semibold border-t border-border pt-1.5">
+                  <span>Client price (with delay)</span>
+                  <span className="font-mono tabular-nums">
+                    {formatCurrency(changeOrderTotal)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+          {/* Client view: one all-in price (cost_delta already includes the
+              delay cost) plus the quoted schedule impact. */}
+          {!canEdit && kind === "change_order" && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Field
+                label="Price"
+                hint="Positive adds to contract, negative is a credit."
+              >
+                <div className="h-9 flex items-center font-mono text-sm">
+                  <CostDelta value={decision?.cost_delta ?? null} />
+                </div>
+              </Field>
+              {decision?.delay_days != null && (
+                <Field
+                  label="Schedule delay"
+                  hint={
+                    decision.delay_days > 0
+                      ? "If approved by the due date. Included in the price."
+                      : undefined
+                  }
+                >
+                  <div className="h-9 flex items-center gap-1.5 text-sm">
+                    <CalendarClock className="h-3.5 w-3.5 text-brand-500 shrink-0" />
+                    {decision.delay_days > 0 ? (
+                      <span>
+                        {decision.delay_days} day
+                        {decision.delay_days === 1 ? "" : "s"} ×{" "}
+                        {formatCurrency(Number(decision.delay_cost_per_day) || 0)}
+                        /day ={" "}
+                        <span className="font-mono tabular-nums">
+                          {formatCurrency(
+                            decision.delay_days *
+                              (Number(decision.delay_cost_per_day) || 0)
+                          )}
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="text-muted">None</span>
+                    )}
+                  </div>
+                </Field>
+              )}
+            </div>
           )}
           <Field label="Description / scope">
             <Textarea
@@ -2218,7 +2362,7 @@ function CostBreakdownEditor({
             </span>
           </div>
           <div className="flex items-center justify-between font-semibold border-t border-border pt-1.5">
-            <span>Client price</span>
+            <span>Breakdown total (before delay)</span>
             <span className="font-mono tabular-nums">
               {formatCurrency(total)}
             </span>
