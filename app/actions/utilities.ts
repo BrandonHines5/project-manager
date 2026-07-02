@@ -555,6 +555,47 @@ export async function updateUtilityStatus(
   return { ok: true }
 }
 
+/**
+ * Delete a utility request (any status) along with its generated PDFs.
+ * Returns a typed result — Next.js redacts thrown server-action error
+ * messages in production, and "not found" should reach the user verbatim.
+ */
+export async function deleteUtilityRequest({
+  requestId,
+}: {
+  requestId: string
+}): Promise<{ ok: boolean; error?: string }> {
+  await requireStaff()
+  const id = z.string().min(1).parse(requestId)
+  const supabase = await createSupabaseServerClient()
+
+  // Capture the generated file paths before the row disappears.
+  const { data: req } = await supabase
+    .from("utility_requests")
+    .select("id, generated_file_paths")
+    .eq("id", id)
+    .maybeSingle()
+  if (!req) return { ok: false, error: "Request not found or not visible." }
+
+  const { error } = await supabase.from("utility_requests").delete().eq("id", id)
+  if (error) return { ok: false, error: error.message }
+
+  // Best-effort cleanup of the orphaned PDF objects — done after the row is
+  // gone so a storage hiccup never blocks the delete.
+  if (req.generated_file_paths?.length) {
+    const store = await storageClient()
+    const { error: rmErr } = await store.storage
+      .from(BUCKET)
+      .remove(req.generated_file_paths)
+    if (rmErr) {
+      console.warn("[deleteUtilityRequest] could not remove PDFs:", rmErr.message)
+    }
+  }
+
+  revalidatePath("/utilities")
+  return { ok: true }
+}
+
 export type CawPrefill = {
   serviceAddress?: string
   city?: string

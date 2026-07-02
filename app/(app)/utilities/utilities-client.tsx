@@ -3,7 +3,7 @@
 import { useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { Droplets, FileDown, Send, Loader2, CheckCircle2 } from "lucide-react"
+import { Droplets, FileDown, Send, Loader2, CheckCircle2, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -14,6 +14,7 @@ import {
   generateCawPdfs,
   sendCawForms,
   updateUtilityStatus,
+  deleteUtilityRequest,
   getCawPrefill,
 } from "@/app/actions/utilities"
 
@@ -326,6 +327,30 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
     })
   }
 
+  function handleDelete(req: UtilityRequestRow) {
+    if (
+      !confirm(
+        `Delete the ${STATUS_LABEL[req.status].toLowerCase()} request for ${req.project_label}? Its generated forms are removed too. This can't be undone.`
+      )
+    )
+      return
+    startTransition(async () => {
+      try {
+        const res = await deleteUtilityRequest({ requestId: req.id })
+        if (!res.ok) {
+          toast.error(res.error ?? "Delete failed.")
+          return
+        }
+        // If that request was loaded in the form above, clear it out.
+        if (currentId === req.id) resetForm()
+        toast.success("Request deleted.")
+        router.refresh()
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Delete failed.")
+      }
+    })
+  }
+
   function advance(id: string, status: "awaiting_payment" | "paid" | "complete") {
     startTransition(async () => {
       try {
@@ -616,6 +641,7 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
               paymentUrl={data.paymentUrl}
               onAdvance={advance}
               onContinue={handleContinue}
+              onDelete={handleDelete}
               pending={pending}
             />
           ))}
@@ -681,12 +707,14 @@ function RequestCard({
   paymentUrl,
   onAdvance,
   onContinue,
+  onDelete,
   pending,
 }: {
   req: UtilityRequestRow
   paymentUrl: string
   onAdvance: (id: string, status: "awaiting_payment" | "paid" | "complete") => void
   onContinue: (req: UtilityRequestRow) => void
+  onDelete: (req: UtilityRequestRow) => void
   pending: boolean
 }) {
   const addr =
@@ -759,6 +787,16 @@ function RequestCard({
               Once CAW emails the pay link, mark it received to surface the payment URL.
             </span>
           )}
+          <button
+            type="button"
+            onClick={() => onDelete(req)}
+            disabled={pending}
+            className="ml-auto text-muted hover:text-danger p-1 cursor-pointer disabled:opacity-50"
+            title="Delete request"
+            aria-label={`Delete request for ${req.project_label}`}
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
         </div>
       </CardBody>
     </Card>
