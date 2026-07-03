@@ -7,6 +7,10 @@ import {
   CAW_SUBMISSION_EMAIL,
   isCawConfigured,
 } from "@/lib/utilities/caw/config"
+import {
+  LUMBER_ONE_SUBMISSION_EMAIL,
+  isLumberOneConfigured,
+} from "@/lib/utilities/lumber-one/config"
 import { UtilitiesClient, type UtilitiesData, type UtilityJob } from "./utilities-client"
 
 export const metadata = { title: "Initiate Utilities — Hines Homes" }
@@ -44,9 +48,9 @@ async function fetchCrmJobs(): Promise<CrmJobRow[] | null> {
 }
 
 /**
- * Initiate Utilities. Staff pick a job and the app fills out the utility
- * provider's official forms, emails them in, then tracks the request through
- * the external pay-by-link flow. Phase 1: Central Arkansas Water (CAW).
+ * Initiate Utilities. Staff pick a job and the app fills out the provider
+ * forms — CAW water service (tracked through the external pay-by-link flow)
+ * and/or the Lumber One new-job set-up form (emailed to Brad) — in one pass.
  */
 export default async function UtilitiesPage() {
   await requireStaff()
@@ -183,9 +187,11 @@ export default async function UtilitiesPage() {
       preparerName: CAW_BUILDER.preparerName,
       tinSet: !!CAW_BUILDER.tin,
     },
-    configured: isCawConfigured(),
+    cawConfigured: isCawConfigured(),
+    lumberConfigured: isLumberOneConfigured(),
     paymentUrl: CAW_PAYMENT_URL,
-    submissionEmail: CAW_SUBMISSION_EMAIL,
+    cawSubmissionEmail: CAW_SUBMISSION_EMAIL,
+    lumberSubmissionEmail: LUMBER_ONE_SUBMISSION_EMAIL,
   }
 
   return <UtilitiesClient data={data} />

@@ -1,16 +1,26 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // pdf-lib is a heavy pure-JS dependency used only server-side (CAW form fill).
-  // Keep it out of the bundler so it loads from node_modules at runtime.
+  // pdf-lib is a heavy pure-JS dependency used only server-side (utility form
+  // fill). Keep it out of the bundler so it loads from node_modules at runtime.
   serverExternalPackages: ["pdf-lib"],
-  // The CAW form fill reads the blank template PDFs from disk at runtime via a
-  // computed path, which Turbopack's tracing can't detect — force them into the
-  // serverless function bundle for the utilities routes/actions.
+  // The utility form fill (CAW, Lumber One) reads the blank template PDFs from
+  // disk at runtime via a computed path, which Turbopack's tracing can't detect
+  // — force them into the serverless function bundle for the utilities
+  // routes/actions.
   outputFileTracingIncludes: {
-    "/utilities": ["./lib/utilities/caw/templates/*.pdf"],
-    "/utilities/**": ["./lib/utilities/caw/templates/*.pdf"],
-    "/api/**": ["./lib/utilities/caw/templates/*.pdf"],
+    "/utilities": [
+      "./lib/utilities/caw/templates/*.pdf",
+      "./lib/utilities/lumber-one/templates/*.pdf",
+    ],
+    "/utilities/**": [
+      "./lib/utilities/caw/templates/*.pdf",
+      "./lib/utilities/lumber-one/templates/*.pdf",
+    ],
+    "/api/**": [
+      "./lib/utilities/caw/templates/*.pdf",
+      "./lib/utilities/lumber-one/templates/*.pdf",
+    ],
   },
   // Baseline security headers on every response.
   async headers() {
