@@ -41,15 +41,21 @@ export async function getSessionProfile(): Promise<SessionProfile | null> {
     // password (invite/reset via /team) can hit the Supabase auth endpoint
     // directly with signInWithPassword and skip both gates — including
     // after being deactivated in the directory. Kill such sessions here:
-    // a staff profile on a pure password session is never valid while SSO
-    // is configured.
-    if (
-      SSO_ENABLED &&
-      existing.role === "staff" &&
-      user.app_metadata?.provider === "email"
-    ) {
-      await supabase.auth.signOut()
-      return null
+    // a staff profile on a password session is never valid while SSO is
+    // configured.
+    //
+    // The check must use the session's `amr` claim, NOT
+    // user.app_metadata.provider: `provider` records how the ACCOUNT was
+    // created (plus linked identities), not how THIS session authenticated.
+    // A staff account originally provisioned by email invite keeps
+    // provider="email" forever — gating on it signed staff out immediately
+    // after a successful Microsoft sign-in.
+    if (SSO_ENABLED && existing.role === "staff") {
+      const methods = await sessionAuthMethods(supabase)
+      if (methods.includes("password")) {
+        await supabase.auth.signOut()
+        return null
+      }
     }
     return existing
   }
@@ -102,6 +108,56 @@ export async function getSessionProfile(): Promise<SessionProfile | null> {
     return null
   }
   return created ?? null
+}
+
+/**
+ * Authentication methods used to establish the CURRENT session, read from
+ * the access token's `amr` claim (e.g. [{ method: "oauth", … }], most
+ * recent first). Password sign-ins carry method "password"; the Microsoft
+ * OAuth path carries "oauth".
+ *
+ * The token was already validated by the getUser() call above — the same
+ * cookie token is what authorizes every DB query, so a forged amr can't
+ * grant anything the auth server wouldn't reject anyway. Returns [] when
+ * the claim can't be read (fail open: the OAuth callback's directory check
+ * and the login form's staff bounce remain the primary gates).
+ */
+async function sessionAuthMethods(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>
+): Promise<string[]> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession()
+  const token = session?.access_token
+  if (!token) return []
+  const payload = decodeJwtPayload(token)
+  const amr = payload?.amr
+  if (!Array.isArray(amr)) return []
+  return amr
+    .map((entry) =>
+      entry && typeof entry === "object" && "method" in entry
+        ? (entry as { method?: unknown }).method
+        : null
+    )
+    .filter((m): m is string => typeof m === "string")
+}
+
+// Decodes a JWT's payload segment without verifying the signature (see
+// sessionAuthMethods for why that's fine here). UTF-8-safe: claims embed
+// user_metadata, which can contain non-ASCII names.
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  const part = token.split(".")[1]
+  if (!part) return null
+  try {
+    const b64 = part.replace(/-/g, "+").replace(/_/g, "/")
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes))
+    return parsed && typeof parsed === "object"
+      ? (parsed as Record<string, unknown>)
+      : null
+  } catch {
+    return null
+  }
 }
 
 // Collapses an email to "<first>***@<domain>". Returns null for null input
