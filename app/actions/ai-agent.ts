@@ -216,8 +216,21 @@ const MutationSchema = z.discriminatedUnion("kind", [
     }),
   }),
 ])
+// A plan is capped at 200 mutations overall, but SMS leaves the building —
+// a tampered payload with 200 send_sms entries would be a texting cannon.
+// Field notes realistically text at most a handful of subs per apply.
+const MAX_SMS_PER_PLAN = 5
 const ApplyInputSchema = z.object({
-  mutations: z.array(MutationSchema).min(1).max(200),
+  mutations: z
+    .array(MutationSchema)
+    .min(1)
+    .max(200)
+    .refine(
+      (ms) => ms.filter((m) => m.kind === "send_sms").length <= MAX_SMS_PER_PLAN,
+      {
+        message: `a plan may contain at most ${MAX_SMS_PER_PLAN} send_sms mutations`,
+      }
+    ),
 })
 
 export type ApplyPlanResult =

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
-import { requireStaff } from "@/lib/auth"
+import { requireSession, requireStaff } from "@/lib/auth"
 
 const optStr = z.string().nullish()
 
@@ -362,6 +362,7 @@ async function resolveAttachmentProjectId(
 }
 
 export async function getSignedUrlsForFiles(paths: string[]) {
+  await requireSession()
   if (paths.length === 0) return {}
   const supabase = await createSupabaseServerClient()
   const { data, error } = await supabase.storage

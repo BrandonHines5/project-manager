@@ -233,6 +233,24 @@ async function applyOne(
         return { mutation, ok: true }
       }
       case "send_sms": {
+        // Mirror sendQuoTextToSub's assignment check (app/actions/schedule.ts):
+        // texting is reserved for subs that are actually assigned to work.
+        // The mutation doesn't carry a schedule_item_id to scope the lookup
+        // to one item, so require the company to have at least one schedule
+        // assignment visible to the caller's session — a tampered plan can't
+        // text an arbitrary companies row that was never put on a schedule.
+        const { data: assignment, error: aErr } = await supabase
+          .from("schedule_assignments")
+          .select("id")
+          .eq("company_id", mutation.company_id)
+          .limit(1)
+          .maybeSingle()
+        if (aErr) throw new Error(aErr.message)
+        if (!assignment) {
+          throw new Error(
+            "company has no schedule assignment — texts can only go to subs assigned to a schedule item"
+          )
+        }
         // Re-resolve the recipient from the companies row — never trust the
         // phone that round-tripped through the client. RLS gates the read.
         const { data: company, error } = await supabase
