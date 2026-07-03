@@ -314,10 +314,13 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
     setCurrentIds({ caw: null, lumber: null })
     setGenerated([])
     const job = data.jobs.find((x) => x.key === key)
-    // Instant fallback from the job's address line; CRM pull (below) refines it.
+    // Start from CLEAN defaults — carrying the previous job's answers over
+    // (subdivision, county, gate code, owner…) would silently put the wrong
+    // job's data on the forms whenever the new job's CRM row can't prefill a
+    // field. Instant fallback from the job's address line; CRM pull refines it.
     const { street, city, zip } = parseAddress(job?.address ?? null)
-    setForm((f) => ({ ...f, serviceAddress: street, city, zip }))
-    setLumber((l) => ({ ...l, jobName: street }))
+    setForm({ ...emptyForm(), serviceAddress: street, city, zip })
+    setLumber({ ...emptyLumber(), jobName: street })
     if (!key || !job) return
     // Pull the richer property details (city, ZIP, subdivision, lot/block,
     // sq ft, floors, county, property owner…) from the CRM and merge them in.
@@ -418,6 +421,11 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
     }
   }
 
+  /**
+   * Save the selected providers' drafts. Commits whatever ids came back even
+   * when some entries failed (so a retry UPDATES the committed row instead of
+   * inserting a duplicate), then throws the per-provider errors, if any.
+   */
   async function ensureSaved(job: UtilityJob): Promise<Record<ProviderKey, string | null>> {
     const entries: SaveEntryT[] = []
     if (selected.caw) {
@@ -426,7 +434,7 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
     if (selected.lumber) {
       entries.push({ provider: "lumber_one", id: currentIds.lumber, form: lumberFormPayload() })
     }
-    const { ids } = await saveUtilityDrafts({
+    const { ids, errors } = await saveUtilityDrafts({
       project_id: job.project_id,
       crm_project_id: job.crm_project_id,
       entries,
@@ -436,6 +444,14 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
       lumber: ids.lumber_one ?? currentIds.lumber,
     }
     setCurrentIds(next)
+    const failed = Object.entries(errors)
+    if (failed.length > 0) {
+      throw new Error(
+        failed
+          .map(([prov, msg]) => `${PROVIDER_BADGE[prov] ?? prov}: ${msg}`)
+          .join(" — ")
+      )
+    }
     return next
   }
 
@@ -516,14 +532,20 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
       if (failed.length === 0) {
         resetForm()
       } else {
-        // Keep only the failed providers active so a retry doesn't re-send the
-        // ones that already went out (their requests are now submitted).
-        setSelected({ caw: failed.includes("caw"), lumber: failed.includes("lumber") })
-        setCurrentIds((ids) => ({
-          caw: failed.includes("caw") ? ids.caw : null,
-          lumber: failed.includes("lumber") ? ids.lumber : null,
+        // Clear ONLY the providers that actually went out (they're submitted
+        // now). Failed ones stay active for a retry, and a loaded-but-
+        // deselected provider's draft must keep its id — nulling it would
+        // insert a duplicate draft on the next save.
+        const sentOk = targets.map((p) => p.key).filter((k) => !failed.includes(k))
+        setSelected((s) => ({
+          caw: sentOk.includes("caw") ? false : s.caw,
+          lumber: sentOk.includes("lumber") ? false : s.lumber,
         }))
-        setGenerated((g) => g.filter((f) => failed.includes(f.provider)))
+        setCurrentIds((ids) => ({
+          caw: sentOk.includes("caw") ? null : ids.caw,
+          lumber: sentOk.includes("lumber") ? null : ids.lumber,
+        }))
+        setGenerated((g) => g.filter((f) => !sentOk.includes(f.provider)))
       }
       router.refresh()
     })
@@ -543,8 +565,15 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
           toast.error(res.error ?? "Delete failed.")
           return
         }
-        // If that request was loaded in the form above, clear it out.
-        if (currentIds.caw === req.id || currentIds.lumber === req.id) resetForm()
+        // If that request was loaded in the form above, detach just ITS slot —
+        // wiping the whole form would discard unsaved edits to the sibling
+        // provider's draft that's still loaded.
+        const slot: ProviderKey | null =
+          currentIds.caw === req.id ? "caw" : currentIds.lumber === req.id ? "lumber" : null
+        if (slot) {
+          setCurrentIds((ids) => ({ ...ids, [slot]: null }))
+          setGenerated((g) => g.filter((f) => f.provider !== slot))
+        }
         toast.success("Request deleted.")
         router.refresh()
       } catch (e) {

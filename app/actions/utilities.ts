@@ -270,11 +270,17 @@ async function resolveJob(input: {
 /**
  * Create or update draft utility requests — one row per selected provider,
  * saved in a single call so the UI can fill CAW and Lumber One together.
- * Returns each provider's row id.
+ * The entries are independent rows (no transaction), so one provider's
+ * failure must NOT throw away another's committed id — the caller would
+ * lose track of the row and insert a duplicate draft on retry. Each entry
+ * reports its own id or error instead.
  */
 export async function saveUtilityDrafts(
   input: SaveUtilityInputT
-): Promise<{ ids: Partial<Record<UtilityProvider, string>> }> {
+): Promise<{
+  ids: Partial<Record<UtilityProvider, string>>
+  errors: Partial<Record<UtilityProvider, string>>
+}> {
   const profile = await requireStaff()
   const parsed = SaveInput.safeParse(input)
   if (!parsed.success) throw new Error(firstIssue(parsed.error))
@@ -283,11 +289,16 @@ export async function saveUtilityDrafts(
   const job = await resolveJob(parsed.data)
 
   const ids: Partial<Record<UtilityProvider, string>> = {}
+  const errors: Partial<Record<UtilityProvider, string>> = {}
   for (const entry of parsed.data.entries) {
-    ids[entry.provider] = await saveOneDraft(supabase, profile.id, entry, job)
+    try {
+      ids[entry.provider] = await saveOneDraft(supabase, profile.id, entry, job)
+    } catch (e) {
+      errors[entry.provider] = e instanceof Error ? e.message : "Save failed."
+    }
   }
   revalidatePath("/utilities")
-  return { ids }
+  return { ids, errors }
 }
 
 async function saveOneDraft(

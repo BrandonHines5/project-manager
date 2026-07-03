@@ -64,7 +64,10 @@ export function sanitizeWinAnsi(s: string): string {
     .replace(/[–—−]/g, "-")
     .replace(/•/g, "-")
     .replace(/…/g, "...")
-    .replace(/[   ]/g, " ")
+    // Typographic spaces (NBSP, figure space, narrow NBSP) → plain space.
+    // Escapes, not literals: the invisible characters were silently lost once
+    // already when this code moved files.
+    .replace(/[\u00A0\u2007\u202F]/g, " ")
     // Keep printable ASCII + Latin-1 letters; strip the rest (emoji, CJK, C1).
     .replace(/[^\x20-\x7E¡-ÿ]/g, "")
 }
