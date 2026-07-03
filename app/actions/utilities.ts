@@ -526,6 +526,8 @@ function providerEmail(
   const form = CawForm.safeParse(formData)
   if (!form.success) throw new Error(firstIssue(form.error))
   const addr = form.data.serviceAddress
+  // Spread-conditionals rather than filter(l => l !== "") — filtering would
+  // also strip the deliberate blank-line separators between paragraphs.
   return {
     to: CAW_SUBMISSION_EMAIL,
     subject: `New Water Service Request - ${addr}`,
@@ -534,18 +536,20 @@ function providerEmail(
       "",
       `Service address: ${addr}${form.data.city ? `, ${form.data.city}` : ""}${form.data.zip ? ` ${form.data.zip}` : ""}`,
       `Applicant: ${CAW_BUILDER.companyName}`,
-      form.data.includeStandpipe
-        ? "A temporary construction standpipe is requested (see attached agreement)."
-        : "",
+      ...(form.data.includeStandpipe
+        ? ["A temporary construction standpipe is requested (see attached agreement)."]
+        : []),
       "",
       "Attached:",
       "  - Request For Water Service Application",
       "  - Water Service Contract",
-      form.data.includeStandpipe ? "  - Agreement for Temporary Construction Standpipe" : "",
+      ...(form.data.includeStandpipe
+        ? ["  - Agreement for Temporary Construction Standpipe"]
+        : []),
       "",
       "Thank you,",
       CAW_BUILDER.companyName,
-    ].filter((l) => l !== ""),
+    ],
   }
 }
 
