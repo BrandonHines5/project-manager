@@ -15,27 +15,42 @@ import {
   isCawConfigured,
   resolveCawZip,
 } from "@/lib/utilities/caw/config"
+import {
+  LUMBER_ONE_CUSTOMER_NAME,
+  LUMBER_ONE_SUBMISSION_EMAIL,
+  defaultDeliveryDirections,
+  isLumberOneConfigured,
+  resolveCounty,
+} from "@/lib/utilities/lumber-one/config"
 import { fillCawForms, type CawRenderData } from "@/lib/utilities/caw/pdf"
-import type { TablesInsert, TablesUpdate } from "@/lib/db/types"
+import {
+  fillLumberOneForms,
+  type LumberOneRenderData,
+} from "@/lib/utilities/lumber-one/pdf"
+import type { FilledPdf } from "@/lib/utilities/fill"
+import type { Enums, TablesInsert, TablesUpdate } from "@/lib/db/types"
+
+export type UtilityProvider = Enums<"utility_provider">
 
 const BUCKET = "project-files"
 // Resend caps total message size ~40MB; stay well under it.
 const MAX_ATTACHMENTS_BYTES = 20 * 1024 * 1024
 
 // Friendly email-attachment names per form key. Stored objects are named
-// `{timestamp}-{key}.pdf`; CAW's intake reads these names, so present the real
-// form titles rather than the internal storage filename.
-const CAW_ATTACHMENT_NAMES: Record<string, string> = {
+// `{timestamp}-{key}.pdf`; the recipients read these names, so present the
+// real form titles rather than the internal storage filename.
+const ATTACHMENT_NAMES: Record<string, string> = {
   new_service: "CAW-Request-For-Water-Service-Application.pdf",
   contract: "CAW-Water-Service-Contract.pdf",
   standpipe: "CAW-Temporary-Construction-Standpipe-Agreement.pdf",
+  new_job_setup: "Lumber-One-New-Job-Set-Up-Request.pdf",
 }
 
 /** Map a stored path (`…/{timestamp}-{key}.pdf`) to a friendly attachment name. */
-function cawAttachmentName(path: string): string {
+function attachmentName(path: string): string {
   const base = path.split("/").pop() ?? ""
   const key = base.replace(/\.pdf$/i, "").replace(/^\d+-/, "")
-  return CAW_ATTACHMENT_NAMES[key] ?? (base || "caw-form.pdf")
+  return ATTACHMENT_NAMES[key] ?? (base || "form.pdf")
 }
 
 /** Extract a 5-digit ZIP from a CRM value (string or number), else undefined. */
@@ -71,24 +86,80 @@ const CawForm = z.object({
 })
 export type CawFormT = z.infer<typeof CawForm>
 
+// The Lumber One "New Job Set-Up Request Form". Salesperson Initials/Number,
+// Acct #, Bond Type, and Estimated Sales are intentionally absent — they stay
+// blank on the form for Brad to fill in (see lib/utilities/lumber-one/config).
+const LumberForm = z.object({
+  date: z.string().min(1, "Date is required"),
+  jobName: z.string().default(""),
+  streetAddress: z.string().min(1, "Street address is required"),
+  city: z.string().default(""),
+  zip: z.string().default(""),
+  county: z.string().default(""),
+  subdivision: z.string().default(""),
+  lot: z.string().default(""),
+  inCityLimits: z.boolean().default(false),
+  propertyOwner: z.string().default(""),
+  deliveryDirections: z.string().default(""),
+})
+export type LumberFormT = z.infer<typeof LumberForm>
+
+// One provider's answers within a save. `id` continues that provider's
+// existing draft; omitted/null starts a new one.
+const SaveEntry = z.discriminatedUnion("provider", [
+  z.object({
+    provider: z.literal("central_arkansas_water"),
+    id: z.string().nullish(),
+    form: CawForm,
+  }),
+  z.object({
+    provider: z.literal("lumber_one"),
+    id: z.string().nullish(),
+    form: LumberForm,
+  }),
+])
+export type SaveEntryT = z.input<typeof SaveEntry>
+
 // A request's job can live in this app (project_id), in the CRM
 // (crm_project_id), or both — the dropdown is sourced from the CRM, where most
-// active jobs have no local project row yet.
+// active jobs have no local project row yet. Multiple providers can be saved
+// in one call (the UI multi-selects CAW / Lumber One), each as its own row.
 const SaveInput = z
   .object({
-    id: z.string().nullish(),
     project_id: z.string().nullish(),
     crm_project_id: z.string().nullish(),
-    form: CawForm,
+    entries: z.array(SaveEntry).min(1, "Pick at least one form to fill out."),
   })
   .refine((v) => v.project_id || v.crm_project_id, {
     message: "Pick a job first.",
   })
+  .refine(
+    (v) => new Set(v.entries.map((e) => e.provider)).size === v.entries.length,
+    { message: "Duplicate provider in save request." }
+  )
 export type SaveUtilityInputT = z.input<typeof SaveInput>
 
 function firstIssue(error: z.ZodError): string {
   const f = error.issues[0]
   return `Invalid form data at ${f.path.join(".") || "(root)"}: ${f.message}`
+}
+
+/** Merge the per-job answers with the constant customer identity. */
+function toLumberRenderData(form: LumberFormT): LumberOneRenderData {
+  return {
+    date: form.date,
+    customerName: LUMBER_ONE_CUSTOMER_NAME,
+    jobName: form.jobName,
+    lot: form.lot,
+    subdivision: form.subdivision,
+    streetAddress: form.streetAddress,
+    city: form.city,
+    zip: form.zip,
+    county: form.county,
+    inCityLimits: form.inCityLimits,
+    propertyOwner: form.propertyOwner,
+    deliveryDirections: form.deliveryDirections,
+  }
 }
 
 /** Merge the per-job answers with the constant builder identity + fixed values. */
@@ -196,15 +267,48 @@ async function resolveJob(input: {
   }
 }
 
-/** Create or update a draft utility request (CAW). Returns the row id. */
-export async function saveUtilityDraft(input: SaveUtilityInputT): Promise<{ id: string }> {
+/**
+ * Create or update draft utility requests — one row per selected provider,
+ * saved in a single call so the UI can fill CAW and Lumber One together.
+ * The entries are independent rows (no transaction), so one provider's
+ * failure must NOT throw away another's committed id — the caller would
+ * lose track of the row and insert a duplicate draft on retry. Each entry
+ * reports its own id or error instead.
+ */
+export async function saveUtilityDrafts(
+  input: SaveUtilityInputT
+): Promise<{
+  ids: Partial<Record<UtilityProvider, string>>
+  errors: Partial<Record<UtilityProvider, string>>
+}> {
   const profile = await requireStaff()
   const parsed = SaveInput.safeParse(input)
   if (!parsed.success) throw new Error(firstIssue(parsed.error))
-  const { id, form } = parsed.data
   const supabase = await createSupabaseServerClient()
 
-  const { projectId, crmProjectId, jobLabel } = await resolveJob(parsed.data)
+  const job = await resolveJob(parsed.data)
+
+  const ids: Partial<Record<UtilityProvider, string>> = {}
+  const errors: Partial<Record<UtilityProvider, string>> = {}
+  for (const entry of parsed.data.entries) {
+    try {
+      ids[entry.provider] = await saveOneDraft(supabase, profile.id, entry, job)
+    } catch (e) {
+      errors[entry.provider] = e instanceof Error ? e.message : "Save failed."
+    }
+  }
+  revalidatePath("/utilities")
+  return { ids, errors }
+}
+
+async function saveOneDraft(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  createdBy: string,
+  entry: z.infer<typeof SaveEntry>,
+  job: { projectId: string | null; crmProjectId: string | null; jobLabel: string }
+): Promise<string> {
+  const { provider, id, form } = entry
+  const { projectId, crmProjectId, jobLabel } = job
 
   if (id) {
     // Editing the answers invalidates any previously generated PDFs, so clear
@@ -213,11 +317,14 @@ export async function saveUtilityDraft(input: SaveUtilityInputT): Promise<{ id: 
     // from storage after the row is updated.
     const { data: existing } = await supabase
       .from("utility_requests")
-      .select("project_id, crm_project_id, generated_file_paths")
+      .select("project_id, crm_project_id, provider, generated_file_paths")
       .eq("id", id)
       .eq("status", "draft")
       .maybeSingle()
     if (!existing) throw new Error("Draft not found or not editable.")
+    if (existing.provider !== provider) {
+      throw new Error("Draft not found, not editable, or provider mismatch.")
+    }
 
     // The draft must still reference the SAME job on at least one link — a
     // pre-CRM draft carries only project_id, a CRM-sourced one only/also
@@ -251,20 +358,19 @@ export async function saveUtilityDraft(input: SaveUtilityInputT): Promise<{ id: 
     if (stale.length) {
       const store = await storageClient()
       const { error: rmErr } = await store.storage.from(BUCKET).remove(stale)
-      if (rmErr) console.warn("[saveUtilityDraft] could not remove old PDFs:", rmErr.message)
+      if (rmErr) console.warn("[saveUtilityDrafts] could not remove old PDFs:", rmErr.message)
     }
-    revalidatePath("/utilities")
-    return { id }
+    return id
   }
 
   const row: TablesInsert<"utility_requests"> = {
     project_id: projectId,
     crm_project_id: crmProjectId,
     job_label: jobLabel,
-    provider: "central_arkansas_water",
+    provider,
     status: "draft",
     form_data: form,
-    created_by: profile.id,
+    created_by: createdBy,
   }
   const { data, error } = await supabase
     .from("utility_requests")
@@ -272,8 +378,7 @@ export async function saveUtilityDraft(input: SaveUtilityInputT): Promise<{ id: 
     .select("id")
     .single()
   if (error) throw new Error(error.message)
-  revalidatePath("/utilities")
-  return { id: data.id }
+  return data.id
 }
 
 /** Storage client: prefer service-role (avoids any server-context storage RLS
@@ -283,12 +388,33 @@ async function storageClient() {
   return createSupabaseAdminClient() ?? (await createSupabaseServerClient())
 }
 
+/** Fill the provider's form set from a request's saved answers. */
+function fillFormsFor(
+  provider: UtilityProvider,
+  formData: unknown
+): Promise<FilledPdf[]> {
+  if (provider === "lumber_one") {
+    const form = LumberForm.safeParse(formData)
+    if (!form.success) throw new Error(firstIssue(form.error))
+    return fillLumberOneForms(toLumberRenderData(form.data))
+  }
+  const form = CawForm.safeParse(formData)
+  if (!form.success) throw new Error(firstIssue(form.error))
+  return fillCawForms(toRenderData(form.data))
+}
+
+/** Storage subdirectory per provider (under {root}/utilities/). */
+const STORAGE_DIR: Record<UtilityProvider, string> = {
+  central_arkansas_water: "caw",
+  lumber_one: "lumber-one",
+}
+
 /**
- * Generate (or regenerate) the filled CAW PDFs for a draft request, store them
+ * Generate (or regenerate) the filled PDFs for a draft request, store them
  * in the project-files bucket, and return signed preview URLs. Idempotent —
  * regenerating replaces the previous file set.
  */
-export async function generateCawPdfs({
+export async function generateUtilityPdfs({
   requestId,
 }: {
   requestId: string
@@ -298,7 +424,9 @@ export async function generateCawPdfs({
 
   const { data: req, error } = await supabase
     .from("utility_requests")
-    .select("id, project_id, crm_project_id, status, form_data, generated_file_paths, updated_at")
+    .select(
+      "id, project_id, crm_project_id, provider, status, form_data, generated_file_paths, updated_at"
+    )
     .eq("id", requestId)
     .maybeSingle()
   if (error) throw new Error(error.message)
@@ -309,10 +437,7 @@ export async function generateCawPdfs({
     throw new Error("Only draft requests can generate PDFs.")
   }
 
-  const form = CawForm.safeParse(req.form_data)
-  if (!form.success) throw new Error(firstIssue(form.error))
-
-  const filled = await fillCawForms(toRenderData(form.data))
+  const filled = await fillFormsFor(req.provider, req.form_data)
 
   const store = await storageClient()
   const priorPaths = req.generated_file_paths ?? []
@@ -326,7 +451,7 @@ export async function generateCawPdfs({
   const out: { key: string; filename: string; path: string; url: string }[] = []
   const paths: string[] = []
   for (const f of filled) {
-    const path = `${root}/utilities/caw/${ts}-${f.key}.pdf`
+    const path = `${root}/utilities/${STORAGE_DIR[req.provider]}/${ts}-${f.key}.pdf`
     const { error: upErr } = await store.storage
       .from(BUCKET)
       .upload(path, Buffer.from(f.bytes), {
@@ -362,7 +487,7 @@ export async function generateCawPdfs({
     const stale = priorPaths.filter((p) => !paths.includes(p))
     if (stale.length) {
       const { error: rmErr } = await store.storage.from(BUCKET).remove(stale)
-      if (rmErr) console.warn("[generateCawPdfs] could not remove old PDFs:", rmErr.message)
+      if (rmErr) console.warn("[generateUtilityPdfs] could not remove old PDFs:", rmErr.message)
     }
   }
 
@@ -373,29 +498,93 @@ export async function generateCawPdfs({
   return { files: out }
 }
 
-/** Email the generated CAW forms to CAW's new-construction intake. */
-export async function sendCawForms({
+/** Per-provider recipient, subject, and body for a submission email. */
+function providerEmail(
+  provider: UtilityProvider,
+  formData: unknown
+): { to: string; subject: string; lines: string[] } {
+  if (provider === "lumber_one") {
+    const form = LumberForm.safeParse(formData)
+    if (!form.success) throw new Error(firstIssue(form.error))
+    const addr = form.data.streetAddress
+    return {
+      to: LUMBER_ONE_SUBMISSION_EMAIL,
+      subject: `New Job Set-Up Request - ${addr}`,
+      lines: [
+        "Please find attached the New Job Set-Up Request form for a new Hines Homes job.",
+        "",
+        `Job address: ${addr}${form.data.city ? `, ${form.data.city}` : ""}${form.data.zip ? ` ${form.data.zip}` : ""}`,
+        `Customer: ${LUMBER_ONE_CUSTOMER_NAME}`,
+        "",
+        "Salesperson initials/number, account number, and estimated sales are left blank on the form - please fill those in on your end.",
+        "",
+        "Thank you,",
+        LUMBER_ONE_CUSTOMER_NAME,
+      ],
+    }
+  }
+  const form = CawForm.safeParse(formData)
+  if (!form.success) throw new Error(firstIssue(form.error))
+  const addr = form.data.serviceAddress
+  // Spread-conditionals rather than filter(l => l !== "") — filtering would
+  // also strip the deliberate blank-line separators between paragraphs.
+  return {
+    to: CAW_SUBMISSION_EMAIL,
+    subject: `New Water Service Request - ${addr}`,
+    lines: [
+      "Please find attached the New Service application for a new construction water service request.",
+      "",
+      `Service address: ${addr}${form.data.city ? `, ${form.data.city}` : ""}${form.data.zip ? ` ${form.data.zip}` : ""}`,
+      `Applicant: ${CAW_BUILDER.companyName}`,
+      ...(form.data.includeStandpipe
+        ? ["A temporary construction standpipe is requested (see attached agreement)."]
+        : []),
+      "",
+      "Attached:",
+      "  - Request For Water Service Application",
+      "  - Water Service Contract",
+      ...(form.data.includeStandpipe
+        ? ["  - Agreement for Temporary Construction Standpipe"]
+        : []),
+      "",
+      "Thank you,",
+      CAW_BUILDER.companyName,
+    ],
+  }
+}
+
+/** Whether the provider's constant details are complete enough to send. */
+function providerConfiguredReason(provider: UtilityProvider): string | null {
+  if (provider === "lumber_one") {
+    return isLumberOneConfigured()
+      ? null
+      : "Lumber One details aren't configured yet. Fill them in before sending."
+  }
+  return isCawConfigured()
+    ? null
+    : "CAW builder details aren't configured yet (company name, phone, email, mailing address). Fill them in before sending."
+}
+
+/** Email a request's generated forms to its provider's intake. */
+export async function sendUtilityForms({
   requestId,
 }: {
   requestId: string
 }): Promise<{ sent: boolean; reason?: string }> {
   const sender = await requireStaff()
-  if (!isCawConfigured()) {
-    return {
-      sent: false,
-      reason:
-        "CAW builder details aren't configured yet (company name, phone, email, mailing address). Fill them in before sending.",
-    }
-  }
   const supabase = await createSupabaseServerClient()
 
   const { data: req, error } = await supabase
     .from("utility_requests")
-    .select("id, project_id, status, form_data, generated_file_paths")
+    .select("id, project_id, provider, status, form_data, generated_file_paths")
     .eq("id", requestId)
     .maybeSingle()
   if (error) throw new Error(error.message)
   if (!req) throw new Error("Request not found or not visible.")
+  const notConfigured = providerConfiguredReason(req.provider)
+  if (notConfigured) {
+    return { sent: false, reason: notConfigured }
+  }
   if (req.status !== "draft") {
     return { sent: false, reason: "This request has already been submitted." }
   }
@@ -427,8 +616,8 @@ export async function sendCawForms({
     if (!claimed.generated_file_paths?.length) {
       throw new Error("Generate the forms before sending.")
     }
-    const form = CawForm.safeParse(claimed.form_data)
-    if (!form.success) throw new Error(firstIssue(form.error))
+    // Recipient + wording depend on the provider; validates form_data too.
+    const email = providerEmail(req.provider, claimed.form_data)
 
     // Download the stored PDFs and base64-encode for Resend.
     const store = await storageClient()
@@ -440,7 +629,7 @@ export async function sendCawForms({
       const buf = Buffer.from(await blob.arrayBuffer())
       total += buf.byteLength
       attachments.push({
-        filename: cawAttachmentName(path),
+        filename: attachmentName(path),
         content: buf.toString("base64"),
       })
     }
@@ -448,37 +637,18 @@ export async function sendCawForms({
       throw new Error("Generated forms are too large to email. Contact support.")
     }
 
-    const addr = form.data.serviceAddress
-    const lines = [
-      "Please find attached the New Service application for a new construction water service request.",
-      "",
-      `Service address: ${addr}${form.data.city ? `, ${form.data.city}` : ""}${form.data.zip ? ` ${form.data.zip}` : ""}`,
-      `Applicant: ${CAW_BUILDER.companyName}`,
-      form.data.includeStandpipe
-        ? "A temporary construction standpipe is requested (see attached agreement)."
-        : "",
-      "",
-      "Attached:",
-      "  - Request For Water Service Application",
-      "  - Water Service Contract",
-      form.data.includeStandpipe ? "  - Agreement for Temporary Construction Standpipe" : "",
-      "",
-      "Thank you,",
-      CAW_BUILDER.companyName,
-    ].filter((l) => l !== "")
-
     const { sendEmail } = await import("@/lib/email")
     result = await sendEmail({
-      to: CAW_SUBMISSION_EMAIL,
+      to: email.to,
       // CC the staff member who sent it so they get a copy as confirmation.
       cc: sender.email ?? undefined,
-      // Reply-To so CAW's response (and any reply on the thread) reaches a real
-      // mailbox instead of the send-only Resend From address. Prefer the sender;
-      // fall back to the builder inbox if their profile somehow has no email, so
-      // the header is never the undeliverable From.
+      // Reply-To so the provider's response (and any reply on the thread)
+      // reaches a real mailbox instead of the send-only Resend From address.
+      // Prefer the sender; fall back to the builder inbox if their profile
+      // somehow has no email, so the header is never the undeliverable From.
       replyTo: sender.email ?? CAW_BUILDER.email,
-      subject: `New Water Service Request - ${addr}`,
-      text: lines.join("\n"),
+      subject: email.subject,
+      text: email.lines.join("\n"),
       attachments,
     })
   } catch (e) {
@@ -503,10 +673,13 @@ const StatusInput = z.object({
 })
 
 /**
- * Walk a submitted request through the external pay-by-link steps. Returns a
- * typed result (not a throw) for the user-facing guards, because Next.js
- * redacts thrown server-action error messages in production — so the operator
- * would otherwise see a generic "Update failed." instead of the real reason.
+ * Walk a submitted request through its post-submission steps. CAW goes through
+ * the external pay-by-link flow (submitted → awaiting_payment → paid →
+ * complete); Lumber One has no payment, so submitted → complete directly.
+ * Returns a typed result (not a throw) for the user-facing guards, because
+ * Next.js redacts thrown server-action error messages in production — so the
+ * operator would otherwise see a generic "Update failed." instead of the real
+ * reason.
  */
 export async function updateUtilityStatus(
   input: z.input<typeof StatusInput>
@@ -519,18 +692,17 @@ export async function updateUtilityStatus(
 
   const { data: req, error } = await supabase
     .from("utility_requests")
-    .select("id, status")
+    .select("id, provider, status")
     .eq("id", requestId)
     .maybeSingle()
   if (error) throw new Error(error.message)
   if (!req) return { ok: false, error: "Request not found or not visible." }
 
   // Guard the workflow: each step only advances from the prior state.
-  const allowed: Record<string, string> = {
-    awaiting_payment: "submitted",
-    paid: "awaiting_payment",
-    complete: "paid",
-  }
+  const allowed: Record<string, string | undefined> =
+    req.provider === "lumber_one"
+      ? { complete: "submitted" }
+      : { awaiting_payment: "submitted", paid: "awaiting_payment", complete: "paid" }
   if (req.status !== allowed[status]) {
     return { ok: false, error: `Cannot move from "${req.status}" to "${status}".` }
   }
@@ -544,7 +716,7 @@ export async function updateUtilityStatus(
     .from("utility_requests")
     .update(patch)
     .eq("id", requestId)
-    .eq("status", allowed[status])
+    .eq("status", req.status)
     .select("id")
     .maybeSingle()
   if (updErr) throw new Error(updErr.message)
@@ -596,7 +768,7 @@ export async function deleteUtilityRequest({
   return { ok: true }
 }
 
-export type CawPrefill = {
+export type UtilityPrefill = {
   serviceAddress?: string
   city?: string
   zip?: string
@@ -606,6 +778,11 @@ export type CawPrefill = {
   squareFootage?: string
   multiStory?: boolean
   floors?: string
+  // Lumber One extras
+  county?: string
+  jobName?: string
+  propertyOwner?: string
+  deliveryDirections?: string
   /** "crm" when matched in the CRM, "none" when it fell back to the local data. */
   source: "crm" | "none"
 }
@@ -620,14 +797,31 @@ type CrmPrefillRow = {
   total_area_without_veneer: number | null
   total_area_with_veneer: number | null
   floors: number | null
+  land_price?: number | string | null
+  client_name?: string | null
   zip?: string | number | null
   zip_code?: string | number | null
   postal_code?: string | number | null
   zipcode?: string | number | null
 }
 
-/** Map a CRM dashboard row to the CAW prefill fields. */
-function prefillFromCrmRow(row: CrmPrefillRow, fallbackAddress?: string): CawPrefill {
+/**
+ * Who owns the property, for Lumber One's "Property Owner" line. Per Brandon:
+ * a positive land price on the CRM job means Hines Homes bought the lot (spec
+ * or build-to-sell) — the owner is Hines Homes. Otherwise the client already
+ * owns the lot, so their name goes on the form. Placeholder client names
+ * ("Spec", blank) yield undefined and leave the field for the user.
+ */
+function resolvePropertyOwner(row: CrmPrefillRow): string | undefined {
+  const landPrice = Number(row.land_price ?? 0)
+  if (Number.isFinite(landPrice) && landPrice > 0) return LUMBER_ONE_CUSTOMER_NAME
+  const client = (row.client_name ?? "").trim()
+  if (!client || client.toLowerCase() === "spec") return undefined
+  return client
+}
+
+/** Map a CRM dashboard row to the utility prefill fields. */
+function prefillFromCrmRow(row: CrmPrefillRow, fallbackAddress?: string): UtilityPrefill {
   // lot_block is stored as "{lot}-{block}" (e.g. "15-1").
   let lot = ""
   let block = ""
@@ -645,8 +839,9 @@ function prefillFromCrmRow(row: CrmPrefillRow, fallbackAddress?: string): CawPre
       .map(coerceZip)
       .find((value): value is string => Boolean(value)) ??
     resolveCawZip({ subdivision: row.subdivision_name, city: row.city })
+  const serviceAddress = row.street_address ?? fallbackAddress ?? undefined
   return {
-    serviceAddress: row.street_address ?? fallbackAddress ?? undefined,
+    serviceAddress,
     city: row.city ?? undefined,
     zip,
     subdivision: row.subdivision_name ?? undefined,
@@ -655,25 +850,31 @@ function prefillFromCrmRow(row: CrmPrefillRow, fallbackAddress?: string): CawPre
     squareFootage: sqft != null ? String(Math.round(sqft)) : undefined,
     multiStory: floors != null ? floors > 1 : undefined,
     floors: floors != null && floors > 1 ? String(floors) : undefined,
+    // Lumber One extras. Job Name is the street address by convention.
+    county: resolveCounty(row.city),
+    jobName: serviceAddress,
+    propertyOwner: resolvePropertyOwner(row),
+    deliveryDirections: defaultDeliveryDirections(row.subdivision_name) || undefined,
     source: "crm",
   }
 }
 
 /**
- * Pull extra property details from the Hines Homes CRM to pre-fill the CAW
- * form: city, ZIP, subdivision, lot/block, square footage, and floor count.
- * Jobs picked from the CRM-sourced dropdown pass crmId (direct lookup);
+ * Pull extra property details from the Hines Homes CRM to pre-fill the
+ * provider forms: city, ZIP, subdivision, lot/block, square footage, floor
+ * count, plus the Lumber One county / job name / property owner / delivery
+ * note. Jobs picked from the CRM-sourced dropdown pass crmId (direct lookup);
  * local-only projects pass projectId (matched by project_number). Best-effort
  * — returns source:"none" (with just the local address, if any) when the CRM
  * isn't configured or has no matching row.
  */
-export async function getCawPrefill({
+export async function getUtilityPrefill({
   projectId,
   crmId,
 }: {
   projectId?: string | null
   crmId?: string | null
-}): Promise<CawPrefill> {
+}): Promise<UtilityPrefill> {
   await requireStaff()
   const crm = createCrmClient()
 
@@ -700,8 +901,9 @@ export async function getCawPrefill({
     .maybeSingle()
   if (!project) return { source: "none" }
 
-  const fallback: CawPrefill = {
+  const fallback: UtilityPrefill = {
     serviceAddress: project.address ?? undefined,
+    jobName: project.address ?? undefined,
     source: "none",
   }
   if (!crm || !project.project_number) return fallback

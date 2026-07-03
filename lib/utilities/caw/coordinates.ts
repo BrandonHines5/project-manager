@@ -4,8 +4,8 @@
 // is ever replaced, re-run the calibration and adjust these numbers — nothing
 // else needs to change.
 
-export type Pt = { x: number; y: number; size?: number; maxWidth?: number }
-export type YesNo = { yes: Pt; no: Pt }
+export type { Pt, YesNo } from "../fill"
+import type { Pt, YesNo } from "../fill"
 
 // ---- New Service ("Request For Water Service Application") -----------------
 // Page is 612 x 745.68 pts.

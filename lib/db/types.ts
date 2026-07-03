@@ -1926,7 +1926,7 @@ export type Database = {
       schedule_parent_anchor: "start" | "end"
       todo_priority: "low" | "medium" | "high"
       user_role: "staff" | "trade" | "client"
-      utility_provider: "central_arkansas_water"
+      utility_provider: "central_arkansas_water" | "lumber_one"
       utility_request_status:
         | "draft"
         | "submitted"
@@ -2107,7 +2107,7 @@ export const Constants = {
       schedule_parent_anchor: ["start", "end"],
       todo_priority: ["low", "medium", "high"],
       user_role: ["staff", "trade", "client"],
-      utility_provider: ["central_arkansas_water"],
+      utility_provider: ["central_arkansas_water", "lumber_one"],
       utility_request_status: [
         "draft",
         "submitted",
