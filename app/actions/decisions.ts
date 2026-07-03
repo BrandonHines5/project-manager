@@ -1698,6 +1698,7 @@ export async function clientDecideDecision({
 }
 
 export async function getSignedUrlsForDecisions(paths: string[]) {
+  await requireSession()
   if (paths.length === 0) return {}
   const supabase = await createSupabaseServerClient()
   const { data, error } = await supabase.storage

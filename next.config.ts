@@ -12,6 +12,27 @@ const nextConfig: NextConfig = {
     "/utilities/**": ["./lib/utilities/caw/templates/*.pdf"],
     "/api/**": ["./lib/utilities/caw/templates/*.pdf"],
   },
+  // Baseline security headers on every response.
+  async headers() {
+    return [
+      {
+        source: "/(.*)",
+        headers: [
+          // The app is never embedded in a frame — deny to block clickjacking.
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          {
+            key: "Referrer-Policy",
+            value: "strict-origin-when-cross-origin",
+          },
+          {
+            key: "Strict-Transport-Security",
+            value: "max-age=63072000; includeSubDomains",
+          },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

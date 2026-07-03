@@ -5,6 +5,12 @@ import type { Tables, Enums } from "@/lib/db/types"
 export type SessionProfile = Tables<"profiles">
 export type UserRole = Enums<"user_role">
 
+// Staff SSO is only offered when the Entra/Azure provider is wired up —
+// same signal the login form uses (app/login/login-form.tsx). When unset,
+// password sign-in is the only path and the staff gate below must not fire,
+// otherwise a password-only deployment would lock every staff member out.
+const SSO_ENABLED = process.env.NEXT_PUBLIC_ENTRA_SSO_ENABLED === "1"
+
 /**
  * Returns the current user's profile row, or null if there is no session.
  *
@@ -27,7 +33,26 @@ export async function getSessionProfile(): Promise<SessionProfile | null> {
     .select("*")
     .eq("id", user.id)
     .maybeSingle()
-  if (existing) return existing
+  if (existing) {
+    // Staff must authenticate via Microsoft so the directory governs their
+    // access — is_active/role are enforced on the OAuth callback
+    // (app/auth/callback/route.ts), and the login form bounces staff
+    // password sign-ins client-side. But a staff account that has a
+    // password (invite/reset via /team) can hit the Supabase auth endpoint
+    // directly with signInWithPassword and skip both gates — including
+    // after being deactivated in the directory. Kill such sessions here:
+    // a staff profile on a pure password session is never valid while SSO
+    // is configured.
+    if (
+      SSO_ENABLED &&
+      existing.role === "staff" &&
+      user.app_metadata?.provider === "email"
+    ) {
+      await supabase.auth.signOut()
+      return null
+    }
+    return existing
+  }
 
   // Self-heal: insert a least-privilege client profile and re-fetch.
   // This insert runs as the authenticated user, so RLS must allow it; we rely

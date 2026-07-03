@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache"
 import { after } from "next/server"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
-import { requireStaff } from "@/lib/auth"
+import { requireSession, requireStaff } from "@/lib/auth"
 import { sendDashboardWebhook } from "@/lib/dashboard"
 import { sendQuoSms, normalizeE164 } from "@/lib/quo"
 
@@ -370,6 +370,7 @@ export async function deleteDailyLog({
 }
 
 export async function getSignedUrls(paths: string[]) {
+  await requireSession()
   if (paths.length === 0) return {}
   const supabase = await createSupabaseServerClient()
   const { data, error } = await supabase.storage
