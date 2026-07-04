@@ -160,6 +160,9 @@ export async function syncProjectsFromCrm(): Promise<SyncFromCrmResult> {
     (r) => r.status === "rejected" || (r.status === "fulfilled" && !!r.value.error)
   )
   if (failures.length > 0) {
+    // Some updates may have landed before others failed — refresh so the
+    // successful rows show up, then surface the partial failure.
+    if (failures.length < updates.length) revalidatePath("/projects")
     const first = failures[0]
     const detail =
       first.status === "rejected"
