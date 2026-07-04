@@ -42,7 +42,12 @@ export function crmStatusToEnum(
 ): Enums<"project_status"> | null {
   if (!crmStatus) return null
   const trimmed = crmStatus.trim()
-  if (trimmed in CRM_STATUS_TO_ENUM) return CRM_STATUS_TO_ENUM[trimmed]
+  // Own-property check, not `in`: crmStatus is external CRM data, and `in`
+  // would match inherited keys like "constructor"/"toString" and return a
+  // function reference instead of null.
+  if (Object.prototype.hasOwnProperty.call(CRM_STATUS_TO_ENUM, trimmed)) {
+    return CRM_STATUS_TO_ENUM[trimmed]
+  }
   const hit = Object.keys(CRM_STATUS_TO_ENUM).find(
     (k) => k.toLowerCase() === trimmed.toLowerCase()
   )

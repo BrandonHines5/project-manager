@@ -23,6 +23,21 @@ const STATUS_LABEL: Record<Enums<"project_status">, string> = {
   cancelled: "Cancelled",
 }
 
+// Mirrors the tone map in the sidebar / projects table so an un-synced project
+// (no crm_status) still gets a status-appropriate badge colour here.
+const STATUS_TONE: Record<
+  Enums<"project_status">,
+  "brand" | "muted" | "warning" | "success" | "danger" | "info"
+> = {
+  lead: "muted",
+  pre_construction: "info",
+  active: "brand",
+  on_hold: "warning",
+  complete: "success",
+  warranty: "info",
+  cancelled: "danger",
+}
+
 export default async function ProjectDetailLayout({
   children,
   params,
@@ -101,7 +116,9 @@ export default async function ProjectDetailLayout({
                     {project.crm_status}
                   </Badge>
                 ) : (
-                  <Badge tone="brand">{STATUS_LABEL[project.status]}</Badge>
+                  <Badge tone={STATUS_TONE[project.status]}>
+                    {STATUS_LABEL[project.status]}
+                  </Badge>
                 )}
                 {project.is_template && <Badge tone="warning">Template</Badge>}
               </div>

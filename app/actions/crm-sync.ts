@@ -147,14 +147,31 @@ export async function syncProjectsFromCrm(): Promise<SyncFromCrmResult> {
   }
 
   // Apply concurrently — a few dozen single-row updates, each RLS-gated by the
-  // caller's staff session. First error aborts and surfaces to the user.
-  const results = await Promise.all(
+  // caller's staff session. The updates are independent and the whole action is
+  // idempotent (re-running re-applies cleanly), so we let them all settle and
+  // report how many failed rather than masking partial progress behind the
+  // first error. No transaction here — a failed run is safe to just re-run.
+  const settled = await Promise.allSettled(
     updates.map(({ id, patch }) =>
       supabase.from("projects").update(patch).eq("id", id)
     )
   )
-  const failed = results.find((r) => r.error)
-  if (failed?.error) return { ok: false, error: failed.error.message }
+  const failures = settled.filter(
+    (r) => r.status === "rejected" || (r.status === "fulfilled" && !!r.value.error)
+  )
+  if (failures.length > 0) {
+    const first = failures[0]
+    const detail =
+      first.status === "rejected"
+        ? String(first.reason)
+        : first.value.error?.message ?? "unknown error"
+    return {
+      ok: false,
+      error: `${failures.length} of ${updates.length} project update${
+        updates.length === 1 ? "" : "s"
+      } failed (re-run Sync to retry): ${detail}`,
+    }
+  }
 
   revalidatePath("/projects")
 
