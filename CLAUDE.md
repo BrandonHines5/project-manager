@@ -44,6 +44,15 @@
 - Recurring to-dos store a `recurrence_rule` jsonb on a single template row. `lib/schedule/recurrence.ts:expandRecurrence` materialises virtual instances in a date range — we do not pre-create rows.
 - Assignments can target either a profile (internal staff) or a company (sub/vendor) — exactly one of the two must be non-null.
 
+## Subcontractor insurance module — model
+
+- `insurance_documents` (one per ingested COI file) + `insurance_policies` (one per policy parsed off it; enum `insurance_type`: general_liability | workers_comp | auto | umbrella). "Current" policy for a company+type = latest `expiration_date`; older rows are history. Staff-only RLS on both.
+- Three ingestion paths, all funneling into `lib/insurance/ingest.ts` (admin client): the Resend inbound webhook `/api/inbound/insurance` (verify with `RESEND_WEBHOOK_SECRET`, download attachments via `resend.emails.receiving.attachments`), the public tokenized sub upload (`/insurance-upload/{companies.insurance_upload_token}` → POST `/api/insurance-upload`), and staff manual upload (browser → Storage, then `processStoredInsuranceDocument`).
+- Extraction: `lib/insurance/extract.ts` reads the PDF/image with Claude (`claude-opus-4-8`, structured outputs). Result is stored on `insurance_documents.extraction` so the review queue can assign an unmatched doc to a company without re-running the model. Company auto-match: sender email exact match, then unambiguous name match; anything fuzzy → `status='needs_review'`.
+- Reminders: daily cron `/api/cron/insurance-reminders` (auth `CRON_SECRET`) emails each company once per policy when a CURRENT policy expires within 7 days, with their upload link, then stamps `reminder_sent_at`. Respects `companies.notifications_enabled`; the staff "Send request" button does not (explicit click wins).
+- Files live in the `project-files` bucket under `companies/insurance/…` (staff storage RLS already covers it; server paths use the admin client).
+- Staff UI: `/companies/insurance` — coverage table (GL/WC required; auto/umbrella tracked), review queue, manual upload, send-request.
+
 ## AI smart-update agent — model
 
 - Server action `runAgentTurnAction` in `app/actions/ai-agent.ts` wraps a manual Claude tool-use loop in `lib/ai/agent.ts`. Model is `claude-sonnet-4-6`. Requires `ANTHROPIC_API_KEY` env var (set in Vercel + `.env.local` for dev) — action returns a typed `error` result if the key is missing, never throws.
