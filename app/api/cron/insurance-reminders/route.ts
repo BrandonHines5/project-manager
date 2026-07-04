@@ -5,6 +5,7 @@ import {
   buildInsuranceRequestEmail,
   insuranceReplyTo,
 } from "@/lib/insurance/reminder-email"
+import { companyRequiresInsurance } from "@/lib/insurance/requirements"
 
 /**
  * Daily insurance-expiration reminders. Fired by Vercel Cron (vercel.json).
@@ -96,7 +97,9 @@ export async function GET(req: Request) {
 
   const { data: companies, error: compErr } = await supabase
     .from("companies")
-    .select("id, name, email, contact_name, notifications_enabled, insurance_upload_token")
+    .select(
+      "id, name, email, contact_name, status, notifications_enabled, insurance_upload_token"
+    )
     .in("id", Array.from(new Set(current.map((c) => c.company_id))))
   if (compErr) {
     return NextResponse.json({ ok: false, error: compErr.message }, { status: 500 })
@@ -120,6 +123,20 @@ export async function GET(req: Request) {
   for (const [companyId, policies] of byCompany) {
     const company = companyById.get(companyId)
     if (!company) continue
+    // Only "Approved for Use" companies are required to carry insurance —
+    // don't chase certificates from companies we don't use. Their policies
+    // stay unstamped, so if a company is later approved while still inside
+    // the window, the next run picks them up. Staff can always use the
+    // manual "Send request" button regardless of status.
+    if (!companyRequiresInsurance(company.status)) {
+      summary.push({
+        company: company.name,
+        policies: policies.length,
+        sent: false,
+        reason: `insurance not required (status: ${company.status ?? "none"})`,
+      })
+      continue
+    }
     if (!company.notifications_enabled) {
       summary.push({
         company: company.name,
