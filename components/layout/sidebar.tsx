@@ -14,6 +14,7 @@ import {
   Droplets,
   Gavel,
   FileCheck2,
+  FileBadge,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { UserRole } from "@/lib/auth"
@@ -33,6 +34,12 @@ const ITEMS: Item[] = [
   { href: "/projects", label: "Projects", icon: LayoutGrid },
   { href: "/notifications", label: "Notifications", icon: Bell },
   { href: "/companies", label: "Companies", icon: Building2, roles: ["staff"] },
+  {
+    href: "/companies/insurance",
+    label: "Insurance",
+    icon: FileBadge,
+    roles: ["staff"],
+  },
   { href: "/team", label: "Team", icon: Users, roles: ["staff"] },
   {
     href: "/warranty",
@@ -96,11 +103,18 @@ export function SidebarNavList({
   onNavigate?: () => void
 }) {
   const path = usePathname()
+  const items = navItemsFor(role)
+  // Longest-prefix match wins so nested entries (/companies/insurance)
+  // don't light up their parent (/companies) at the same time.
+  const matches = (href: string) => path === href || path.startsWith(`${href}/`)
+  const activeHref = items
+    .filter((i) => matches(i.href))
+    .sort((a, b) => b.href.length - a.href.length)[0]?.href
   return (
     <nav className="flex-1 py-3">
-      {navItemsFor(role).map((item) => {
+      {items.map((item) => {
         const Icon = item.icon
-        const active = path === item.href || path.startsWith(`${item.href}/`)
+        const active = item.href === activeHref
         return (
           <Link
             key={item.href}

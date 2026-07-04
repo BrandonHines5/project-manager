@@ -4,7 +4,7 @@
 -- unguessable access token used in a public /bid/{token} link (no login).
 -- Subs price line items (or a flat total), decline, or comment. Staff
 -- compare responses side-by-side and award — optionally auto-creating a
--- linked purchase order (see 0061).
+-- linked purchase order (see 0062).
 --
 -- Access model:
 --   * Staff: full access (RLS *_staff_all).

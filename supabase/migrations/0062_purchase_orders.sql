@@ -5,7 +5,7 @@
 -- unrelease to revise, void, and flag work complete. Approved POs roll up
 -- into committed costs by cost code on the Pricing tab.
 --
--- Same access model as bid packages (0060): staff full access, trade users
+-- Same access model as bid packages (0061): staff full access, trade users
 -- read their own company's POs once released, anonymous token traffic is
 -- service-role only, clients have no access.
 

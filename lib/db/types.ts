@@ -339,6 +339,7 @@ export type Database = {
           created_at: string
           email: string | null
           id: string
+          insurance_upload_token: string
           name: string
           notes: string | null
           notifications_enabled: boolean
@@ -358,6 +359,7 @@ export type Database = {
           created_at?: string
           email?: string | null
           id?: string
+          insurance_upload_token?: string
           name: string
           notes?: string | null
           notifications_enabled?: boolean
@@ -377,6 +379,7 @@ export type Database = {
           created_at?: string
           email?: string | null
           id?: string
+          insurance_upload_token?: string
           name?: string
           notes?: string | null
           notifications_enabled?: boolean
@@ -1062,6 +1065,128 @@ export type Database = {
             columns: ["submitted_by_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      insurance_documents: {
+        Row: {
+          company_id: string | null
+          created_at: string
+          email_from: string | null
+          email_subject: string | null
+          extracted_company_name: string | null
+          extraction: Json | null
+          extraction_error: string | null
+          file_name: string
+          file_size: number | null
+          file_type: string | null
+          id: string
+          received_at: string
+          source: string
+          status: string
+          storage_bucket: string
+          storage_path: string
+        }
+        Insert: {
+          company_id?: string | null
+          created_at?: string
+          email_from?: string | null
+          email_subject?: string | null
+          extracted_company_name?: string | null
+          extraction?: Json | null
+          extraction_error?: string | null
+          file_name: string
+          file_size?: number | null
+          file_type?: string | null
+          id?: string
+          received_at?: string
+          source: string
+          status?: string
+          storage_bucket?: string
+          storage_path: string
+        }
+        Update: {
+          company_id?: string | null
+          created_at?: string
+          email_from?: string | null
+          email_subject?: string | null
+          extracted_company_name?: string | null
+          extraction?: Json | null
+          extraction_error?: string | null
+          file_name?: string
+          file_size?: number | null
+          file_type?: string | null
+          id?: string
+          received_at?: string
+          source?: string
+          status?: string
+          storage_bucket?: string
+          storage_path?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "insurance_documents_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      insurance_policies: {
+        Row: {
+          carrier: string | null
+          company_id: string
+          created_at: string
+          document_id: string | null
+          effective_date: string | null
+          expiration_date: string
+          id: string
+          limits: Json | null
+          policy_number: string | null
+          reminder_sent_at: string | null
+          type: Database["public"]["Enums"]["insurance_type"]
+        }
+        Insert: {
+          carrier?: string | null
+          company_id: string
+          created_at?: string
+          document_id?: string | null
+          effective_date?: string | null
+          expiration_date: string
+          id?: string
+          limits?: Json | null
+          policy_number?: string | null
+          reminder_sent_at?: string | null
+          type: Database["public"]["Enums"]["insurance_type"]
+        }
+        Update: {
+          carrier?: string | null
+          company_id?: string
+          created_at?: string
+          document_id?: string | null
+          effective_date?: string | null
+          expiration_date?: string
+          id?: string
+          limits?: Json | null
+          policy_number?: string | null
+          reminder_sent_at?: string | null
+          type?: Database["public"]["Enums"]["insurance_type"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "insurance_policies_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "insurance_policies_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "insurance_documents"
             referencedColumns: ["id"]
           },
         ]
@@ -2489,6 +2614,7 @@ export type Database = {
         | "permit"
         | "contract"
         | "other"
+      insurance_type: "general_liability" | "workers_comp" | "auto" | "umbrella"
       payment_method: "check" | "wire" | "card" | "cash" | "other"
       po_status: "draft" | "released" | "approved" | "declined" | "void"
       project_status:
@@ -2670,6 +2796,7 @@ export const Constants = {
         "contract",
         "other",
       ],
+      insurance_type: ["general_liability", "workers_comp", "auto", "umbrella"],
       payment_method: ["check", "wire", "card", "cash", "other"],
       po_status: ["draft", "released", "approved", "declined", "void"],
       project_status: [
