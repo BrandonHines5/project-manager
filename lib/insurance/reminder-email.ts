@@ -11,6 +11,19 @@ export const INSURANCE_TYPE_LABELS: Record<string, string> = {
   umbrella: "Umbrella / Excess Liability",
 }
 
+/**
+ * Reply-To for insurance emails: the Resend RECEIVING address that feeds the
+ * /api/inbound/insurance webhook (e.g. insurance@<subdomain>.resend.app, or
+ * a custom inbound address). The From address is Resend's SENDING identity,
+ * which can't receive mail — without this, hitting "Reply" on a request
+ * email bounces. When unset, the email copy drops the "reply with your
+ * certificate attached" suggestion entirely.
+ */
+export function insuranceReplyTo(): string | undefined {
+  const v = process.env.INSURANCE_INBOUND_EMAIL?.trim()
+  return v && v.includes("@") ? v : undefined
+}
+
 export function buildInsuranceRequestEmail(opts: {
   companyName: string
   contactName?: string | null
@@ -37,7 +50,12 @@ export function buildInsuranceRequestEmail(opts: {
       ? `Our records show the following insurance coverage for ${opts.companyName} is expiring soon:\n\n${lines}\n\nTo keep working on our projects without interruption, please upload your updated certificate of insurance here:\n\n${opts.uploadUrl}\n\nA current certificate showing general liability and workers' compensation coverage is required before the expiration date.`
       : `We need a current certificate of insurance on file for ${opts.companyName} showing general liability and workers' compensation coverage.\n\nPlease upload your certificate here:\n\n${opts.uploadUrl}`
 
-  const text = `${greeting}\n\n${body}\n\nYou can also reply to this email with the certificate attached, or have your insurance agent send it directly.\n\nThank you,\nHines Homes`
+  // Only advertise reply-with-attachment when replies actually route to the
+  // inbound pipeline (Reply-To set); otherwise a reply would bounce.
+  const replyLine = insuranceReplyTo()
+    ? "\n\nYou can also reply to this email with the certificate attached, or have your insurance agent send it directly."
+    : ""
+  const text = `${greeting}\n\n${body}${replyLine}\n\nThank you,\nHines Homes`
 
   const subject =
     opts.expiring.length > 0

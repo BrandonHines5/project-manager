@@ -5,7 +5,10 @@ import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
 import { sendEmail, appUrl } from "@/lib/email"
-import { buildInsuranceRequestEmail } from "@/lib/insurance/reminder-email"
+import {
+  buildInsuranceRequestEmail,
+  insuranceReplyTo,
+} from "@/lib/insurance/reminder-email"
 import {
   ingestInsuranceDocument,
   materializePolicies,
@@ -213,5 +216,13 @@ export async function sendInsuranceRequest(companyId: string): Promise<{
     expiring,
     uploadUrl: appUrl(`/insurance-upload/${company.insurance_upload_token}`),
   })
-  return sendEmail({ to: company.email, subject: message.subject, text: message.text })
+  const replyTo = insuranceReplyTo()
+  return sendEmail({
+    to: company.email,
+    // Replies (usually with the cert attached) route to the inbound
+    // pipeline instead of bouncing off the send-only From address.
+    ...(replyTo ? { replyTo } : {}),
+    subject: message.subject,
+    text: message.text,
+  })
 }
