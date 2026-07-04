@@ -125,7 +125,7 @@ export default async function MyBidsPage() {
                         {r.package.title}
                       </span>
                       <Badge tone={closed && r.status !== "awarded" ? "muted" : STATUS_TONE[r.status]}>
-                        {closed && r.status === "submitted"
+                        {closed && r.status !== "awarded" && r.status !== "declined"
                           ? "Bidding closed"
                           : STATUS_LABEL[r.status]}
                       </Badge>

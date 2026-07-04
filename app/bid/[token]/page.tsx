@@ -135,6 +135,9 @@ export default async function BidTokenPage({
   const rec = data as unknown as PageData
   const pkg = rec.bid_packages
   if (!pkg) notFound()
+  // Service-role fetch bypasses the RLS rule hiding drafts — never expose a
+  // package staff haven't released (possible if a send half-failed).
+  if (pkg.status === "draft") notFound()
 
   // First-open tracking. Best-effort — never block the page on it.
   if (!rec.viewed_at) {

@@ -242,6 +242,7 @@ function CommentThread({ token, comments }: { token: string; comments: Comment[]
         )}
         <div className="flex flex-col gap-2">
           <Textarea
+            aria-label="Message"
             placeholder="Ask a question about this purchase order…"
             value={body}
             onChange={(e) => setBody(e.target.value)}

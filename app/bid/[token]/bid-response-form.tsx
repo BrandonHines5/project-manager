@@ -79,6 +79,13 @@ export function BidResponseForm({
       .filter((li) => (quotes[li.id] ?? "") !== "")
       .map((li) => ({ line_item_id: li.id, unit_cost: Number(quotes[li.id]) }))
 
+  // min="0" on the inputs doesn't stop typed negatives or junk — validate
+  // before anything reaches the server action.
+  const isValidAmount = (value: string) => {
+    const amount = Number(value)
+    return Number.isFinite(amount) && amount >= 0
+  }
+
   const run = (fn: () => Promise<unknown>, successMsg: string | null) => {
     setError(null)
     setNotice(null)
@@ -109,14 +116,16 @@ export function BidResponseForm({
 
   const handleSubmit = () => {
     if (flatFee) {
-      if (flatTotal === "" || !Number.isFinite(Number(flatTotal))) {
-        setError("Enter your total price before submitting.")
+      if (flatTotal === "" || !isValidAmount(flatTotal)) {
+        setError("Enter a valid total price (0 or more) before submitting.")
         return
       }
     } else {
-      const missing = lineItems.some((li) => (quotes[li.id] ?? "") === "")
-      if (missing) {
-        setError("Enter a price for every line item before submitting.")
+      const invalid = lineItems.some(
+        (li) => (quotes[li.id] ?? "") === "" || !isValidAmount(quotes[li.id])
+      )
+      if (invalid) {
+        setError("Enter a valid price (0 or more) for every line item before submitting.")
         return
       }
     }
@@ -415,6 +424,7 @@ function CommentThread({
         {enabled ? (
           <div className="flex flex-col gap-2">
             <Textarea
+              aria-label="Message"
               placeholder="Ask a question about this bid…"
               value={body}
               onChange={(e) => setBody(e.target.value)}

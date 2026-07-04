@@ -112,10 +112,11 @@ async function reconcileAttachments(
   packageId: string,
   attachments: BidPackageInputT["attachments"]
 ) {
-  const { data: existing } = await supabase
+  const { data: existing, error: existingErr } = await supabase
     .from("bid_package_attachments")
     .select("id, storage_path")
     .eq("bid_package_id", packageId)
+  if (existingErr) throw new Error(existingErr.message)
   const keep = new Set(
     attachments.map((a) => nz(a.id)).filter((x): x is string => !!x)
   )
@@ -177,12 +178,13 @@ export async function saveBidPackage(input: BidPackageInputT) {
       .from("bid_packages")
       .update({
         title: parsed.title,
-        scope: parsed.scope ?? null,
         due_date: nz(parsed.due_date),
-        // Pricing structure is frozen once released — reviseBidPackage is
-        // the explicit path that changes it and resets responses.
+        // Scope and pricing structure are frozen once released — subs priced
+        // against them. reviseBidPackage is the explicit path that changes
+        // them and resets responses.
         ...(cur.status === "draft"
           ? {
+              scope: parsed.scope ?? null,
               flat_fee: parsed.flat_fee,
               allow_multiple_awards: parsed.allow_multiple_awards,
             }
@@ -307,6 +309,15 @@ export async function sendBidPackage({
       if (error) throw new Error(error.message)
       sends.push({ company, token })
     }
+  }
+
+  // Nothing created or re-sent (stale/invalid company ids, or everyone
+  // already responded) — don't flip a draft to sent with no reachable
+  // recipients.
+  if (!sends.length) {
+    throw new Error(
+      "No invites were sent — the selected companies may already have responded or no longer exist."
+    )
   }
 
   // draft → sent, once. .eq guard keeps a concurrent send from double-stamping.
@@ -506,7 +517,7 @@ export async function awardBid({
       sendEmail({
         to: [pkgInfo.companies.email],
         subject: `Bid awarded: ${title} — ${projectName}`,
-        text: `Congratulations — your bid for "${title}" on ${projectName} has been accepted. A purchase order will follow with the full scope and terms.${linkLine}`,
+        text: `Congratulations — your bid for "${title}" on ${projectName} has been accepted.${create_po ? " A purchase order will follow with the full scope and terms." : ""}${linkLine}`,
       }).catch((e) => console.warn("[awardBid] winner email failed:", e))
     )
   }
@@ -551,12 +562,18 @@ export async function closeBidPackage({
 }) {
   await requireStaff()
   const supabase = await createSupabaseServerClient()
-  const { error } = await supabase
+  const { error, count } = await supabase
     .from("bid_packages")
-    .update({ status: "closed", closed_at: new Date().toISOString() })
+    .update(
+      { status: "closed", closed_at: new Date().toISOString() },
+      { count: "exact" }
+    )
     .eq("id", id)
     .eq("status", "sent")
   if (error) throw new Error(error.message)
+  // Only revoke tokens after a confirmed sent → closed transition — a
+  // no-op close (already awarded/closed) must not kill live links.
+  if (!count) throw new Error("Only an open (sent) bid package can be closed.")
   const { error: tokErr } = await supabase
     .from("bid_recipients")
     .update({ token: null })

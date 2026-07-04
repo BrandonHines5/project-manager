@@ -112,9 +112,10 @@ const ApproveInput = z.object({
   signature_name: z
     .string()
     .trim()
-    .min(2, "Type your full name as your signature."),
+    .min(2, "Type your full name as your signature.")
+    .max(200, "Signature is too long."),
   disclaimer_accepted: z.literal(true, {
-    message: "Check the box to confirm you agree.",
+    error: "Check the box to confirm you agree.",
   }),
 })
 
@@ -171,7 +172,11 @@ export async function approvePoByToken(input: {
 
 const DeclineInput = z.object({
   token: z.string(),
-  reason: z.string().trim().min(2, "Tell us why you're declining."),
+  reason: z
+    .string()
+    .trim()
+    .min(2, "Tell us why you're declining.")
+    .max(2000, "Reason is too long."),
 })
 
 /**

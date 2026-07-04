@@ -30,7 +30,7 @@ export default async function PricingPage({
   // gates the section on financial_access.
   const canSeeCommitted = profile.role === "staff" && !!profile.financial_access
 
-  const [{ data: decisions }, { data: payments }, { data: approvedPos }] =
+  const [{ data: decisions }, { data: payments }, approvedPosRes] =
     await Promise.all([
       supabase
         .from("decisions")
@@ -59,10 +59,15 @@ export default async function PricingPage({
             .eq("project_id", projectId)
             .eq("status", "approved")
             .order("number", { ascending: true })
-        : Promise.resolve({ data: null }),
+        : Promise.resolve({ data: null, error: null }),
     ])
 
-  const committedPos = (approvedPos ?? []).map((po) => {
+  // A failed committed-costs query must not render as "no committed costs".
+  if (canSeeCommitted && approvedPosRes.error) {
+    throw new Error(approvedPosRes.error.message)
+  }
+
+  const committedPos = (approvedPosRes.data ?? []).map((po) => {
     const p = po as unknown as {
       id: string
       number: number

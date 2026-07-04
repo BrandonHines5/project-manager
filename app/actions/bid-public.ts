@@ -142,13 +142,17 @@ async function persistQuotes(
     .eq("bid_package_id", packageId)
   if (error) throw new Error("Could not save your pricing — please try again.")
   const valid = new Set((lineItems ?? []).map((li) => li.id))
-  const rows = quotes
-    .filter((q) => valid.has(q.line_item_id))
-    .map((q) => ({
-      bid_recipient_id: recipientId,
-      line_item_id: q.line_item_id,
-      unit_cost: q.unit_cost,
-    }))
+  // Dedupe by line item (last one wins) — a repeated line_item_id would make
+  // the batch upsert fail with "cannot affect row a second time".
+  const byLine = new Map<string, number>()
+  for (const q of quotes) {
+    if (valid.has(q.line_item_id)) byLine.set(q.line_item_id, q.unit_cost)
+  }
+  const rows = [...byLine.entries()].map(([line_item_id, unit_cost]) => ({
+    bid_recipient_id: recipientId,
+    line_item_id,
+    unit_cost,
+  }))
   if (!rows.length) return
   const { error: upErr } = await admin
     .from("bid_line_item_quotes")
@@ -158,13 +162,13 @@ async function persistQuotes(
 
 const Quote = z.object({
   line_item_id: z.string().min(1),
-  unit_cost: z.coerce.number(),
+  unit_cost: z.coerce.number().nonnegative(),
 })
 
 const ResponseInput = z.object({
   token: z.string(),
   quotes: z.array(Quote).default([]),
-  flat_total: z.coerce.number().nullish(),
+  flat_total: z.coerce.number().nonnegative().nullish(),
   notes: z.string().max(5000).nullish(),
 })
 

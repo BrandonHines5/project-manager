@@ -98,12 +98,17 @@ export async function savePurchaseOrder(input: PurchaseOrderInputT) {
     if (cur.status !== "draft") {
       throw new Error("Only draft POs can be edited — unrelease it first.")
     }
-    const { error } = await supabase
+    const { error, count } = await supabase
       .from("purchase_orders")
-      .update(row)
+      .update(row, { count: "exact" })
       .eq("id", id)
       .eq("status", "draft")
     if (error) throw new Error(error.message)
+    // Zero rows = the PO left draft between the pre-check and this update
+    // (concurrent release). Bail before the line-item wipe below.
+    if (!count) {
+      throw new Error("Only draft POs can be edited — unrelease it first.")
+    }
   } else {
     // Race-safe per-project number, same pattern as saveDecision.
     let inserted: { id: string } | null = null
@@ -160,10 +165,11 @@ export async function savePurchaseOrder(input: PurchaseOrderInputT) {
 
   // Reconcile attachments (delete removed + blob cleanup, insert new,
   // update captions) — same shape as decisions.
-  const { data: existingAtts } = await supabase
+  const { data: existingAtts, error: existingAttsErr } = await supabase
     .from("po_attachments")
     .select("id, storage_path")
     .eq("purchase_order_id", id)
+  if (existingAttsErr) throw new Error(existingAttsErr.message)
   const keepIds = new Set(
     parsed.attachments.map((a) => nz(a.id)).filter((x): x is string => !!x)
   )
@@ -236,12 +242,17 @@ export async function releasePurchaseOrder({
   if (po.status !== "draft") throw new Error("Only a draft PO can be released.")
 
   const token = generateAccessToken()
-  const { error } = await supabase
+  const { error, count } = await supabase
     .from("purchase_orders")
-    .update({ status: "released", token, released_at: new Date().toISOString() })
+    .update(
+      { status: "released", token, released_at: new Date().toISOString() },
+      { count: "exact" }
+    )
     .eq("id", id)
     .eq("status", "draft")
   if (error) throw new Error(error.message)
+  // Never email a token that wasn't stored (concurrent release/void).
+  if (!count) throw new Error("Only a draft PO can be released.")
 
   const company = (
     po as unknown as {
@@ -326,6 +337,10 @@ export async function unreleasePurchaseOrder({
     .eq("status", cur.status)
   if (error) throw new Error(error.message)
   revalidatePath(`/projects/${project_id}/purchase-orders`)
+  // Unreleasing an approved PO pulls it out of committed costs.
+  if (cur.status === "approved") {
+    revalidatePath(`/projects/${project_id}/pricing`)
+  }
 }
 
 /**
@@ -434,8 +449,17 @@ export async function deletePurchaseOrder({
     .select("storage_path")
     .eq("purchase_order_id", id)
   const paths = (atts ?? []).map((a) => a.storage_path)
-  const { error } = await supabase.from("purchase_orders").delete().eq("id", id)
+  // Re-assert draft on the delete itself — the pre-check can race with a
+  // concurrent release, and a released PO must never be deleted.
+  const { error, count } = await supabase
+    .from("purchase_orders")
+    .delete({ count: "exact" })
+    .eq("id", id)
+    .eq("status", "draft")
   if (error) throw new Error(error.message)
+  if (!count) {
+    throw new Error("Only draft POs can be deleted — void it instead.")
+  }
   if (paths.length) {
     await supabase.storage.from("project-files").remove(paths)
   }
