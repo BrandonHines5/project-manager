@@ -59,15 +59,16 @@ type Doc = Pick<
 >
 
 type InsType = Enums<"insurance_type">
-const TYPE_ORDER: InsType[] = ["general_liability", "workers_comp", "auto", "umbrella"]
+// Only GL + WC get table columns — that's what we require from every sub.
+// Auto/umbrella policies are still extracted and stored; they show in the
+// expanded per-company history, just not as columns.
+const TYPE_ORDER: InsType[] = ["general_liability", "workers_comp"]
 const TYPE_LABELS: Record<InsType, string> = {
   general_liability: "General Liability",
   workers_comp: "Workers' Comp",
   auto: "Auto",
   umbrella: "Umbrella",
 }
-// GL + WC are what we require from every sub; auto/umbrella are tracked
-// when present but their absence isn't flagged.
 const REQUIRED: InsType[] = ["general_liability", "workers_comp"]
 
 const EXPIRING_SOON_DAYS = 30
