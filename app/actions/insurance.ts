@@ -106,25 +106,30 @@ export async function deleteInsuranceDocument(documentId: string) {
     .single()
   if (error || !doc) throw new Error(error?.message ?? "Document not found")
 
+  // Policies first, then the document, and only then the stored file. Not
+  // transactional, but every failure point leaves a retriable state: if the
+  // document delete fails after the policies are gone, the row is still
+  // visible on the dashboard and a second "Delete" completes the job.
   const { error: polErr } = await supabase
     .from("insurance_policies")
     .delete()
     .eq("document_id", documentId)
   if (polErr) throw new Error(polErr.message)
 
-  const { error: fileErr } = await supabase.storage
-    .from(INSURANCE_BUCKET)
-    .remove([doc.storage_path])
-  if (fileErr) {
-    // Orphaned file is a cleanup nit, not a reason to keep the bad row.
-    console.warn("[insurance] storage remove failed:", fileErr.message)
-  }
-
   const { error: delErr } = await supabase
     .from("insurance_documents")
     .delete()
     .eq("id", documentId)
   if (delErr) throw new Error(delErr.message)
+
+  const { error: fileErr } = await supabase.storage
+    .from(INSURANCE_BUCKET)
+    .remove([doc.storage_path])
+  if (fileErr) {
+    // DB is already consistent; an orphaned storage object is a cleanup
+    // nit, not a reason to fail the action.
+    console.warn("[insurance] storage remove failed:", fileErr.message)
+  }
   revalidatePath(INSURANCE_PATH)
 }
 

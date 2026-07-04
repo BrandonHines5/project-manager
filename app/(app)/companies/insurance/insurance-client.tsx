@@ -613,6 +613,9 @@ function UploadDialog({
       } else {
         toast.warning("File stored but extraction failed — see the review queue")
       }
+      // Clear the native input too, or re-picking the same file next time
+      // won't fire onChange.
+      if (inputRef.current) inputRef.current.value = ""
       setFile(null)
       setCompanyId("")
       onOpenChange(false)

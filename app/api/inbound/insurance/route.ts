@@ -117,9 +117,11 @@ export async function POST(req: Request) {
     }
   }
 
+  // Log ids/counts only — sender addresses, subjects, and filenames are PII
+  // that doesn't belong in platform logs. The document rows carry the detail.
+  const failed = summary.filter((s) => s.status.startsWith("error")).length
   console.log(
-    `[insurance-inbound] from=${from} subject="${email.subject}" →`,
-    JSON.stringify(summary)
+    `[insurance-inbound] email_id=${email.email_id} attachments=${summary.length} failed=${failed}`
   )
   return NextResponse.json({ ok: true, summary })
 }

@@ -136,11 +136,37 @@ export async function GET(req: Request) {
       continue
     }
 
+    // CLAIM before sending: atomically stamp only rows still unstamped and
+    // read back what we actually got. Two overlapping invocations can't both
+    // claim the same policy, so nobody gets the same reminder twice.
+    const { data: claimed, error: claimErr } = await supabase
+      .from("insurance_policies")
+      .update({ reminder_sent_at: new Date().toISOString() })
+      .in(
+        "id",
+        policies.map((p) => p.id)
+      )
+      .is("reminder_sent_at", null)
+      .select("id, type, expiration_date")
+    if (claimErr) {
+      summary.push({
+        company: company.name,
+        policies: policies.length,
+        sent: false,
+        reason: `claim failed: ${claimErr.message}`,
+      })
+      continue
+    }
+    if (!claimed || claimed.length === 0) {
+      // Another run already claimed these — nothing to do.
+      continue
+    }
+
     const uploadUrl = appUrl(`/insurance-upload/${company.insurance_upload_token}`)
     const message = buildInsuranceRequestEmail({
       companyName: company.name,
       contactName: company.contact_name,
-      expiring: policies.map((p) => ({
+      expiring: claimed.map((p) => ({
         type: p.type,
         expiration_date: p.expiration_date,
       })),
@@ -153,27 +179,27 @@ export async function GET(req: Request) {
     })
 
     if (result.sent) {
-      const { error: stampErr } = await supabase
+      summary.push({
+        company: company.name,
+        policies: claimed.length,
+        sent: true,
+      })
+    } else {
+      // Release the claim so tomorrow's run retries this company.
+      const { error: unclaimErr } = await supabase
         .from("insurance_policies")
-        .update({ reminder_sent_at: new Date().toISOString() })
+        .update({ reminder_sent_at: null })
         .in(
           "id",
-          policies.map((p) => p.id)
+          claimed.map((p) => p.id)
         )
       summary.push({
         company: company.name,
-        policies: policies.length,
-        sent: true,
-        ...(stampErr
-          ? { reason: `sent but stamp failed: ${stampErr.message}` }
-          : {}),
-      })
-    } else {
-      summary.push({
-        company: company.name,
-        policies: policies.length,
+        policies: claimed.length,
         sent: false,
-        reason: result.reason,
+        reason: `${result.reason}${
+          unclaimErr ? ` (and unclaim failed: ${unclaimErr.message})` : ""
+        }`,
       })
     }
   }

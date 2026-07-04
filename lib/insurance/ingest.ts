@@ -141,7 +141,22 @@ export async function ingestInsuranceDocument(
     return { ok: true, documentId: doc.id, status: "needs_review" }
   }
 
-  await materializePolicies(admin, doc.id, companyId, extraction)
+  try {
+    await materializePolicies(admin, doc.id, companyId, extraction)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    await admin
+      .from("insurance_documents")
+      .update({
+        status: "failed",
+        company_id: companyId,
+        extracted_company_name: extraction.company_name,
+        extraction: extraction as unknown as Json,
+        extraction_error: msg,
+      })
+      .eq("id", doc.id)
+    return { ok: true, documentId: doc.id, status: "failed" }
+  }
   await admin
     .from("insurance_documents")
     .update({
@@ -186,10 +201,11 @@ export async function materializePolicies(
     })
     // 23505 = the uq_inspol_dedup unique index — same policy already on
     // file, which is exactly the "same cert sent twice" case. Skip quietly.
+    // Anything else must bubble: silently dropping rows and then marking
+    // the document processed would fake a complete extraction.
     if (error) {
       if (error.code === "23505") continue
-      console.error("[insurance] policy insert failed:", error.message)
-      continue
+      throw new Error(`Policy insert failed: ${error.message}`)
     }
     inserted++
   }
@@ -217,27 +233,41 @@ async function matchCompany(
 
   const name = hints.companyName?.trim()
   if (name) {
-    // Exact (case-insensitive) first, then a contains-match. Suffix noise
-    // like "LLC"/"Inc" is stripped for the contains pass so "ABC Plumbing"
-    // matches "ABC Plumbing LLC".
+    // Exact (case-insensitive) first.
     const { data: exact } = await admin
       .from("companies")
       .select("id")
       .ilike("name", name)
     if (exact && exact.length === 1) return exact[0].id
 
-    const stripped = name
-      .replace(/[,.]?\s*(llc|inc|corp|co|ltd)\.?$/i, "")
-      .trim()
+    // Then suffix-insensitive EQUALITY (never a contains-match — "ABC"
+    // must not auto-assign to "ABC Plumbing"): strip "LLC"/"Inc"-style
+    // suffixes and punctuation from both sides and require the full
+    // normalized names to be identical. The ilike just narrows candidates.
+    const stripped = stripCompanySuffix(name)
     if (stripped.length >= 4) {
-      const { data: fuzzy } = await admin
+      const { data: candidates } = await admin
         .from("companies")
-        .select("id")
+        .select("id, name")
         .ilike("name", `%${escapeLike(stripped)}%`)
-      if (fuzzy && fuzzy.length === 1) return fuzzy[0].id
+      const equal = (candidates ?? []).filter(
+        (c) => normalizeCompanyName(c.name) === normalizeCompanyName(name)
+      )
+      if (equal.length === 1) return equal[0].id
     }
   }
   return null
+}
+
+function stripCompanySuffix(s: string): string {
+  return s.replace(/[,.]?\s*(llc|inc|corp|co|ltd)\.?$/i, "").trim()
+}
+
+function normalizeCompanyName(s: string): string {
+  return stripCompanySuffix(s)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
 }
 
 /** Pulls the bare address out of "Some Name <person@sub.com>" (or returns the input). */

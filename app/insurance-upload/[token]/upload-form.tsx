@@ -65,6 +65,9 @@ export function UploadForm({ token }: { token: string }) {
           size="sm"
           className="mt-2 px-0"
           onClick={() => {
+            // Clear the native input too, or re-picking the same file
+            // won't fire onChange.
+            if (inputRef.current) inputRef.current.value = ""
             setFile(null)
             setState({ phase: "idle" })
           }}

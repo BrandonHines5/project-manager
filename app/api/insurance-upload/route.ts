@@ -27,6 +27,18 @@ export async function POST(req: Request) {
     )
   }
 
+  // Cheap size gate before parsing the multipart body — the declared
+  // content-length catches oversized requests without buffering them.
+  // (The File.size check below remains the real enforcement; multipart
+  // framing adds a little overhead, hence the 1 MB allowance.)
+  const contentLength = Number(req.headers.get("content-length") ?? 0)
+  if (contentLength > MAX_BYTES + 1024 * 1024) {
+    return NextResponse.json(
+      { ok: false, error: "File is too large (15 MB max)" },
+      { status: 413 }
+    )
+  }
+
   let form: FormData
   try {
     form = await req.formData()

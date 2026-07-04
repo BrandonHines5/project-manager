@@ -128,6 +128,11 @@ export async function extractCoi(
   if (!apiKey) {
     throw new Error("ANTHROPIC_API_KEY is not configured")
   }
+  // Fail fast locally instead of shipping an unsupported media type to the
+  // API — the cast in the image branch below is only safe after this check.
+  if (!isExtractableType(mediaType)) {
+    throw new Error(`Unsupported media type for extraction: ${mediaType}`)
+  }
   const client = new Anthropic({ apiKey })
 
   const fileBlock: Anthropic.ContentBlockParam =
