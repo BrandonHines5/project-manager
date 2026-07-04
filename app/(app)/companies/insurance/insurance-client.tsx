@@ -25,6 +25,7 @@ import {
   processStoredInsuranceDocument,
   sendInsuranceRequest,
 } from "@/app/actions/insurance"
+import { companyRequiresInsurance } from "@/lib/insurance/requirements"
 import type { Enums, Tables } from "@/lib/db/types"
 
 type Company = Pick<
@@ -85,6 +86,10 @@ export function InsuranceClient({
   const [query, setQuery] = useState("")
   const [includeVendors, setIncludeVendors] = useState(false)
   const [onlyProblems, setOnlyProblems] = useState(false)
+  // Only "Approved for Use" companies must carry insurance; the table shows
+  // just those by default. Toggling this reveals everyone (useful to see a
+  // cert that arrived for a not-yet-approved company).
+  const [showAllStatuses, setShowAllStatuses] = useState(false)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [uploadOpen, setUploadOpen] = useState(false)
   const [pending, startTransition] = useTransition()
@@ -127,6 +132,8 @@ export function InsuranceClient({
   )
 
   function companyProblemCount(c: Company): number {
+    // Companies that aren't required to carry insurance can't have problems.
+    if (!companyRequiresInsurance(c.status)) return 0
     const byType = currentByCompany.get(c.id)
     let problems = 0
     for (const t of REQUIRED) {
@@ -138,6 +145,7 @@ export function InsuranceClient({
 
   const rows = companies
     .filter((c) => (includeVendors ? c.type !== "client" : c.type === "sub"))
+    .filter((c) => showAllStatuses || companyRequiresInsurance(c.status))
     .filter((c) => c.name.toLowerCase().includes(query.trim().toLowerCase()))
     .filter((c) => !onlyProblems || companyProblemCount(c) > 0)
 
@@ -178,7 +186,9 @@ export function InsuranceClient({
           </h1>
           <p className="text-sm text-muted-foreground">
             Certificates emailed to the insurance inbox are read and filed
-            automatically. Subs get an email one week before coverage lapses.{" "}
+            automatically. &ldquo;Approved for Use&rdquo; companies get an
+            email one week before coverage lapses — insurance isn&rsquo;t
+            required from anyone else.{" "}
             <Link href="/companies" className="text-brand-600 hover:underline">
               Back to companies
             </Link>
@@ -229,6 +239,17 @@ export function InsuranceClient({
               onChange={(e) => setOnlyProblems(e.target.checked)}
             />
             Only problems
+          </label>
+          <label
+            className="flex items-center gap-1.5 text-sm text-muted-foreground cursor-pointer"
+            title='Insurance is only required from companies marked "Approved for Use"'
+          >
+            <input
+              type="checkbox"
+              checked={showAllStatuses}
+              onChange={(e) => setShowAllStatuses(e.target.checked)}
+            />
+            Show all statuses
           </label>
         </div>
 
@@ -326,13 +347,22 @@ function CompanyRows({
               <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
             )}
             {company.name}
+            {!companyRequiresInsurance(company.status) && (
+              // Visible via "Show all statuses" — explain why nothing is
+              // flagged for this row.
+              <span className="ml-1 text-xs font-normal text-muted-foreground">
+                ({company.status ?? "no status"})
+              </span>
+            )}
           </button>
         </td>
         {TYPE_ORDER.map((t) => (
           <td key={t} className="px-3 py-2">
             <CoverageCell
               policy={byType?.get(t)}
-              required={REQUIRED.includes(t)}
+              required={
+                REQUIRED.includes(t) && companyRequiresInsurance(company.status)
+              }
               today={today}
               soon={soon}
             />
