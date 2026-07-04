@@ -583,13 +583,22 @@ export function PoDrawer({
                   {isDraft && (
                     <button
                       type="button"
-                      onClick={() =>
+                      onClick={() => {
+                        // Unsaved uploads have no DB row yet — best-effort
+                        // delete the orphaned storage object. Saved ones are
+                        // cleaned up by the server action on save.
+                        if (!a.id) {
+                          createSupabaseBrowserClient()
+                            .storage.from("project-files")
+                            .remove([a.storage_path])
+                            .catch(() => {})
+                        }
                         setAttachments((current) =>
                           current.filter(
                             (x) => x.storage_path !== a.storage_path
                           )
                         )
-                      }
+                      }}
                       className="absolute top-1 right-1 rounded-full bg-black/60 text-white p-0.5 opacity-0 group-hover:opacity-100 cursor-pointer"
                       aria-label="Remove"
                     >
@@ -849,6 +858,15 @@ function PoLineItemsEditor({
                         }
                       >
                         <option value="">— Select —</option>
+                        {/* The page only fetches active codes — keep a stale
+                            selection representable so the controlled Select
+                            doesn't silently drop it on save. */}
+                        {li.cost_code_id &&
+                          !costCodes.some((c) => c.id === li.cost_code_id) && (
+                            <option value={li.cost_code_id}>
+                              (inactive code)
+                            </option>
+                          )}
                         {costCodes.map((c) => (
                           <option key={c.id} value={c.id}>
                             {c.name}

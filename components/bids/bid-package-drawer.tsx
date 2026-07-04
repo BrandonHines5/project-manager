@@ -373,6 +373,7 @@ export function BidPackageDrawer({
             <Textarea
               value={scope}
               onChange={(e) => setScope(e.target.value)}
+              disabled={!isDraft}
               rows={4}
               placeholder="What's included, exclusions, site conditions, timing."
             />
@@ -432,8 +433,8 @@ export function BidPackageDrawer({
             {!isDraft && (
               <p className="text-[11px] text-muted inline-flex items-center gap-1">
                 <Lock className="h-3 w-3" />
-                Pricing structure is frozen after sending — use Revise &amp;
-                re-request to change it.
+                Scope and pricing structure are frozen after sending — use
+                Revise &amp; re-request to change them.
               </p>
             )}
           </div>
@@ -456,6 +457,7 @@ export function BidPackageDrawer({
               multiple
               accept="image/*,application/pdf"
               className="hidden"
+              disabled={!isDraft}
               onChange={(e) => uploadFiles(e.target.files)}
             />
             <div className="mt-1 grid grid-cols-3 sm:grid-cols-4 gap-2">
@@ -481,31 +483,44 @@ export function BidPackageDrawer({
                       </div>
                     )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setAttachments((current) =>
-                        current.filter(
-                          (x) => x.storage_path !== a.storage_path
+                  {isDraft && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // Unsaved uploads have no DB row yet — best-effort
+                        // delete the orphaned storage object. Saved ones are
+                        // cleaned up by the server action on save.
+                        if (!a.id) {
+                          createSupabaseBrowserClient()
+                            .storage.from("project-files")
+                            .remove([a.storage_path])
+                            .catch(() => {})
+                        }
+                        setAttachments((current) =>
+                          current.filter(
+                            (x) => x.storage_path !== a.storage_path
+                          )
                         )
-                      )
-                    }
-                    className="absolute top-1 right-1 rounded-full bg-black/60 text-white p-0.5 opacity-0 group-hover:opacity-100 cursor-pointer"
-                    aria-label="Remove"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
+                      }}
+                      className="absolute top-1 right-1 rounded-full bg-black/60 text-white p-0.5 opacity-0 group-hover:opacity-100 cursor-pointer"
+                      aria-label="Remove"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
                 </div>
               ))}
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                className="aspect-square rounded-md border border-dashed border-border-strong flex flex-col items-center justify-center text-muted hover:border-brand-500 hover:text-brand-600 cursor-pointer text-xs gap-1 disabled:opacity-50"
-              >
-                <Upload className="h-5 w-5" />
-                {uploading ? "Uploading…" : "Add files"}
-              </button>
+              {isDraft && (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="aspect-square rounded-md border border-dashed border-border-strong flex flex-col items-center justify-center text-muted hover:border-brand-500 hover:text-brand-600 cursor-pointer text-xs gap-1 disabled:opacity-50"
+                >
+                  <Upload className="h-5 w-5" />
+                  {uploading ? "Uploading…" : "Add files"}
+                </button>
+              )}
             </div>
           </div>
 
@@ -673,6 +688,15 @@ function BidLineItemsEditor({
                       }
                     >
                       <option value="">— Select —</option>
+                      {/* The page only fetches active codes — keep a stale
+                          selection representable so the controlled Select
+                          doesn't silently drop it on save. */}
+                      {li.cost_code_id &&
+                        !costCodes.some((c) => c.id === li.cost_code_id) && (
+                          <option value={li.cost_code_id}>
+                            (inactive code)
+                          </option>
+                        )}
                       {costCodes.map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.name}

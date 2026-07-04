@@ -29,12 +29,12 @@ export default async function PurchaseOrdersPage({
   if (!project) notFound()
 
   const [
-    { data: pos },
-    { data: lineItems },
-    { data: attachments },
-    { data: comments },
-    { data: companies },
-    { data: costCodes },
+    { data: pos, error: posError },
+    { data: lineItems, error: lineItemsError },
+    { data: attachments, error: attachmentsError },
+    { data: comments, error: commentsError },
+    { data: companies, error: companiesError },
+    { data: costCodes, error: costCodesError },
   ] = await Promise.all([
     supabase
       .from("purchase_orders")
@@ -67,6 +67,15 @@ export default async function PurchaseOrdersPage({
       .eq("is_active", true)
       .order("position", { ascending: true }),
   ])
+
+  const queryError =
+    posError ??
+    lineItemsError ??
+    attachmentsError ??
+    commentsError ??
+    companiesError ??
+    costCodesError
+  if (queryError) throw new Error(queryError.message)
 
   const strip = <T extends { purchase_orders?: unknown }>(rows: T[] | null) =>
     (rows ?? []).map((r) => {

@@ -62,8 +62,17 @@ export function PurchaseOrdersClient({ data }: { data: PurchaseOrdersData }) {
             return (
               <Card
                 key={po.id}
+                role="button"
+                tabIndex={0}
                 className="hover:border-brand-500/50 transition-colors cursor-pointer"
                 onClick={() => setDrawerState({ mode: "edit", poId: po.id })}
+                onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget) return
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault()
+                    setDrawerState({ mode: "edit", poId: po.id })
+                  }
+                }}
               >
                 <CardBody className="py-3.5">
                   <div className="flex items-center gap-3 flex-wrap">

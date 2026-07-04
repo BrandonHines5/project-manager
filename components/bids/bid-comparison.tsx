@@ -91,11 +91,16 @@ export function BidComparison({
           router.push(
             `/projects/${data.project_id}/purchase-orders?open=${po_id}`
           )
+          setAwarding(null)
+          onClose()
         } else {
           toast.success(`Awarded to ${awardingRecipient.company_name}`)
           router.refresh()
+          setAwarding(null)
+          // Multi-award packages stay open so staff can award more
+          // recipients without reopening the comparison.
+          if (!pkg.allow_multiple_awards) onClose()
         }
-        onClose()
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Award failed")
       }
