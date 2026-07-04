@@ -16,6 +16,8 @@ const TABS: Tab[] = [
   { label: "Onsite", slug: "onsite", hideForRoles: ["client", "trade"] },
   { label: "Job Logs", slug: "daily-logs" },
   { label: "Decisions", slug: "decisions" },
+  { label: "Bids", slug: "bids", hideForRoles: ["client", "trade"] },
+  { label: "POs", slug: "purchase-orders", hideForRoles: ["client", "trade"] },
   { label: "Files", slug: "files" },
   { label: "Pricing", slug: "pricing" },
   { label: "Roles", slug: "roles", hideForRoles: ["client", "trade"] },
