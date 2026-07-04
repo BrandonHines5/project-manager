@@ -64,6 +64,13 @@ type Attachment = {
   preview_url?: string
 }
 
+// Statuses that mean "don't hire" — hidden from the recipient candidate
+// list. companies.status is free text, so compare normalized.
+function isInactiveCompanyStatus(status: string | null) {
+  const s = (status ?? "").trim().toLowerCase()
+  return s === "inactive" || s === "not for hire"
+}
+
 export function BidPackageDrawer({
   open,
   onClose,
@@ -804,7 +811,10 @@ function RecipientPicker({
   onAwardBid?: (recipientId: string) => void
   bidTotalFor?: (r: BidsData["recipients"][number]) => number | null
 }) {
-  const byCompany = new Map(recipients.map((r) => [r.company_id, r]))
+  const byCompany = useMemo(
+    () => new Map(recipients.map((r) => [r.company_id, r])),
+    [recipients]
+  )
   // Trade chip filter, same interaction as the Companies page toolbar.
   const [tradeFilter, setTradeFilter] = useState<string | null>(null)
   const allTrades = useMemo(
@@ -820,21 +830,19 @@ function RecipientPicker({
     )
   }, [companyTrades, tradeFilter])
 
-  // Statuses that mean "don't hire" — hidden from the candidate list.
-  // companies.status is free text, so compare normalized.
-  const isInactive = (status: string | null) => {
-    const s = (status ?? "").trim().toLowerCase()
-    return s === "inactive" || s === "not for hire"
-  }
-
-  const visible = companies.filter((c) => {
-    // Rows that carry state always stay visible: an existing recipient shows
-    // its response/award controls, and a checked box must never vanish.
-    if (byCompany.has(c.id) || selected.has(c.id)) return true
-    if (isInactive(c.status)) return false
-    if (tradeCompanyIds && !tradeCompanyIds.has(c.id)) return false
-    return true
-  })
+  const visible = useMemo(
+    () =>
+      companies.filter((c) => {
+        // Rows that carry state always stay visible: an existing recipient
+        // shows its response/award controls, and a checked box must never
+        // vanish.
+        if (byCompany.has(c.id) || selected.has(c.id)) return true
+        if (isInactiveCompanyStatus(c.status)) return false
+        if (tradeCompanyIds && !tradeCompanyIds.has(c.id)) return false
+        return true
+      }),
+    [companies, byCompany, selected, tradeCompanyIds]
+  )
 
   return (
     <div>
@@ -855,6 +863,7 @@ function RecipientPicker({
                 key={t}
                 type="button"
                 onClick={() => setTradeFilter(active ? null : t)}
+                aria-pressed={active}
                 className={cn(
                   "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] cursor-pointer transition-colors",
                   active
