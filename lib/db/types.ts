@@ -1733,6 +1733,8 @@ export type Database = {
           cost_plus: boolean
           created_at: string
           created_by: string | null
+          crm_status: string | null
+          crm_status_synced_at: string | null
           dashboard_pulled_at: string | null
           dashboard_url: string | null
           id: string
@@ -1764,6 +1766,8 @@ export type Database = {
           cost_plus?: boolean
           created_at?: string
           created_by?: string | null
+          crm_status?: string | null
+          crm_status_synced_at?: string | null
           dashboard_pulled_at?: string | null
           dashboard_url?: string | null
           id?: string
@@ -1795,6 +1799,8 @@ export type Database = {
           cost_plus?: boolean
           created_at?: string
           created_by?: string | null
+          crm_status?: string | null
+          crm_status_synced_at?: string | null
           dashboard_pulled_at?: string | null
           dashboard_url?: string | null
           id?: string

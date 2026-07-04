@@ -32,7 +32,9 @@ export default async function AppLayout({
       .is("read_at", null),
     supabase
       .from("projects")
-      .select("id, name, project_number, address, status, project_type, labels")
+      .select(
+        "id, name, project_number, address, status, crm_status, project_type, labels"
+      )
       .order("project_number", { ascending: false }),
   ])
 
@@ -64,7 +66,12 @@ export default async function AppLayout({
           brand={brand}
         />
         <ProjectContextShell
-          sidebar={<ProjectListSidebar projects={projects ?? []} />}
+          sidebar={
+            <ProjectListSidebar
+              projects={projects ?? []}
+              canSync={profile.role === "staff"}
+            />
+          }
         >
           <main id="main-content" className="flex-1 overflow-y-auto">
             {children}
