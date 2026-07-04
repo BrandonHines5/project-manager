@@ -41,6 +41,7 @@ import {
   BidStatusBadge,
   RecipientStatusBadge,
   recipientBidTotal,
+  canAwardPackage,
 } from "@/app/(app)/projects/[id]/bids/bids-client"
 import type { Tables } from "@/lib/db/types"
 import type { BidsData } from "@/app/(app)/projects/[id]/bids/bids-client"
@@ -548,10 +549,7 @@ export function BidPackageDrawer({
               // Received bids can be turned into a PO right from this list
               // (award flow) while the package is still open for awarding.
               onAwardBid={
-                onAwardBid &&
-                pkg &&
-                (pkg.status === "sent" ||
-                  (pkg.status === "awarded" && pkg.allow_multiple_awards))
+                onAwardBid && pkg && canAwardPackage(pkg)
                   ? onAwardBid
                   : undefined
               }
@@ -825,12 +823,21 @@ function RecipientPicker({
             const trades = companyTrades
               .filter((t) => t.company_id === c.id)
               .map((t) => t.trade)
+            // The status/total/award group lives OUTSIDE the label — a label
+            // may only contain one labelable control (the checkbox), and
+            // nesting the award Button inside it is invalid markup.
             return (
-              <li key={c.id}>
+              <li
+                key={c.id}
+                className={cn(
+                  "flex items-center gap-2 rounded px-1.5 py-1 text-sm",
+                  existing ? "opacity-80" : "hover:bg-background/60"
+                )}
+              >
                 <label
                   className={cn(
-                    "flex items-center gap-2 rounded px-1.5 py-1 text-sm",
-                    existing ? "opacity-80" : "cursor-pointer hover:bg-background/60"
+                    "flex items-center gap-2 flex-1 min-w-0",
+                    !existing && "cursor-pointer"
                   )}
                 >
                   <input
@@ -846,31 +853,28 @@ function RecipientPicker({
                       {t}
                     </Badge>
                   ))}
-                  {existing && (
-                    <span className="ml-auto flex items-center gap-2">
-                      {existing.status === "submitted" &&
-                        bidTotalFor?.(existing) != null && (
-                          <span className="font-mono tabular-nums text-xs">
-                            {formatCurrency(bidTotalFor(existing)!)}
-                          </span>
-                        )}
-                      <RecipientStatusBadge status={existing.status} />
-                      {existing.status === "submitted" && onAwardBid && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="secondary"
-                          onClick={(e) => {
-                            e.preventDefault()
-                            onAwardBid(existing.id)
-                          }}
-                        >
-                          <Trophy className="h-3 w-3" /> Award &amp; create PO
-                        </Button>
-                      )}
-                    </span>
-                  )}
                 </label>
+                {existing && (
+                  <span className="ml-auto flex items-center gap-2 shrink-0">
+                    {existing.status === "submitted" &&
+                      bidTotalFor?.(existing) != null && (
+                        <span className="font-mono tabular-nums text-xs">
+                          {formatCurrency(bidTotalFor(existing)!)}
+                        </span>
+                      )}
+                    <RecipientStatusBadge status={existing.status} />
+                    {existing.status === "submitted" && onAwardBid && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => onAwardBid(existing.id)}
+                      >
+                        <Trophy className="h-3 w-3" /> Award &amp; create PO
+                      </Button>
+                    )}
+                  </span>
+                )}
               </li>
             )
           })}

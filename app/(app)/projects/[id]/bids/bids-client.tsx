@@ -137,9 +137,7 @@ function BidPackageCard({
 
   // Received bids waiting on a decision — surface the award path prominently.
   const awardable =
-    recipients.some((r) => r.status === "submitted") &&
-    (pkg.status === "sent" ||
-      (pkg.status === "awarded" && pkg.allow_multiple_awards))
+    recipients.some((r) => r.status === "submitted") && canAwardPackage(pkg)
 
   return (
     <Card
@@ -227,6 +225,20 @@ export function RecipientStatusBadge({
   }
   const { label, tone } = map[status]
   return <Badge tone={tone}>{label}</Badge>
+}
+
+/**
+ * Whether a package is still open for awarding: collecting bids, or already
+ * awarded but explicitly allowing multiple winners. Single source of truth
+ * for the card CTA, the drawer shortcut, and the comparison award gate.
+ */
+export function canAwardPackage(
+  pkg: Pick<Tables<"bid_packages">, "status" | "allow_multiple_awards">
+) {
+  return (
+    pkg.status === "sent" ||
+    (pkg.status === "awarded" && pkg.allow_multiple_awards)
+  )
 }
 
 /**

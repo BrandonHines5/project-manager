@@ -22,6 +22,7 @@ import {
   BidStatusBadge,
   RecipientStatusBadge,
   recipientBidTotal,
+  canAwardPackage,
 } from "@/app/(app)/projects/[id]/bids/bids-client"
 import type { Tables } from "@/lib/db/types"
 import type { BidsData } from "@/app/(app)/projects/[id]/bids/bids-client"
@@ -72,9 +73,7 @@ export function BidComparison({
   const lowest = submittedTotals.length ? Math.min(...submittedTotals) : null
 
   const canAward = (r: BidsData["recipients"][number]) =>
-    r.status === "submitted" &&
-    (pkg.status === "sent" ||
-      (pkg.status === "awarded" && pkg.allow_multiple_awards))
+    r.status === "submitted" && canAwardPackage(pkg)
 
   const awardingRecipient = awarding
     ? recipients.find((r) => r.id === awarding)
