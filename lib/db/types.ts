@@ -14,6 +14,323 @@ export type Database = {
   }
   public: {
     Tables: {
+      bid_comments: {
+        Row: {
+          author_name: string
+          author_profile_id: string | null
+          bid_recipient_id: string
+          body: string
+          created_at: string
+          id: string
+        }
+        Insert: {
+          author_name: string
+          author_profile_id?: string | null
+          bid_recipient_id: string
+          body: string
+          created_at?: string
+          id?: string
+        }
+        Update: {
+          author_name?: string
+          author_profile_id?: string | null
+          bid_recipient_id?: string
+          body?: string
+          created_at?: string
+          id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bid_comments_author_profile_id_fkey"
+            columns: ["author_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bid_comments_bid_recipient_id_fkey"
+            columns: ["bid_recipient_id"]
+            isOneToOne: false
+            referencedRelation: "bid_recipients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bid_line_item_quotes: {
+        Row: {
+          bid_recipient_id: string
+          created_at: string
+          id: string
+          line_item_id: string
+          unit_cost: number
+          updated_at: string
+        }
+        Insert: {
+          bid_recipient_id: string
+          created_at?: string
+          id?: string
+          line_item_id: string
+          unit_cost?: number
+          updated_at?: string
+        }
+        Update: {
+          bid_recipient_id?: string
+          created_at?: string
+          id?: string
+          line_item_id?: string
+          unit_cost?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bid_line_item_quotes_bid_recipient_id_fkey"
+            columns: ["bid_recipient_id"]
+            isOneToOne: false
+            referencedRelation: "bid_recipients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bid_line_item_quotes_line_item_id_fkey"
+            columns: ["line_item_id"]
+            isOneToOne: false
+            referencedRelation: "bid_package_line_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bid_package_attachments: {
+        Row: {
+          bid_package_id: string
+          caption: string | null
+          created_at: string
+          file_name: string
+          file_size: number | null
+          file_type: string | null
+          id: string
+          position: number
+          storage_bucket: string
+          storage_path: string
+        }
+        Insert: {
+          bid_package_id: string
+          caption?: string | null
+          created_at?: string
+          file_name: string
+          file_size?: number | null
+          file_type?: string | null
+          id?: string
+          position?: number
+          storage_bucket?: string
+          storage_path: string
+        }
+        Update: {
+          bid_package_id?: string
+          caption?: string | null
+          created_at?: string
+          file_name?: string
+          file_size?: number | null
+          file_type?: string | null
+          id?: string
+          position?: number
+          storage_bucket?: string
+          storage_path?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bid_package_attachments_bid_package_id_fkey"
+            columns: ["bid_package_id"]
+            isOneToOne: false
+            referencedRelation: "bid_packages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bid_package_line_items: {
+        Row: {
+          bid_package_id: string
+          cost_code_id: string | null
+          created_at: string
+          description: string
+          id: string
+          position: number
+          quantity: number
+          unit: string | null
+        }
+        Insert: {
+          bid_package_id: string
+          cost_code_id?: string | null
+          created_at?: string
+          description: string
+          id?: string
+          position?: number
+          quantity?: number
+          unit?: string | null
+        }
+        Update: {
+          bid_package_id?: string
+          cost_code_id?: string | null
+          created_at?: string
+          description?: string
+          id?: string
+          position?: number
+          quantity?: number
+          unit?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bid_package_line_items_bid_package_id_fkey"
+            columns: ["bid_package_id"]
+            isOneToOne: false
+            referencedRelation: "bid_packages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bid_package_line_items_cost_code_id_fkey"
+            columns: ["cost_code_id"]
+            isOneToOne: false
+            referencedRelation: "cost_codes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bid_packages: {
+        Row: {
+          allow_multiple_awards: boolean
+          awarded_at: string | null
+          closed_at: string | null
+          created_at: string
+          created_by: string | null
+          due_date: string | null
+          flat_fee: boolean
+          id: string
+          number: number
+          project_id: string
+          scope: string | null
+          sent_at: string | null
+          status: Database["public"]["Enums"]["bid_package_status"]
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          allow_multiple_awards?: boolean
+          awarded_at?: string | null
+          closed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          due_date?: string | null
+          flat_fee?: boolean
+          id?: string
+          number: number
+          project_id: string
+          scope?: string | null
+          sent_at?: string | null
+          status?: Database["public"]["Enums"]["bid_package_status"]
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          allow_multiple_awards?: boolean
+          awarded_at?: string | null
+          closed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          due_date?: string | null
+          flat_fee?: boolean
+          id?: string
+          number?: number
+          project_id?: string
+          scope?: string | null
+          sent_at?: string | null
+          status?: Database["public"]["Enums"]["bid_package_status"]
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bid_packages_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bid_packages_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bid_recipients: {
+        Row: {
+          awarded_at: string | null
+          bid_package_id: string
+          company_id: string
+          created_at: string
+          flat_total: number | null
+          id: string
+          last_sent_at: string | null
+          notes: string | null
+          sent_to_email: string | null
+          sent_to_phone: string | null
+          status: Database["public"]["Enums"]["bid_recipient_status"]
+          submitted_at: string | null
+          token: string | null
+          updated_at: string
+          viewed_at: string | null
+        }
+        Insert: {
+          awarded_at?: string | null
+          bid_package_id: string
+          company_id: string
+          created_at?: string
+          flat_total?: number | null
+          id?: string
+          last_sent_at?: string | null
+          notes?: string | null
+          sent_to_email?: string | null
+          sent_to_phone?: string | null
+          status?: Database["public"]["Enums"]["bid_recipient_status"]
+          submitted_at?: string | null
+          token?: string | null
+          updated_at?: string
+          viewed_at?: string | null
+        }
+        Update: {
+          awarded_at?: string | null
+          bid_package_id?: string
+          company_id?: string
+          created_at?: string
+          flat_total?: number | null
+          id?: string
+          last_sent_at?: string | null
+          notes?: string | null
+          sent_to_email?: string | null
+          sent_to_phone?: string | null
+          status?: Database["public"]["Enums"]["bid_recipient_status"]
+          submitted_at?: string | null
+          token?: string | null
+          updated_at?: string
+          viewed_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bid_recipients_bid_package_id_fkey"
+            columns: ["bid_package_id"]
+            isOneToOne: false
+            referencedRelation: "bid_packages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bid_recipients_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       companies: {
         Row: {
           address: string | null
@@ -22,6 +339,7 @@ export type Database = {
           created_at: string
           email: string | null
           id: string
+          insurance_upload_token: string
           name: string
           notes: string | null
           notifications_enabled: boolean
@@ -41,6 +359,7 @@ export type Database = {
           created_at?: string
           email?: string | null
           id?: string
+          insurance_upload_token?: string
           name: string
           notes?: string | null
           notifications_enabled?: boolean
@@ -60,6 +379,7 @@ export type Database = {
           created_at?: string
           email?: string | null
           id?: string
+          insurance_upload_token?: string
           name?: string
           notes?: string | null
           notifications_enabled?: boolean
@@ -749,6 +1069,128 @@ export type Database = {
           },
         ]
       }
+      insurance_documents: {
+        Row: {
+          company_id: string | null
+          created_at: string
+          email_from: string | null
+          email_subject: string | null
+          extracted_company_name: string | null
+          extraction: Json | null
+          extraction_error: string | null
+          file_name: string
+          file_size: number | null
+          file_type: string | null
+          id: string
+          received_at: string
+          source: string
+          status: string
+          storage_bucket: string
+          storage_path: string
+        }
+        Insert: {
+          company_id?: string | null
+          created_at?: string
+          email_from?: string | null
+          email_subject?: string | null
+          extracted_company_name?: string | null
+          extraction?: Json | null
+          extraction_error?: string | null
+          file_name: string
+          file_size?: number | null
+          file_type?: string | null
+          id?: string
+          received_at?: string
+          source: string
+          status?: string
+          storage_bucket?: string
+          storage_path: string
+        }
+        Update: {
+          company_id?: string | null
+          created_at?: string
+          email_from?: string | null
+          email_subject?: string | null
+          extracted_company_name?: string | null
+          extraction?: Json | null
+          extraction_error?: string | null
+          file_name?: string
+          file_size?: number | null
+          file_type?: string | null
+          id?: string
+          received_at?: string
+          source?: string
+          status?: string
+          storage_bucket?: string
+          storage_path?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "insurance_documents_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      insurance_policies: {
+        Row: {
+          carrier: string | null
+          company_id: string
+          created_at: string
+          document_id: string | null
+          effective_date: string | null
+          expiration_date: string
+          id: string
+          limits: Json | null
+          policy_number: string | null
+          reminder_sent_at: string | null
+          type: Database["public"]["Enums"]["insurance_type"]
+        }
+        Insert: {
+          carrier?: string | null
+          company_id: string
+          created_at?: string
+          document_id?: string | null
+          effective_date?: string | null
+          expiration_date: string
+          id?: string
+          limits?: Json | null
+          policy_number?: string | null
+          reminder_sent_at?: string | null
+          type: Database["public"]["Enums"]["insurance_type"]
+        }
+        Update: {
+          carrier?: string | null
+          company_id?: string
+          created_at?: string
+          document_id?: string | null
+          effective_date?: string | null
+          expiration_date?: string
+          id?: string
+          limits?: Json | null
+          policy_number?: string | null
+          reminder_sent_at?: string | null
+          type?: Database["public"]["Enums"]["insurance_type"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "insurance_policies_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "insurance_policies_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "insurance_documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       notifications: {
         Row: {
           body: string | null
@@ -834,6 +1276,146 @@ export type Database = {
             columns: ["payment_id"]
             isOneToOne: false
             referencedRelation: "project_payments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      po_attachments: {
+        Row: {
+          caption: string | null
+          created_at: string
+          file_name: string
+          file_size: number | null
+          file_type: string | null
+          id: string
+          position: number
+          purchase_order_id: string
+          storage_bucket: string
+          storage_path: string
+        }
+        Insert: {
+          caption?: string | null
+          created_at?: string
+          file_name: string
+          file_size?: number | null
+          file_type?: string | null
+          id?: string
+          position?: number
+          purchase_order_id: string
+          storage_bucket?: string
+          storage_path: string
+        }
+        Update: {
+          caption?: string | null
+          created_at?: string
+          file_name?: string
+          file_size?: number | null
+          file_type?: string | null
+          id?: string
+          position?: number
+          purchase_order_id?: string
+          storage_bucket?: string
+          storage_path?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "po_attachments_purchase_order_id_fkey"
+            columns: ["purchase_order_id"]
+            isOneToOne: false
+            referencedRelation: "purchase_orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      po_comments: {
+        Row: {
+          author_name: string
+          author_profile_id: string | null
+          body: string
+          created_at: string
+          id: string
+          purchase_order_id: string
+        }
+        Insert: {
+          author_name: string
+          author_profile_id?: string | null
+          body: string
+          created_at?: string
+          id?: string
+          purchase_order_id: string
+        }
+        Update: {
+          author_name?: string
+          author_profile_id?: string | null
+          body?: string
+          created_at?: string
+          id?: string
+          purchase_order_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "po_comments_author_profile_id_fkey"
+            columns: ["author_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "po_comments_purchase_order_id_fkey"
+            columns: ["purchase_order_id"]
+            isOneToOne: false
+            referencedRelation: "purchase_orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      po_line_items: {
+        Row: {
+          cost_code_id: string | null
+          created_at: string
+          description: string
+          id: string
+          position: number
+          purchase_order_id: string
+          quantity: number
+          unit: string | null
+          unit_cost: number
+        }
+        Insert: {
+          cost_code_id?: string | null
+          created_at?: string
+          description: string
+          id?: string
+          position?: number
+          purchase_order_id: string
+          quantity?: number
+          unit?: string | null
+          unit_cost?: number
+        }
+        Update: {
+          cost_code_id?: string | null
+          created_at?: string
+          description?: string
+          id?: string
+          position?: number
+          purchase_order_id?: string
+          quantity?: number
+          unit?: string | null
+          unit_cost?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "po_line_items_cost_code_id_fkey"
+            columns: ["cost_code_id"]
+            isOneToOne: false
+            referencedRelation: "cost_codes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "po_line_items_purchase_order_id_fkey"
+            columns: ["purchase_order_id"]
+            isOneToOne: false
+            referencedRelation: "purchase_orders"
             referencedColumns: ["id"]
           },
         ]
@@ -1243,6 +1825,126 @@ export type Database = {
             columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      purchase_orders: {
+        Row: {
+          approval_deadline: string | null
+          approved_at: string | null
+          approved_by_profile_id: string | null
+          approved_signature: string | null
+          company_id: string
+          created_at: string
+          created_by: string | null
+          custom_number: string | null
+          decline_reason: string | null
+          declined_at: string | null
+          flat_fee: boolean
+          flat_total: number | null
+          id: string
+          number: number
+          project_id: string
+          released_at: string | null
+          scope: string | null
+          source_bid_recipient_id: string | null
+          status: Database["public"]["Enums"]["po_status"]
+          title: string
+          token: string | null
+          updated_at: string
+          voided_at: string | null
+          work_complete: boolean
+          work_complete_at: string | null
+        }
+        Insert: {
+          approval_deadline?: string | null
+          approved_at?: string | null
+          approved_by_profile_id?: string | null
+          approved_signature?: string | null
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          custom_number?: string | null
+          decline_reason?: string | null
+          declined_at?: string | null
+          flat_fee?: boolean
+          flat_total?: number | null
+          id?: string
+          number: number
+          project_id: string
+          released_at?: string | null
+          scope?: string | null
+          source_bid_recipient_id?: string | null
+          status?: Database["public"]["Enums"]["po_status"]
+          title: string
+          token?: string | null
+          updated_at?: string
+          voided_at?: string | null
+          work_complete?: boolean
+          work_complete_at?: string | null
+        }
+        Update: {
+          approval_deadline?: string | null
+          approved_at?: string | null
+          approved_by_profile_id?: string | null
+          approved_signature?: string | null
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          custom_number?: string | null
+          decline_reason?: string | null
+          declined_at?: string | null
+          flat_fee?: boolean
+          flat_total?: number | null
+          id?: string
+          number?: number
+          project_id?: string
+          released_at?: string | null
+          scope?: string | null
+          source_bid_recipient_id?: string | null
+          status?: Database["public"]["Enums"]["po_status"]
+          title?: string
+          token?: string | null
+          updated_at?: string
+          voided_at?: string | null
+          work_complete?: boolean
+          work_complete_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "purchase_orders_approved_by_profile_id_fkey"
+            columns: ["approved_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "purchase_orders_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "purchase_orders_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "purchase_orders_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "purchase_orders_source_bid_recipient_id_fkey"
+            columns: ["source_bid_recipient_id"]
+            isOneToOne: false
+            referencedRelation: "bid_recipients"
             referencedColumns: ["id"]
           },
         ]
@@ -1844,17 +2546,24 @@ export type Database = {
         Args: { p_label: string; p_schedule_item_id: string }
         Returns: string
       }
+      award_bid: {
+        Args: { p_create_po: boolean; p_recipient: string }
+        Returns: Json
+      }
       client_decide_decision: {
         Args: { p_action: string; p_choice_id?: string; p_decision_id: string }
         Returns: Json
       }
+      current_company_id: { Args: never; Returns: string }
       current_role_name: {
         Args: never
         Returns: Database["public"]["Enums"]["user_role"]
       }
       is_member_of_project: { Args: { p_project: string }; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
+      next_bid_package_number: { Args: { p_project: string }; Returns: number }
       next_decision_number: { Args: { p_project: string }; Returns: number }
+      next_po_number: { Args: { p_project: string }; Returns: number }
       save_company_with_trades: {
         Args: {
           // Hand-kept nullability: these args accept NULL at runtime
@@ -1884,6 +2593,8 @@ export type Database = {
       validate_media_tags: { Args: { p_tags: string[] }; Returns: undefined }
     }
     Enums: {
+      bid_package_status: "draft" | "sent" | "awarded" | "closed"
+      bid_recipient_status: "invited" | "submitted" | "declined" | "awarded"
       company_type: "sub" | "vendor" | "client"
       daily_log_visibility: "internal" | "client"
       decision_kind: "change_order" | "selection"
@@ -1903,7 +2614,9 @@ export type Database = {
         | "permit"
         | "contract"
         | "other"
+      insurance_type: "general_liability" | "workers_comp" | "auto" | "umbrella"
       payment_method: "check" | "wire" | "card" | "cash" | "other"
+      po_status: "draft" | "released" | "approved" | "declined" | "void"
       project_status:
         | "lead"
         | "pre_construction"
@@ -2060,6 +2773,8 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      bid_package_status: ["draft", "sent", "awarded", "closed"],
+      bid_recipient_status: ["invited", "submitted", "declined", "awarded"],
       company_type: ["sub", "vendor", "client"],
       daily_log_visibility: ["internal", "client"],
       decision_kind: ["change_order", "selection"],
@@ -2081,7 +2796,9 @@ export const Constants = {
         "contract",
         "other",
       ],
+      insurance_type: ["general_liability", "workers_comp", "auto", "umbrella"],
       payment_method: ["check", "wire", "card", "cash", "other"],
+      po_status: ["draft", "released", "approved", "declined", "void"],
       project_status: [
         "lead",
         "pre_construction",
