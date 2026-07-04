@@ -16,6 +16,7 @@ import { Card, CardBody } from "@/components/ui/card"
 import { FeedbackNotification } from "@/components/feedback/feedback-notification"
 import { MyFeedbackNotification } from "@/components/feedback/my-feedback-notification"
 import { cn, formatCurrency, formatDate } from "@/lib/utils"
+import { crmStatusTone } from "@/lib/crm-status"
 import type { Enums } from "@/lib/db/types"
 
 export const metadata = { title: "Projects — Hines Homes" }
@@ -58,7 +59,7 @@ export default async function ProjectsPage() {
   const { data: projects } = await supabase
     .from("projects")
     .select(
-      "id, project_number, name, address, status, contract_price, start_date, target_completion_date, dashboard_url, is_template"
+      "id, project_number, name, address, status, crm_status, contract_price, start_date, target_completion_date, dashboard_url, is_template"
     )
     .order("created_at", { ascending: false })
 
@@ -299,9 +300,15 @@ export default async function ProjectsPage() {
                       {p.address || "—"}
                     </td>
                     <td className="px-4 py-3">
-                      <Badge tone={STATUS_TONE[p.status]}>
-                        {STATUS_LABEL[p.status]}
-                      </Badge>
+                      {p.crm_status ? (
+                        <Badge tone={crmStatusTone(p.crm_status)}>
+                          {p.crm_status}
+                        </Badge>
+                      ) : (
+                        <Badge tone={STATUS_TONE[p.status]}>
+                          {STATUS_LABEL[p.status]}
+                        </Badge>
+                      )}
                     </td>
                     <td className="px-4 py-3 hidden xl:table-cell">
                       {m.total > 0 ? (

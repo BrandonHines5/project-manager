@@ -10,6 +10,7 @@ import { DuplicateProjectButton } from "@/components/projects/duplicate-button"
 import { EditProjectButton } from "@/components/projects/edit-project-dialog"
 import { SyncDashboardButton } from "@/components/projects/sync-dashboard-button"
 import { brandForProjectType } from "@/lib/brand"
+import { crmStatusTone } from "@/lib/crm-status"
 import type { Enums } from "@/lib/db/types"
 
 const STATUS_LABEL: Record<Enums<"project_status">, string> = {
@@ -35,7 +36,7 @@ export default async function ProjectDetailLayout({
   const { data: project } = await supabase
     .from("projects")
     .select(
-      "id, project_number, name, address, status, project_type, dashboard_url, project_manager, client_name, client_email, client_phone, client_name_2, client_email_2, client_phone_2, contract_price, cost_plus, is_template, start_date, target_completion_date, notes"
+      "id, project_number, name, address, status, crm_status, project_type, dashboard_url, project_manager, client_name, client_email, client_phone, client_name_2, client_email_2, client_phone_2, contract_price, cost_plus, is_template, start_date, target_completion_date, notes"
     )
     .eq("id", id)
     .maybeSingle()
@@ -95,7 +96,13 @@ export default async function ProjectDetailLayout({
                   {project.name}
                 </h1>
                 <Badge tone="muted">#{project.project_number}</Badge>
-                <Badge tone="brand">{STATUS_LABEL[project.status]}</Badge>
+                {project.crm_status ? (
+                  <Badge tone={crmStatusTone(project.crm_status)}>
+                    {project.crm_status}
+                  </Badge>
+                ) : (
+                  <Badge tone="brand">{STATUS_LABEL[project.status]}</Badge>
+                )}
                 {project.is_template && <Badge tone="warning">Template</Badge>}
               </div>
               {project.address && (

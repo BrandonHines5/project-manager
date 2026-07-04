@@ -13,11 +13,14 @@ import {
   ClipboardList,
   ScrollText,
   Tag,
+  RefreshCw,
   X,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import { setProjectLabel } from "@/app/actions/projects"
+import { syncProjectsFromCrm } from "@/app/actions/crm-sync"
+import { crmStatusTone } from "@/lib/crm-status"
 import type { Enums } from "@/lib/db/types"
 
 // The label used to flag leftover test jobs. Surfaced as its own filter in the
@@ -30,6 +33,10 @@ export type SidebarProject = {
   project_number: string
   address: string | null
   status: Enums<"project_status">
+  // Verbatim project_status pulled from the CRM (e.g. "In Work", "Inventory").
+  // When present it's what the status badge shows; `status` (the enum) still
+  // drives the Open/Active/Warranty/Closed filter below.
+  crm_status: string | null
   labels: string[]
 }
 
@@ -106,8 +113,12 @@ const STORAGE_KEY = "hh.projectSelection.v1"
  */
 export function ProjectListSidebar({
   projects,
+  canSync = false,
 }: {
   projects: SidebarProject[]
+  // Staff-only: shows the "Sync from CRM" button. The server action is
+  // requireStaff-guarded regardless, so this only controls visibility.
+  canSync?: boolean
 }) {
   const router = useRouter()
   const pathname = usePathname()
@@ -118,6 +129,7 @@ export function ProjectListSidebar({
   const [statusOpen, setStatusOpen] = useState(false)
   const [mode, setMode] = useState<Mode>("jobs")
   const [tagPending, startTag] = useTransition()
+  const [syncPending, startSync] = useTransition()
   // Initialized empty; hydrated from localStorage on mount so SSR markup
   // stays deterministic (avoids hydration mismatch).
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
@@ -274,14 +286,52 @@ export function ProjectListSidebar({
     })
   }
 
+  // Pull each job's status + official name from the CRM (matched by project
+  // number) and refresh so the list reflects it. The action is idempotent, so
+  // clicking twice is harmless.
+  function runSync() {
+    startSync(async () => {
+      try {
+        const res = await syncProjectsFromCrm()
+        if (!res.ok) {
+          toast.error(res.error)
+          return
+        }
+        const bits = [`Synced ${res.matched} job${res.matched === 1 ? "" : "s"}`]
+        if (res.statusChanged > 0)
+          bits.push(`${res.statusChanged} status${res.statusChanged === 1 ? "" : "es"} updated`)
+        if (res.nameChanged > 0)
+          bits.push(`${res.nameChanged} name${res.nameChanged === 1 ? "" : "s"} updated`)
+        if (res.unmatched.length > 0)
+          bits.push(`${res.unmatched.length} not found in CRM`)
+        toast.success(bits.join(" · "))
+        router.refresh()
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Could not sync from CRM")
+      }
+    })
+  }
+
   const filterLabel =
     activeLabel ?? STATUS_FILTER_LABEL[filter as StatusFilter] ?? "All"
 
   return (
     <aside className="hidden lg:flex lg:flex-col w-[300px] shrink-0 border-r border-border bg-surface">
       {/* Workspace header */}
-      <div className="px-4 pt-4 pb-3 border-b border-border">
+      <div className="px-4 pt-4 pb-3 border-b border-border flex items-center justify-between gap-2">
         <div className="text-sm font-semibold">Hines Homes</div>
+        {canSync && (
+          <button
+            type="button"
+            onClick={runSync}
+            disabled={syncPending}
+            title="Pull the latest statuses and job names from the CRM"
+            className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted hover:text-foreground hover:bg-background disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <RefreshCw className={cn("h-3 w-3", syncPending && "animate-spin")} />
+            {syncPending ? "Syncing…" : "Sync from CRM"}
+          </button>
+        )}
       </div>
 
       {/* Tabs + + Job */}
@@ -463,12 +513,23 @@ export function ProjectListSidebar({
                         {l}
                       </Badge>
                     ))}
-                    <Badge
-                      tone={STATUS_TONE[p.status]}
-                      className="text-[10px] py-0"
-                    >
-                      {STATUS_LABEL[p.status]}
-                    </Badge>
+                    {/* Show the CRM's exact status word when synced; fall back
+                        to PM's own label for jobs with no CRM match. */}
+                    {p.crm_status ? (
+                      <Badge
+                        tone={crmStatusTone(p.crm_status)}
+                        className="text-[10px] py-0"
+                      >
+                        {p.crm_status}
+                      </Badge>
+                    ) : (
+                      <Badge
+                        tone={STATUS_TONE[p.status]}
+                        className="text-[10px] py-0"
+                      >
+                        {STATUS_LABEL[p.status]}
+                      </Badge>
+                    )}
                   </div>
                 </li>
               )
