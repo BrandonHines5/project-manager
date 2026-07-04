@@ -20,7 +20,10 @@ export type BidsData = {
   quotes: Tables<"bid_line_item_quotes">[]
   comments: Tables<"bid_comments">[]
   // Sub/vendor companies for the invite picker.
-  companies: Pick<Tables<"companies">, "id" | "name" | "type" | "trade_category">[]
+  companies: Pick<
+    Tables<"companies">,
+    "id" | "name" | "type" | "trade_category" | "status"
+  >[]
   company_trades: Pick<Tables<"company_trades">, "company_id" | "trade">[]
   cost_codes: Pick<Tables<"cost_codes">, "id" | "code" | "name" | "position" | "is_active">[]
   signed_urls: Record<string, string>

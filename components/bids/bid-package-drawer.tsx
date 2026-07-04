@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useTransition, useRef } from "react"
+import { useState, useTransition, useRef, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import {
@@ -805,6 +805,37 @@ function RecipientPicker({
   bidTotalFor?: (r: BidsData["recipients"][number]) => number | null
 }) {
   const byCompany = new Map(recipients.map((r) => [r.company_id, r]))
+  // Trade chip filter, same interaction as the Companies page toolbar.
+  const [tradeFilter, setTradeFilter] = useState<string | null>(null)
+  const allTrades = useMemo(
+    () => [...new Set(companyTrades.map((t) => t.trade))].sort(),
+    [companyTrades]
+  )
+  const tradeCompanyIds = useMemo(() => {
+    if (!tradeFilter) return null
+    return new Set(
+      companyTrades
+        .filter((t) => t.trade === tradeFilter)
+        .map((t) => t.company_id)
+    )
+  }, [companyTrades, tradeFilter])
+
+  // Statuses that mean "don't hire" — hidden from the candidate list.
+  // companies.status is free text, so compare normalized.
+  const isInactive = (status: string | null) => {
+    const s = (status ?? "").trim().toLowerCase()
+    return s === "inactive" || s === "not for hire"
+  }
+
+  const visible = companies.filter((c) => {
+    // Rows that carry state always stay visible: an existing recipient shows
+    // its response/award controls, and a checked box must never vanish.
+    if (byCompany.has(c.id) || selected.has(c.id)) return true
+    if (isInactive(c.status)) return false
+    if (tradeCompanyIds && !tradeCompanyIds.has(c.id)) return false
+    return true
+  })
+
   return (
     <div>
       <Label>Send to</Label>
@@ -812,13 +843,53 @@ function RecipientPicker({
         Each company gets its own private bid link by email/SMS. They never see
         competitors&apos; pricing.
       </p>
+      {allTrades.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] uppercase tracking-wide text-muted mr-1">
+            Trade
+          </span>
+          {allTrades.map((t) => {
+            const active = tradeFilter === t
+            return (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setTradeFilter(active ? null : t)}
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] cursor-pointer transition-colors",
+                  active
+                    ? "bg-brand-500 text-white"
+                    : "bg-surface text-muted border border-border-strong hover:text-foreground hover:bg-background"
+                )}
+              >
+                {t}
+              </button>
+            )
+          })}
+          {tradeFilter && (
+            <button
+              type="button"
+              onClick={() => setTradeFilter(null)}
+              className="text-[11px] text-muted hover:text-foreground underline cursor-pointer"
+            >
+              clear
+            </button>
+          )}
+        </div>
+      )}
       {companies.length === 0 ? (
         <p className="text-xs text-muted mt-2">
           No sub/vendor companies yet — add them on the Companies page first.
         </p>
+      ) : visible.length === 0 ? (
+        <p className="text-xs text-muted mt-2">
+          No active companies
+          {tradeFilter ? ` tagged “${tradeFilter}”` : ""} — manage trades and
+          statuses on the Companies page.
+        </p>
       ) : (
         <ul className="mt-2 space-y-1 max-h-64 overflow-y-auto rounded-md border border-border p-2">
-          {companies.map((c) => {
+          {visible.map((c) => {
             const existing = byCompany.get(c.id)
             const trades = companyTrades
               .filter((t) => t.company_id === c.id)
