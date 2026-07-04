@@ -5,7 +5,10 @@ import {
   buildInsuranceRequestEmail,
   insuranceReplyTo,
 } from "@/lib/insurance/reminder-email"
-import { companyRequiresInsurance } from "@/lib/insurance/requirements"
+import {
+  companyRequiresInsurance,
+  REQUIRED_INSURANCE_TYPES,
+} from "@/lib/insurance/requirements"
 
 /**
  * Daily insurance-expiration reminders. Fired by Vercel Cron (vercel.json).
@@ -55,11 +58,14 @@ export async function GET(req: Request) {
     .toISOString()
     .slice(0, 10)
 
-  // Candidates: unreminded policies expiring inside the window.
+  // Candidates: unreminded REQUIRED-coverage policies (GL/WC) expiring inside
+  // the window. Auto/umbrella are tracked but never chased, so they're
+  // excluded here — they neither trigger a reminder nor get listed.
   const { data: candidates, error: candErr } = await supabase
     .from("insurance_policies")
     .select("id, company_id, type, expiration_date")
     .is("reminder_sent_at", null)
+    .in("type", [...REQUIRED_INSURANCE_TYPES])
     .gte("expiration_date", today)
     .lte("expiration_date", windowEnd)
   if (candErr) {
@@ -200,6 +206,7 @@ export async function GET(req: Request) {
       ...(replyTo ? { replyTo } : {}),
       subject: message.subject,
       text: message.text,
+      html: message.html,
     })
 
     if (result.sent) {
