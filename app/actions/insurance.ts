@@ -9,6 +9,7 @@ import {
   buildInsuranceRequestEmail,
   insuranceReplyTo,
 } from "@/lib/insurance/reminder-email"
+import { isRequiredInsuranceType } from "@/lib/insurance/requirements"
 import {
   ingestInsuranceDocument,
   materializePolicies,
@@ -206,8 +207,10 @@ export async function sendInsuranceRequest(companyId: string): Promise<{
     if (!prev || p.expiration_date > prev) latest.set(p.type, p.expiration_date)
   }
   const soon = new Date(Date.now() + 30 * 86400_000).toISOString().slice(0, 10)
+  // Only list REQUIRED coverages (GL/WC) — auto/umbrella are tracked but not
+  // chased, so they don't appear in the request email.
   const expiring = Array.from(latest.entries())
-    .filter(([, exp]) => exp <= soon)
+    .filter(([type, exp]) => isRequiredInsuranceType(type) && exp <= soon)
     .map(([type, expiration_date]) => ({ type, expiration_date }))
 
   const message = buildInsuranceRequestEmail({
@@ -224,5 +227,6 @@ export async function sendInsuranceRequest(companyId: string): Promise<{
     ...(replyTo ? { replyTo } : {}),
     subject: message.subject,
     text: message.text,
+    html: message.html,
   })
 }

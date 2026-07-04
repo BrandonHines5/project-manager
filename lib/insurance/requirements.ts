@@ -13,3 +13,15 @@ export function companyRequiresInsurance(
 ): boolean {
   return status?.trim().toLowerCase() === "approved for use"
 }
+
+// The coverage types we actually require and chase. Auto and umbrella are
+// still extracted and stored, but they don't trigger reminders and aren't
+// listed in the request email (matches the GL/WC-only dashboard columns).
+export const REQUIRED_INSURANCE_TYPES = [
+  "general_liability",
+  "workers_comp",
+] as const
+
+export function isRequiredInsuranceType(type: string): boolean {
+  return (REQUIRED_INSURANCE_TYPES as readonly string[]).includes(type)
+}
