@@ -69,7 +69,7 @@ export default async function BidsPage({
     // Sub/vendor companies for the invite picker.
     supabase
       .from("companies")
-      .select("id, name, type, trade_category")
+      .select("id, name, type, trade_category, status")
       .in("type", ["sub", "vendor"])
       .order("name", { ascending: true }),
     supabase.from("company_trades").select("company_id, trade"),
