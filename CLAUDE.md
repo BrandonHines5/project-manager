@@ -44,6 +44,23 @@
 - Recurring to-dos store a `recurrence_rule` jsonb on a single template row. `lib/schedule/recurrence.ts:expandRecurrence` materialises virtual instances in a date range — we do not pre-create rows.
 - Assignments can target either a profile (internal staff) or a company (sub/vendor) — exactly one of the two must be non-null.
 
+## Bid Requests module — model
+
+- `bid_packages` (per-project sequential `number`, statuses `draft → sent → awarded | closed`) with `bid_package_line_items` (cost-coded pricing structure, no unit cost) or `flat_fee` mode. Subs' pricing lives in `bid_line_item_quotes` / `bid_recipients.flat_total`.
+- One `bid_recipients` row per invited company, with statuses `invited → submitted | declined → awarded` and an unguessable `token` — the sub's only credential. Public page `/bid/{token}` (no login); mutations in `app/actions/bid-public.ts` run on the **admin client** with compare-and-swap status guards. **No anon RLS policies** — the anon key can never touch bid/PO tables. Revocation = nulling the token (close/unrelease).
+- Trade-role subs also see their own company's rows at `/my-bids` (RLS `br_trade_read` / `bp_trade_read`; never competitors' quotes). Cards link to the same token pages — one response UI.
+- Staff actions in `app/actions/bids.ts`. "Revise & re-request" (not silent edit) wipes quotes and resets non-declined recipients on a released package. `award_bid` RPC atomically awards + optionally creates a draft PO pre-filled from the winning quotes (`source_bid_recipient_id` links back).
+- Send/notify via `sendEmail` + `sendQuoSms`, respecting `companies.notifications_enabled`. Sub submissions notify staff by email + in-app notification (inserted via admin client).
+
+## Purchase Orders module — model
+
+- `purchase_orders` (per-project `number` + optional `custom_number`, statuses `draft → released → approved | declined`, plus `void`; `work_complete` is an independent flag) with `po_line_items` (cost-coded, with unit_cost) or flat fee. v1 has **no payments/bills** — that stays in QuickBooks/Adaptive.
+- Release mints a `token` and emails/SMSes the sub a public `/po/{token}` link; the sub approves with a typed signature + disclaimer checkbox (`approved_by_profile_id` null) or declines with a reason. Staff can approve on behalf (`staffApprovePurchaseOrder`, profile id recorded). Unrelease pulls it back to draft, revokes the token, and clears approval state; void keeps the record but kills the link.
+- Structural edits are draft-only — released POs must be unreleased first.
+- Trade portal page `/my-pos` (RLS `po_trade_read`, own company + non-draft only).
+- Approved POs roll up as **Committed costs** by cost code on the project Pricing tab — staff with `profiles.financial_access` only, never clients.
+- Numbering RPCs `next_bid_package_number` / `next_po_number` use per-project advisory locks (hash args 1 / 2; decisions use 0). `award_bid` allocates PO numbers under the same lock key as `next_po_number`.
+
 ## Subcontractor insurance module — model
 
 - `insurance_documents` (one per ingested COI file) + `insurance_policies` (one per policy parsed off it; enum `insurance_type`: general_liability | workers_comp | auto | umbrella). "Current" policy for a company+type = latest `expiration_date`; older rows are history. Staff-only RLS on both.
@@ -80,4 +97,4 @@
 
 ## Not included
 
-Purchase Orders (Adaptive.build), client invoicing (QuickBooks), sales, warranty, time clock. If asked for these, push back politely — they're out of scope.
+PO payments/bills & lien waivers (QuickBooks/Adaptive.build), client invoicing (QuickBooks), sales, warranty, time clock. If asked for these, push back politely — they're out of scope. (Purchase Orders and Bid Requests themselves ARE in scope — see the module sections above.)
