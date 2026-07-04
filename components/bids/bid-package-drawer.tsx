@@ -13,6 +13,7 @@ import {
   Lock,
   RefreshCcw,
   Ban,
+  Trophy,
 } from "lucide-react"
 import {
   Dialog,
@@ -26,7 +27,7 @@ import {
 import { Field, Input, Textarea, Select, Label } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { cn, formatDate } from "@/lib/utils"
+import { cn, formatCurrency, formatDate } from "@/lib/utils"
 import {
   saveBidPackage,
   sendBidPackage,
@@ -39,6 +40,8 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client"
 import {
   BidStatusBadge,
   RecipientStatusBadge,
+  recipientBidTotal,
+  canAwardPackage,
 } from "@/app/(app)/projects/[id]/bids/bids-client"
 import type { Tables } from "@/lib/db/types"
 import type { BidsData } from "@/app/(app)/projects/[id]/bids/bids-client"
@@ -66,12 +69,16 @@ export function BidPackageDrawer({
   onClose,
   pkg,
   data,
+  onAwardBid,
 }: {
   open: boolean
   onClose: () => void
   // undefined = creating a new package.
   pkg?: Tables<"bid_packages">
   data: BidsData
+  // Jump to the award confirm for one received bid (closes the drawer and
+  // opens the comparison view with that bid pre-selected).
+  onAwardBid?: (recipientId: string) => void
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
@@ -539,6 +546,16 @@ export function BidPackageDrawer({
                   return next
                 })
               }
+              // Received bids can be turned into a PO right from this list
+              // (award flow) while the package is still open for awarding.
+              onAwardBid={
+                onAwardBid && pkg && canAwardPackage(pkg)
+                  ? onAwardBid
+                  : undefined
+              }
+              bidTotalFor={
+                pkg ? (r) => recipientBidTotal(r, pkg, data) : undefined
+              }
             />
           )}
         </DialogBody>
@@ -776,12 +793,16 @@ function RecipientPicker({
   recipients,
   selected,
   onToggle,
+  onAwardBid,
+  bidTotalFor,
 }: {
   companies: BidsData["companies"]
   companyTrades: BidsData["company_trades"]
   recipients: BidsData["recipients"]
   selected: Set<string>
   onToggle: (companyId: string) => void
+  onAwardBid?: (recipientId: string) => void
+  bidTotalFor?: (r: BidsData["recipients"][number]) => number | null
 }) {
   const byCompany = new Map(recipients.map((r) => [r.company_id, r]))
   return (
@@ -802,12 +823,21 @@ function RecipientPicker({
             const trades = companyTrades
               .filter((t) => t.company_id === c.id)
               .map((t) => t.trade)
+            // The status/total/award group lives OUTSIDE the label — a label
+            // may only contain one labelable control (the checkbox), and
+            // nesting the award Button inside it is invalid markup.
             return (
-              <li key={c.id}>
+              <li
+                key={c.id}
+                className={cn(
+                  "flex items-center gap-2 rounded px-1.5 py-1 text-sm",
+                  existing ? "opacity-80" : "hover:bg-background/60"
+                )}
+              >
                 <label
                   className={cn(
-                    "flex items-center gap-2 rounded px-1.5 py-1 text-sm",
-                    existing ? "opacity-80" : "cursor-pointer hover:bg-background/60"
+                    "flex items-center gap-2 flex-1 min-w-0",
+                    !existing && "cursor-pointer"
                   )}
                 >
                   <input
@@ -823,12 +853,28 @@ function RecipientPicker({
                       {t}
                     </Badge>
                   ))}
-                  {existing && (
-                    <span className="ml-auto">
-                      <RecipientStatusBadge status={existing.status} />
-                    </span>
-                  )}
                 </label>
+                {existing && (
+                  <span className="ml-auto flex items-center gap-2 shrink-0">
+                    {existing.status === "submitted" &&
+                      bidTotalFor?.(existing) != null && (
+                        <span className="font-mono tabular-nums text-xs">
+                          {formatCurrency(bidTotalFor(existing)!)}
+                        </span>
+                      )}
+                    <RecipientStatusBadge status={existing.status} />
+                    {existing.status === "submitted" && onAwardBid && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => onAwardBid(existing.id)}
+                      >
+                        <Trophy className="h-3 w-3" /> Award &amp; create PO
+                      </Button>
+                    )}
+                  </span>
+                )}
               </li>
             )
           })}

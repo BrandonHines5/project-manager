@@ -22,6 +22,7 @@ import {
   BidStatusBadge,
   RecipientStatusBadge,
   recipientBidTotal,
+  canAwardPackage,
 } from "@/app/(app)/projects/[id]/bids/bids-client"
 import type { Tables } from "@/lib/db/types"
 import type { BidsData } from "@/app/(app)/projects/[id]/bids/bids-client"
@@ -31,17 +32,23 @@ export function BidComparison({
   onClose,
   pkg,
   data,
+  initialAwardRecipientId,
 }: {
   open: boolean
   onClose: () => void
   pkg: Tables<"bid_packages">
   data: BidsData
+  // Deep-link straight into the award confirm for one bid (e.g. the
+  // "Award & create PO" shortcut on a recipient row in the package drawer).
+  initialAwardRecipientId?: string | null
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   // Recipient being awarded — opens the inline confirm panel in the footer
   // (inline rather than a nested Dialog so two focus-traps don't fight).
-  const [awarding, setAwarding] = useState<string | null>(null)
+  const [awarding, setAwarding] = useState<string | null>(
+    initialAwardRecipientId ?? null
+  )
   const [createPo, setCreatePo] = useState(true)
   const [notifyLosers, setNotifyLosers] = useState(false)
 
@@ -66,9 +73,7 @@ export function BidComparison({
   const lowest = submittedTotals.length ? Math.min(...submittedTotals) : null
 
   const canAward = (r: BidsData["recipients"][number]) =>
-    r.status === "submitted" &&
-    (pkg.status === "sent" ||
-      (pkg.status === "awarded" && pkg.allow_multiple_awards))
+    r.status === "submitted" && canAwardPackage(pkg)
 
   const awardingRecipient = awarding
     ? recipients.find((r) => r.id === awarding)
@@ -256,7 +261,7 @@ export function BidComparison({
                             disabled={pending}
                             onClick={() => setAwarding(r.id)}
                           >
-                            <Trophy className="h-3.5 w-3.5" /> Award
+                            <Trophy className="h-3.5 w-3.5" /> Award &amp; create PO
                           </Button>
                         )}
                         {r.status === "awarded" && (

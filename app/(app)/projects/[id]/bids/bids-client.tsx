@@ -30,14 +30,19 @@ export function BidsClient({ data }: { data: BidsData }) {
   const [drawerState, setDrawerState] = useState<
     { mode: "create" } | { mode: "edit"; packageId: string } | null
   >(null)
-  const [compareId, setCompareId] = useState<string | null>(null)
+  // awardRecipientId deep-links the comparison straight into the award
+  // confirm for one bid (the "Award & create PO" shortcut in the drawer).
+  const [compare, setCompare] = useState<{
+    packageId: string
+    awardRecipientId?: string
+  } | null>(null)
 
   const editingPackage =
     drawerState?.mode === "edit"
       ? data.packages.find((p) => p.id === drawerState.packageId)
       : undefined
-  const comparePackage = compareId
-    ? data.packages.find((p) => p.id === compareId)
+  const comparePackage = compare
+    ? data.packages.find((p) => p.id === compare.packageId)
     : undefined
 
   return (
@@ -68,7 +73,7 @@ export function BidsClient({ data }: { data: BidsData }) {
               pkg={p}
               data={data}
               onOpen={() => setDrawerState({ mode: "edit", packageId: p.id })}
-              onCompare={() => setCompareId(p.id)}
+              onCompare={() => setCompare({ packageId: p.id })}
             />
           ))}
         </div>
@@ -80,14 +85,28 @@ export function BidsClient({ data }: { data: BidsData }) {
           onClose={() => setDrawerState(null)}
           data={data}
           pkg={editingPackage}
+          onAwardBid={
+            editingPackage
+              ? (recipientId) => {
+                  setDrawerState(null)
+                  setCompare({
+                    packageId: editingPackage.id,
+                    awardRecipientId: recipientId,
+                  })
+                }
+              : undefined
+          }
         />
       )}
       {comparePackage && (
         <BidComparison
+          // Remount when the award target changes so the initial state applies.
+          key={`${comparePackage.id}:${compare?.awardRecipientId ?? ""}`}
           open={true}
-          onClose={() => setCompareId(null)}
+          onClose={() => setCompare(null)}
           data={data}
           pkg={comparePackage}
+          initialAwardRecipientId={compare?.awardRecipientId ?? null}
         />
       )}
     </div>
@@ -116,6 +135,10 @@ function BidPackageCard({
   const min = totals.length ? Math.min(...totals) : null
   const max = totals.length ? Math.max(...totals) : null
 
+  // Received bids waiting on a decision — surface the award path prominently.
+  const awardable =
+    recipients.some((r) => r.status === "submitted") && canAwardPackage(pkg)
+
   return (
     <Card
       role="button"
@@ -140,13 +163,14 @@ function BidPackageCard({
             {recipients.length > 0 && (
               <Button
                 size="sm"
-                variant="secondary"
+                variant={awardable ? "primary" : "secondary"}
                 onClick={(e) => {
                   e.stopPropagation()
                   onCompare()
                 }}
               >
-                <Columns3 className="h-3.5 w-3.5" /> Compare bids
+                <Columns3 className="h-3.5 w-3.5" />{" "}
+                {awardable ? "Review bids & award" : "Compare bids"}
               </Button>
             )}
           </div>
@@ -201,6 +225,20 @@ export function RecipientStatusBadge({
   }
   const { label, tone } = map[status]
   return <Badge tone={tone}>{label}</Badge>
+}
+
+/**
+ * Whether a package is still open for awarding: collecting bids, or already
+ * awarded but explicitly allowing multiple winners. Single source of truth
+ * for the card CTA, the drawer shortcut, and the comparison award gate.
+ */
+export function canAwardPackage(
+  pkg: Pick<Tables<"bid_packages">, "status" | "allow_multiple_awards">
+) {
+  return (
+    pkg.status === "sent" ||
+    (pkg.status === "awarded" && pkg.allow_multiple_awards)
+  )
 }
 
 /**
