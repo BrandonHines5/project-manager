@@ -45,6 +45,14 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: "forbidden" }, { status: 401 })
   }
 
+  // Global kill switch for automatic reminders. OFF by default — the cron
+  // sends nothing until INSURANCE_REMINDERS_ENABLED is set to "true" in the
+  // environment (flip it on in Vercel once the site is fully live). The
+  // staff "Send request" button is unaffected; it's an explicit action.
+  if (process.env.INSURANCE_REMINDERS_ENABLED !== "true") {
+    return NextResponse.json({ ok: true, disabled: true, reminded: [] })
+  }
+
   const supabase = createSupabaseAdminClient()
   if (!supabase) {
     return NextResponse.json(
