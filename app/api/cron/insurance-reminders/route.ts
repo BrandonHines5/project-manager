@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { sendEmail, appUrl } from "@/lib/email"
-import { buildInsuranceRequestEmail } from "@/lib/insurance/reminder-email"
+import {
+  buildInsuranceRequestEmail,
+  insuranceReplyTo,
+} from "@/lib/insurance/reminder-email"
 
 /**
  * Daily insurance-expiration reminders. Fired by Vercel Cron (vercel.json).
@@ -172,8 +175,12 @@ export async function GET(req: Request) {
       })),
       uploadUrl,
     })
+    const replyTo = insuranceReplyTo()
     const result = await sendEmail({
       to: company.email,
+      // Replies (usually with the cert attached) route to the inbound
+      // pipeline instead of bouncing off the send-only From address.
+      ...(replyTo ? { replyTo } : {}),
       subject: message.subject,
       text: message.text,
     })
