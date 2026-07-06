@@ -165,8 +165,19 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     }
   }
 
-  const startD = nz(parsed.start_date)
-  const endD = nz(parsed.end_date)
+  // A work item's start/end are both-or-neither at the DB level (check
+  // constraint schedule_items_dates_chk: both null, or both set with
+  // end >= start). The dialog lets a user enter only a start date — e.g. a
+  // single-day marker/milestone (often with exclude_from_critical_path set) —
+  // so mirror a lone date onto the missing side. Without this the insert
+  // trips the constraint and throws a DB error that Next.js redacts in
+  // production to an opaque "Server Components render" message.
+  let startD = nz(parsed.start_date)
+  let endD = nz(parsed.end_date)
+  if (parsed.kind === "work") {
+    if (startD && !endD) endD = startD
+    else if (endD && !startD) startD = endD
+  }
   const duration = startD && endD ? daysBetween(startD, endD) : null
 
   // Resolve anchor fields. Only valid for todos with a parent — strip them
