@@ -75,3 +75,56 @@ export async function notifyCommentPosted(opts: {
     )
   }
 }
+
+/**
+ * Bell fan-out for an inbound text / call / email captured by a webhook.
+ * Goes to all staff (projects.project_manager is a free-text name, not a
+ * profile, so there's no reliable per-PM target); matched traffic links to
+ * the project's Communications tab, unmatched to the global review queue.
+ * Best-effort: never throws.
+ */
+export async function notifyStaffOfInbound(opts: {
+  kind: "sms" | "call" | "email"
+  fromName: string
+  preview: string
+  projectId: string | null
+  projectName?: string | null
+}): Promise<void> {
+  try {
+    const admin = createSupabaseAdminClient()
+    if (!admin) return
+
+    const { data: staff } = await admin
+      .from("profiles")
+      .select("id")
+      .eq("role", "staff")
+    const recipientIds = (staff ?? []).map((p) => p.id)
+    if (!recipientIds.length) return
+
+    const kindLabel =
+      opts.kind === "sms" ? "Text" : opts.kind === "call" ? "Call" : "Email"
+    const title = opts.projectName
+      ? `${opts.projectName}: ${kindLabel.toLowerCase()} from ${opts.fromName}`
+      : `${kindLabel} from ${opts.fromName}`
+    const preview =
+      opts.preview.length > 140 ? `${opts.preview.slice(0, 140)}…` : opts.preview
+
+    const { error } = await admin.from("notifications").insert(
+      recipientIds.map((id) => ({
+        recipient_id: id,
+        type: `inbound_${opts.kind}`,
+        title,
+        body: preview,
+        link_url: opts.projectId
+          ? `/projects/${opts.projectId}/communications`
+          : "/communications",
+      }))
+    )
+    if (error) console.warn("[comms] inbound notification failed:", error.message)
+  } catch (e) {
+    console.warn(
+      "[comms] notifyStaffOfInbound exception:",
+      e instanceof Error ? e.message : String(e)
+    )
+  }
+}

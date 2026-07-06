@@ -22,6 +22,7 @@ import { postBidCommentStaff } from "@/app/actions/bids"
 import { postPoCommentStaff } from "@/app/actions/purchase-orders"
 import { postScheduleItemComment } from "@/app/actions/schedule"
 import { postDailyLogComment } from "@/app/actions/daily-logs"
+import { sendSmsReply } from "@/app/actions/communications"
 
 const KIND_META = {
   comment: { icon: MessageSquare, label: "Comment", className: "text-brand-600 bg-brand-50" },
@@ -75,10 +76,22 @@ export function FeedItemRow({
 
   function submitReply() {
     const reply = item.reply
-    if (!reply || reply.type !== "comment" || !body.trim()) return
+    if (!reply || !body.trim()) return
     startTransition(async () => {
       try {
         const text = body.trim()
+        if (reply.type === "sms") {
+          const result = await sendSmsReply({
+            communication_id: reply.communicationId,
+            body: text,
+          })
+          if (!result.ok) throw new Error(result.error ?? "Failed to send text")
+          toast.success("Text sent")
+          setBody("")
+          setReplying(false)
+          router.refresh()
+          return
+        }
         switch (reply.entityType) {
           case "decision":
             await postComment({
@@ -193,7 +206,7 @@ export function FeedItemRow({
           </div>
         )}
 
-        {canReply && item.reply?.type === "comment" && (
+        {canReply && item.reply && (
           <div className="mt-1.5">
             {!replying ? (
               <button
@@ -201,7 +214,8 @@ export function FeedItemRow({
                 onClick={() => setReplying(true)}
                 className="inline-flex items-center gap-1 text-xs text-brand-600 hover:underline cursor-pointer"
               >
-                <CornerDownRight className="h-3 w-3" /> Reply
+                <CornerDownRight className="h-3 w-3" />
+                {item.reply.type === "sms" ? "Reply by text" : "Reply"}
               </button>
             ) : (
               <div className="flex gap-2 items-end">
@@ -210,7 +224,11 @@ export function FeedItemRow({
                     value={body}
                     onChange={(e) => setBody(e.target.value)}
                     rows={2}
-                    placeholder="Reply — posts to the item's thread"
+                    placeholder={
+                      item.reply.type === "sms"
+                        ? "Text back — sends an SMS from the business number"
+                        : "Reply — posts to the item's thread"
+                    }
                     autoFocus
                   />
                 </div>

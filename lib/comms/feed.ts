@@ -42,7 +42,8 @@ export type FeedItem = {
         /** bid replies post to a recipient thread, not the package */
         recipientId?: string
       }
-    | { type: "sms"; to: string; companyId: string | null; profileId: string | null }
+    // SMS replies re-resolve the destination server-side from this row.
+    | { type: "sms"; communicationId: string }
     | null
 }
 
@@ -258,12 +259,7 @@ export function buildFeed(sources: FeedSources): FeedItem[] {
       callRecordingUrl: m.call_recording_url,
       reply:
         m.channel === "sms" && smsCounterparty
-          ? {
-              type: "sms",
-              to: smsCounterparty,
-              companyId: m.company_id,
-              profileId: m.profile_id,
-            }
+          ? { type: "sms", communicationId: m.id }
           : null,
     })
   }

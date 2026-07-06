@@ -10,6 +10,7 @@ import {
   Users,
   Hammer,
   MessageSquarePlus,
+  MessagesSquare,
   ShieldCheck,
   Droplets,
   Gavel,
@@ -32,6 +33,12 @@ const ITEMS: Item[] = [
   { href: "/my-bids", label: "My bids", icon: Gavel, roles: ["trade"] },
   { href: "/my-pos", label: "Purchase orders", icon: FileCheck2, roles: ["trade"] },
   { href: "/projects", label: "Projects", icon: LayoutGrid },
+  {
+    href: "/communications",
+    label: "Communications",
+    icon: MessagesSquare,
+    roles: ["staff"],
+  },
   { href: "/notifications", label: "Notifications", icon: Bell },
   { href: "/companies", label: "Companies", icon: Building2, roles: ["staff"] },
   {

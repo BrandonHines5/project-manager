@@ -2752,6 +2752,26 @@ export type Database = {
       }
       is_member_of_project: { Args: { p_project: string }; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
+      match_contacts_by_email: {
+        Args: { p: string }
+        Returns: {
+          kind: string
+          company_id: string | null
+          project_id: string | null
+          profile_id: string | null
+          display_name: string | null
+        }[]
+      }
+      match_contacts_by_phone: {
+        Args: { p: string }
+        Returns: {
+          kind: string
+          company_id: string | null
+          project_id: string | null
+          profile_id: string | null
+          display_name: string | null
+        }[]
+      }
       next_bid_package_number: { Args: { p_project: string }; Returns: number }
       next_decision_number: { Args: { p_project: string }; Returns: number }
       next_po_number: { Args: { p_project: string }; Returns: number }
