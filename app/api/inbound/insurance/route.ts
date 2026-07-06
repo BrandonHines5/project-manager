@@ -67,6 +67,25 @@ export async function POST(req: Request) {
   }
 
   const email = event.data
+
+  // Once the domain receives non-insurance mail (comms replies with PDF
+  // attachments, say), only process messages actually addressed to the
+  // insurance inbox — otherwise a client's reply with a contract PDF would
+  // be ingested as a COI. No-op when INSURANCE_INBOUND_EMAIL is unset or
+  // this webhook is scoped to a single address in Resend.
+  const insuranceInbox = process.env.INSURANCE_INBOUND_EMAIL?.toLowerCase()
+  if (insuranceInbox) {
+    const toList = (Array.isArray(email.to) ? email.to : [email.to]).filter(
+      (t): t is string => typeof t === "string"
+    )
+    const addressed = toList.some(
+      (t) => (parseEmailAddress(t) ?? t).toLowerCase() === insuranceInbox
+    )
+    if (!addressed) {
+      return NextResponse.json({ ok: true, skipped: "not-insurance-inbox" })
+    }
+  }
+
   const from = parseEmailAddress(email.from) ?? email.from
   const summary: { attachment: string; status: string }[] = []
 

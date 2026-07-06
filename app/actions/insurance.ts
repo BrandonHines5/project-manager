@@ -179,7 +179,7 @@ export async function sendInsuranceRequest(companyId: string): Promise<{
   sent: boolean
   reason?: string
 }> {
-  await requireStaff()
+  const profile = await requireStaff()
   Uuid.parse(companyId)
   const supabase = await createSupabaseServerClient()
 
@@ -228,5 +228,12 @@ export async function sendInsuranceRequest(companyId: string): Promise<{
     subject: message.subject,
     text: message.text,
     html: message.html,
+    // Company-scoped (no project) — shows in the global staff hub only.
+    log: {
+      company_id: company.id,
+      sent_by: profile.id,
+      kind: "insurance_request",
+      counterparty_name: company.name,
+    },
   })
 }

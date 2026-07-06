@@ -15,6 +15,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { ACCESS_TOKEN_RE } from "@/lib/tokens"
 import { sendEmail, appUrl } from "@/lib/email"
 import { formatCurrency } from "@/lib/utils"
+import { notifyCommentPosted } from "@/lib/comms/notify"
 
 const UNAVAILABLE =
   "This link is unavailable right now — please try again later."
@@ -366,6 +367,7 @@ export async function postBidCommentPublic(input: { token: string; body: string 
   })
   if (error) throw new Error("Could not post your message — please try again.")
 
+  const staffLink = `/projects/${pkg.project_id}/bids?open=${pkg.id}&recipient=${rec.id}`
   try {
     const { data: staff } = await admin
       .from("profiles")
@@ -379,12 +381,22 @@ export async function postBidCommentPublic(input: { token: string; body: string 
       await sendEmail({
         to: emails,
         subject: `New bid question from ${companyName}`,
-        text: `${companyName} wrote on "${pkg.title}":\n\n${parsed.body.trim()}\n\nReply here: ${appUrl(`/projects/${pkg.project_id}/bids`)}`,
+        text: `${companyName} wrote on "${pkg.title}":\n\n${parsed.body.trim()}\n\nReply here: ${appUrl(staffLink)}`,
       })
     }
   } catch (e) {
     console.warn("[postBidCommentPublic] staff email failed (non-fatal):", e)
   }
+  // Bell notifications for staff (the email above reaches inboxes; this
+  // makes the comment land in the in-app bell + Communications feed too).
+  await notifyCommentPosted({
+    entityLabel: `Bid — ${pkg.title}`,
+    projectName: pkg.projects?.name ?? null,
+    authorName: companyName,
+    authorIsStaff: false,
+    body: parsed.body.trim(),
+    staffLink,
+  })
 
   return { ok: true as const }
 }

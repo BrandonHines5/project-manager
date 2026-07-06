@@ -331,6 +331,107 @@ export type Database = {
           },
         ]
       }
+      communications: {
+        Row: {
+          body: string | null
+          call_duration_seconds: number | null
+          call_recording_url: string | null
+          channel: Database["public"]["Enums"]["comm_channel"]
+          company_id: string | null
+          counterparty_name: string | null
+          created_at: string
+          direction: Database["public"]["Enums"]["comm_direction"]
+          from_address: string | null
+          id: string
+          meta: Json
+          occurred_at: string
+          profile_id: string | null
+          project_id: string | null
+          provider_id: string | null
+          sent_by: string | null
+          source: string
+          source_kind: string | null
+          status: Database["public"]["Enums"]["comm_status"]
+          subject: string | null
+          to_address: string | null
+        }
+        Insert: {
+          body?: string | null
+          call_duration_seconds?: number | null
+          call_recording_url?: string | null
+          channel: Database["public"]["Enums"]["comm_channel"]
+          company_id?: string | null
+          counterparty_name?: string | null
+          created_at?: string
+          direction: Database["public"]["Enums"]["comm_direction"]
+          from_address?: string | null
+          id?: string
+          meta?: Json
+          occurred_at?: string
+          profile_id?: string | null
+          project_id?: string | null
+          provider_id?: string | null
+          sent_by?: string | null
+          source: string
+          source_kind?: string | null
+          status?: Database["public"]["Enums"]["comm_status"]
+          subject?: string | null
+          to_address?: string | null
+        }
+        Update: {
+          body?: string | null
+          call_duration_seconds?: number | null
+          call_recording_url?: string | null
+          channel?: Database["public"]["Enums"]["comm_channel"]
+          company_id?: string | null
+          counterparty_name?: string | null
+          created_at?: string
+          direction?: Database["public"]["Enums"]["comm_direction"]
+          from_address?: string | null
+          id?: string
+          meta?: Json
+          occurred_at?: string
+          profile_id?: string | null
+          project_id?: string | null
+          provider_id?: string | null
+          sent_by?: string | null
+          source?: string
+          source_kind?: string | null
+          status?: Database["public"]["Enums"]["comm_status"]
+          subject?: string | null
+          to_address?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "communications_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "communications_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "communications_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "communications_sent_by_fkey"
+            columns: ["sent_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       companies: {
         Row: {
           address: string | null
@@ -493,6 +594,48 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "daily_log_attachments_daily_log_id_fkey"
+            columns: ["daily_log_id"]
+            isOneToOne: false
+            referencedRelation: "daily_logs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      daily_log_comments: {
+        Row: {
+          author_id: string | null
+          author_name: string
+          body: string
+          created_at: string
+          daily_log_id: string
+          id: string
+        }
+        Insert: {
+          author_id?: string | null
+          author_name: string
+          body: string
+          created_at?: string
+          daily_log_id: string
+          id?: string
+        }
+        Update: {
+          author_id?: string | null
+          author_name?: string
+          body?: string
+          created_at?: string
+          daily_log_id?: string
+          id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_log_comments_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_log_comments_daily_log_id_fkey"
             columns: ["daily_log_id"]
             isOneToOne: false
             referencedRelation: "daily_logs"
@@ -1234,6 +1377,27 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      outlook_sync_state: {
+        Row: {
+          delta_link: string | null
+          folder: string
+          mailbox: string
+          updated_at: string
+        }
+        Insert: {
+          delta_link?: string | null
+          folder: string
+          mailbox: string
+          updated_at?: string
+        }
+        Update: {
+          delta_link?: string | null
+          folder?: string
+          mailbox?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       payment_audit: {
         Row: {
@@ -2242,6 +2406,48 @@ export type Database = {
           },
         ]
       }
+      schedule_item_comments: {
+        Row: {
+          author_id: string | null
+          author_name: string
+          body: string
+          created_at: string
+          id: string
+          schedule_item_id: string
+        }
+        Insert: {
+          author_id?: string | null
+          author_name: string
+          body: string
+          created_at?: string
+          id?: string
+          schedule_item_id: string
+        }
+        Update: {
+          author_id?: string | null
+          author_name?: string
+          body?: string
+          created_at?: string
+          id?: string
+          schedule_item_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "schedule_item_comments_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "schedule_item_comments_schedule_item_id_fkey"
+            columns: ["schedule_item_id"]
+            isOneToOne: false
+            referencedRelation: "schedule_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       schedule_items: {
         Row: {
           baseline_end_date: string | null
@@ -2567,9 +2773,30 @@ export type Database = {
       }
       is_member_of_project: { Args: { p_project: string }; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
+      match_contacts_by_email: {
+        Args: { p: string }
+        Returns: {
+          kind: string
+          company_id: string | null
+          project_id: string | null
+          profile_id: string | null
+          display_name: string | null
+        }[]
+      }
+      match_contacts_by_phone: {
+        Args: { p: string }
+        Returns: {
+          kind: string
+          company_id: string | null
+          project_id: string | null
+          profile_id: string | null
+          display_name: string | null
+        }[]
+      }
       next_bid_package_number: { Args: { p_project: string }; Returns: number }
       next_decision_number: { Args: { p_project: string }; Returns: number }
       next_po_number: { Args: { p_project: string }; Returns: number }
+      normalize_phone: { Args: { p: string }; Returns: string }
       save_company_with_trades: {
         Args: {
           // Hand-kept nullability: these args accept NULL at runtime
@@ -2601,6 +2828,9 @@ export type Database = {
     Enums: {
       bid_package_status: "draft" | "sent" | "awarded" | "closed"
       bid_recipient_status: "invited" | "submitted" | "declined" | "awarded"
+      comm_channel: "email" | "sms" | "call"
+      comm_direction: "outbound" | "inbound"
+      comm_status: "logged" | "needs_review" | "ignored"
       company_type: "sub" | "vendor" | "client"
       daily_log_visibility: "internal" | "client"
       decision_kind: "change_order" | "selection"
@@ -2781,6 +3011,9 @@ export const Constants = {
     Enums: {
       bid_package_status: ["draft", "sent", "awarded", "closed"],
       bid_recipient_status: ["invited", "submitted", "declined", "awarded"],
+      comm_channel: ["email", "sms", "call"],
+      comm_direction: ["outbound", "inbound"],
+      comm_status: ["logged", "needs_review", "ignored"],
       company_type: ["sub", "vendor", "client"],
       daily_log_visibility: ["internal", "client"],
       decision_kind: ["change_order", "selection"],

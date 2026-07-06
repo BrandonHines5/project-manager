@@ -27,8 +27,10 @@ import { cn, todayISO } from "@/lib/utils"
 import {
   saveDailyLog,
   deleteDailyLog,
+  postDailyLogComment,
   type DailyLogInputT,
 } from "@/app/actions/daily-logs"
+import { CommentsThread } from "@/components/comms/comments-thread"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
 import type { Tables, Enums } from "@/lib/db/types"
 import type { DailyLogsData } from "@/app/(app)/projects/[id]/daily-logs/daily-logs-client"
@@ -385,6 +387,31 @@ export function DailyLogDrawer({
               </button>
             </div>
           </div>
+
+          {/* Comments (edit only) — client questions land here too. */}
+          {mode === "edit" && log && (
+            <CommentsThread
+              comments={data.comments
+                .filter((c) => c.daily_log_id === log.id)
+                .map((c) => ({
+                  id: c.id,
+                  author_name: c.author_name,
+                  author_role: null,
+                  body: c.body,
+                  created_at: c.created_at,
+                }))}
+              meName={data.me_name}
+              canPost
+              placeholder="Reply to client / leave a note"
+              onPost={(body) =>
+                postDailyLogComment({
+                  daily_log_id: log.id,
+                  project_id: data.project_id,
+                  body,
+                })
+              }
+            />
+          )}
         </DialogBody>
         <DialogFooter>
           {mode === "edit" && log && (

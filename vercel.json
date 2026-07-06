@@ -7,6 +7,10 @@
     {
       "path": "/api/cron/insurance-reminders",
       "schedule": "30 13 * * *"
+    },
+    {
+      "path": "/api/cron/outlook-sync",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

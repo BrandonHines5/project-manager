@@ -8,6 +8,7 @@ import { requireSession, requireStaff } from "@/lib/auth"
 import { addDays, formatCurrency, formatDate, todayISO } from "@/lib/utils"
 import { sendEmail, appUrl } from "@/lib/email"
 import { sendDashboardWebhook } from "@/lib/dashboard"
+import { notifyCommentPosted } from "@/lib/comms/notify"
 import type { TablesInsert, TablesUpdate } from "@/lib/db/types"
 import { normalizeTag } from "@/lib/template-tags"
 
@@ -662,7 +663,7 @@ export async function saveDecision(input: DecisionInputT) {
 
   if (newlyPendingClient) {
     try {
-      await notifyClientOfDecision(id!, parsed.project_id, parsed.title)
+      await notifyClientOfDecision(id!, parsed.project_id, parsed.title, profile.id)
     } catch (e) {
       console.warn("client decision email failed:", e)
     }
@@ -678,18 +679,23 @@ export async function saveDecision(input: DecisionInputT) {
 async function notifyClientOfDecision(
   decisionId: string,
   projectId: string,
-  title: string
+  title: string,
+  senderProfileId?: string
 ) {
   const supabase = await createSupabaseServerClient()
   const { data: clients } = await supabase
     .from("project_members")
-    .select("profile_id, profiles!inner(email, role, notifications_enabled)")
+    .select("profile_id, profiles!inner(full_name, email, role, notifications_enabled)")
     .eq("project_id", projectId)
-  const emails: string[] = []
+  // One send per client (not a single multi-recipient email) so each
+  // Communications row carries the client's profile_id — that's what lets
+  // the client see their own row under RLS.
+  const recipients: { profile_id: string; email: string; name: string | null }[] = []
   for (const m of clients ?? []) {
     const prof = (
       m as unknown as {
         profiles: {
+          full_name: string | null
           email: string
           role: string
           notifications_enabled: boolean
@@ -697,16 +703,30 @@ async function notifyClientOfDecision(
       }
     ).profiles
     if (prof.role === "client" && prof.email && prof.notifications_enabled)
-      emails.push(prof.email)
+      recipients.push({
+        profile_id: m.profile_id,
+        email: prof.email,
+        name: prof.full_name,
+      })
   }
-  if (!emails.length) return
-  const link = appUrl(`/projects/${projectId}/decisions`)
-  await sendEmail({
-    to: emails,
-    subject: `Approval needed: ${title}`,
-    text: `A new item is awaiting your review on the project portal. Open: ${link}`,
-  })
-  void decisionId
+  if (!recipients.length) return
+  const link = appUrl(`/projects/${projectId}/decisions?open=${decisionId}`)
+  await Promise.all(
+    recipients.map((r) =>
+      sendEmail({
+        to: [r.email],
+        subject: `Approval needed: ${title}`,
+        text: `A new item is awaiting your review on the project portal. Open: ${link}`,
+        log: {
+          project_id: projectId,
+          profile_id: r.profile_id,
+          sent_by: senderProfileId ?? null,
+          kind: "decision_notify",
+          counterparty_name: r.name,
+        },
+      }).catch((e) => console.warn("[notifyClientOfDecision] email failed:", e))
+    )
+  )
 }
 
 function escapeHtml(s: string): string {
@@ -1639,7 +1659,50 @@ export async function postComment({
     body: body.trim(),
   })
   if (error) throw new Error(error.message)
+
+  // Best-effort bell fan-out — decision comments used to be silent, so a
+  // client note could sit unseen until someone happened to open the drawer.
+  try {
+    const { data: d } = await supabase
+      .from("decisions")
+      .select("number, title, projects:project_id(name)")
+      .eq("id", decision_id)
+      .maybeSingle()
+    const dec = d as unknown as {
+      number: number
+      title: string
+      projects: { name: string } | null
+    } | null
+    let counterpartyIds: string[] = []
+    if (profile.role === "staff") {
+      const { data: members } = await supabase
+        .from("project_members")
+        .select("profile_id, profiles!inner(role)")
+        .eq("project_id", project_id)
+      counterpartyIds = (members ?? [])
+        .filter(
+          (m) => (m as unknown as { profiles: { role: string } }).profiles.role === "client"
+        )
+        .map((m) => m.profile_id)
+    }
+    const link = `/projects/${project_id}/decisions?open=${decision_id}`
+    await notifyCommentPosted({
+      entityLabel: dec ? `Decision #${dec.number} — ${dec.title}` : "a decision",
+      projectName: dec?.projects?.name ?? null,
+      authorName: profile.full_name ?? profile.email ?? "Someone",
+      authorIsStaff: profile.role === "staff",
+      authorProfileId: profile.id,
+      body: body.trim(),
+      staffLink: link,
+      counterpartyProfileIds: counterpartyIds,
+      counterpartyLink: link,
+    })
+  } catch (e) {
+    console.warn("decision comment notification failed:", e)
+  }
+
   revalidatePath(`/projects/${project_id}/decisions`)
+  revalidatePath(`/projects/${project_id}/communications`)
 }
 
 /**

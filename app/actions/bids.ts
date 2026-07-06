@@ -8,6 +8,7 @@ import { sendEmail, appUrl } from "@/lib/email"
 import { sendQuoSms, normalizeE164 } from "@/lib/quo"
 import { generateAccessToken } from "@/lib/tokens"
 import { formatDate } from "@/lib/utils"
+import { notifyCommentPosted } from "@/lib/comms/notify"
 
 const optStr = z.string().nullish()
 
@@ -253,7 +254,7 @@ export async function sendBidPackage({
   project_id: string
   company_ids: string[]
 }) {
-  await requireStaff()
+  const profile = await requireStaff()
   if (!company_ids.length) throw new Error("Pick at least one sub/vendor.")
   const supabase = await createSupabaseServerClient()
 
@@ -338,12 +339,20 @@ export async function sendBidPackage({
   for (const { company, token } of sends) {
     if (!company.notifications_enabled) continue
     const link = appUrl(`/bid/${token}`)
+    const log = {
+      project_id,
+      company_id: company.id,
+      sent_by: profile.id,
+      kind: "bid_invite",
+      counterparty_name: company.name,
+    }
     if (company.email) {
       sendJobs.push(
         sendEmail({
           to: [company.email],
           subject: `Bid request: ${pkg.title} — ${projectName}`,
           text: `Hines Homes is requesting a bid for "${pkg.title}" on ${projectName}.${dueLine}\n\nView the scope and submit your bid here (no login needed):\n${link}`,
+          log,
         }).catch((e) => console.warn("[sendBidPackage] email failed:", e))
       )
     }
@@ -353,6 +362,7 @@ export async function sendBidPackage({
         sendQuoSms({
           to: e164,
           content: `Hines Homes bid request: "${pkg.title}" on ${projectName}.${dueLine} Submit your bid: ${link}`,
+          log,
         }).catch((e) => console.warn("[sendBidPackage] SMS failed:", e))
       )
     }
@@ -371,7 +381,7 @@ export async function sendBidPackage({
  * clearer than BuilderTrend's silent reset-on-edit.
  */
 export async function reviseBidPackage(input: BidPackageInputT) {
-  await requireStaff()
+  const profile = await requireStaff()
   const parsed = parseOrThrow(BidPackageInput, input)
   const id = nz(parsed.id)
   if (!id) throw new Error("Cannot revise an unsaved bid package.")
@@ -405,7 +415,9 @@ export async function reviseBidPackage(input: BidPackageInputT) {
 
   const { data: recipients, error: recErr } = await supabase
     .from("bid_recipients")
-    .select("id, status, token, companies:company_id(name, email, phone, notifications_enabled)")
+    .select(
+      "id, status, token, company_id, companies:company_id(name, email, phone, notifications_enabled)"
+    )
     .eq("bid_package_id", id)
   if (recErr) throw new Error(recErr.message)
 
@@ -439,12 +451,20 @@ export async function reviseBidPackage(input: BidPackageInputT) {
     ).companies
     if (!company?.notifications_enabled || !r.token) continue
     const link = appUrl(`/bid/${r.token}`)
+    const log = {
+      project_id: parsed.project_id,
+      company_id: r.company_id,
+      sent_by: profile.id,
+      kind: "bid_revised",
+      counterparty_name: company.name,
+    }
     if (company.email) {
       sendJobs.push(
         sendEmail({
           to: [company.email],
           subject: `Updated bid request: ${parsed.title} — ${projectName}`,
           text: `The bid request "${parsed.title}" on ${projectName} has been updated. Any pricing you already entered was cleared — please review the new scope and re-submit:\n${link}`,
+          log,
         }).catch((e) => console.warn("[reviseBidPackage] email failed:", e))
       )
     }
@@ -454,6 +474,7 @@ export async function reviseBidPackage(input: BidPackageInputT) {
         sendQuoSms({
           to: e164,
           content: `Hines Homes updated the bid request "${parsed.title}" on ${projectName}. Please re-submit: ${link}`,
+          log,
         }).catch((e) => console.warn("[reviseBidPackage] SMS failed:", e))
       )
     }
@@ -480,7 +501,7 @@ export async function awardBid({
   create_po?: boolean
   notify_losers?: boolean
 }) {
-  await requireStaff()
+  const profile = await requireStaff()
   const supabase = await createSupabaseServerClient()
 
   const { data, error } = await supabase.rpc("award_bid", {
@@ -494,7 +515,7 @@ export async function awardBid({
   const { data: winner } = await supabase
     .from("bid_recipients")
     .select(
-      "id, bid_package_id, token, companies:company_id(name, email, notifications_enabled), bid_packages:bid_package_id(title, projects:project_id(name))"
+      "id, bid_package_id, token, company_id, companies:company_id(name, email, notifications_enabled), bid_packages:bid_package_id(title, projects:project_id(name))"
     )
     .eq("id", recipient_id)
     .maybeSingle()
@@ -502,6 +523,7 @@ export async function awardBid({
   const pkgInfo = winner as unknown as {
     bid_package_id: string
     token: string | null
+    company_id: string
     companies: { name: string; email: string | null; notifications_enabled: boolean } | null
     bid_packages: { title: string; projects: { name: string } | null } | null
   } | null
@@ -518,6 +540,13 @@ export async function awardBid({
         to: [pkgInfo.companies.email],
         subject: `Bid awarded: ${title} — ${projectName}`,
         text: `Congratulations — your bid for "${title}" on ${projectName} has been accepted.${create_po ? " A purchase order will follow with the full scope and terms." : ""}${linkLine}`,
+        log: {
+          project_id,
+          company_id: pkgInfo.company_id,
+          sent_by: profile.id,
+          kind: "bid_award",
+          counterparty_name: pkgInfo.companies.name,
+        },
       }).catch((e) => console.warn("[awardBid] winner email failed:", e))
     )
   }
@@ -525,14 +554,14 @@ export async function awardBid({
   if (notify_losers && pkgInfo) {
     const { data: losers } = await supabase
       .from("bid_recipients")
-      .select("id, status, companies:company_id(name, email, notifications_enabled)")
+      .select("id, status, company_id, companies:company_id(name, email, notifications_enabled)")
       .eq("bid_package_id", pkgInfo.bid_package_id)
       .neq("id", recipient_id)
     for (const l of losers ?? []) {
       if (l.status !== "submitted") continue
       const co = (
         l as unknown as {
-          companies: { email: string | null; notifications_enabled: boolean } | null
+          companies: { name: string; email: string | null; notifications_enabled: boolean } | null
         }
       ).companies
       if (!co?.email || !co.notifications_enabled) continue
@@ -541,6 +570,13 @@ export async function awardBid({
           to: [co.email],
           subject: `Bid update: ${title} — ${projectName}`,
           text: `Thank you for bidding on "${title}" at ${projectName}. This scope has been awarded to another contractor. We appreciate your time and look forward to working with you on future projects.`,
+          log: {
+            project_id,
+            company_id: l.company_id,
+            sent_by: profile.id,
+            kind: "bid_not_awarded",
+            counterparty_name: co.name,
+          },
         }).catch((e) => console.warn("[awardBid] loser email failed:", e))
       )
     }
@@ -628,24 +664,69 @@ export async function postBidCommentStaff({
   const { data: rec } = await supabase
     .from("bid_recipients")
     .select(
-      "token, companies:company_id(email, notifications_enabled), bid_packages:bid_package_id(title)"
+      "token, company_id, bid_package_id, companies:company_id(name, email, notifications_enabled), bid_packages:bid_package_id(number, title, projects:project_id(name))"
     )
     .eq("id", bid_recipient_id)
     .maybeSingle()
   const info = rec as unknown as {
     token: string | null
-    companies: { email: string | null; notifications_enabled: boolean } | null
-    bid_packages: { title: string } | null
+    company_id: string
+    bid_package_id: string
+    companies: {
+      name: string
+      email: string | null
+      notifications_enabled: boolean
+    } | null
+    bid_packages: {
+      number: number
+      title: string
+      projects: { name: string } | null
+    } | null
   } | null
   if (info?.token && info.companies?.email && info.companies.notifications_enabled) {
     await sendEmail({
       to: [info.companies.email],
       subject: `New message on bid: ${info.bid_packages?.title ?? "bid request"}`,
       text: `${profile.full_name ?? "Hines Homes"} wrote:\n\n${body.trim()}\n\nView and reply: ${appUrl(`/bid/${info.token}`)}`,
+      log: {
+        project_id,
+        company_id: info.company_id,
+        sent_by: profile.id,
+        kind: "bid_comment_notify",
+        counterparty_name: info.companies.name,
+      },
     }).catch((e) => console.warn("[postBidCommentStaff] email failed:", e))
   }
 
+  // Bell notification for the sub's trade logins (the email above covers
+  // subs without portal accounts).
+  if (info?.company_id) {
+    try {
+      const { data: tradeProfiles } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("company_id", info.company_id)
+        .eq("role", "trade")
+      await notifyCommentPosted({
+        entityLabel: info.bid_packages
+          ? `Bid #${info.bid_packages.number} — ${info.bid_packages.title}`
+          : "a bid request",
+        projectName: info.bid_packages?.projects?.name ?? null,
+        authorName: profile.full_name ?? "Hines Homes",
+        authorIsStaff: true,
+        authorProfileId: profile.id,
+        body: body.trim(),
+        staffLink: `/projects/${project_id}/bids?open=${info.bid_package_id}&recipient=${bid_recipient_id}`,
+        counterpartyProfileIds: (tradeProfiles ?? []).map((p) => p.id),
+        counterpartyLink: "/my-bids",
+      })
+    } catch (e) {
+      console.warn("[postBidCommentStaff] notification failed:", e)
+    }
+  }
+
   revalidatePath(`/projects/${project_id}/bids`)
+  revalidatePath(`/projects/${project_id}/communications`)
 }
 
 export async function getSignedUrlsForBids(paths: string[]) {

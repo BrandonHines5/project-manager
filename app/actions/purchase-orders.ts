@@ -8,6 +8,7 @@ import { sendEmail, appUrl } from "@/lib/email"
 import { sendQuoSms, normalizeE164 } from "@/lib/quo"
 import { generateAccessToken } from "@/lib/tokens"
 import { formatDate } from "@/lib/utils"
+import { notifyCommentPosted } from "@/lib/comms/notify"
 
 const optStr = z.string().nullish()
 
@@ -227,13 +228,13 @@ export async function releasePurchaseOrder({
   id: string
   project_id: string
 }) {
-  await requireStaff()
+  const profile = await requireStaff()
   const supabase = await createSupabaseServerClient()
 
   const { data: po, error: poErr } = await supabase
     .from("purchase_orders")
     .select(
-      "id, number, title, approval_deadline, status, companies:company_id(name, email, phone, notifications_enabled), projects:project_id(name)"
+      "id, number, title, approval_deadline, status, company_id, companies:company_id(name, email, phone, notifications_enabled), projects:project_id(name)"
     )
     .eq("id", id)
     .maybeSingle()
@@ -272,6 +273,13 @@ export async function releasePurchaseOrder({
     const deadlineLine = po.approval_deadline
       ? ` Please review and approve by ${formatDate(po.approval_deadline)}.`
       : ""
+    const log = {
+      project_id,
+      company_id: po.company_id,
+      sent_by: profile.id,
+      kind: "po_release",
+      counterparty_name: company.name,
+    }
     const sendJobs: Promise<unknown>[] = []
     if (company.email) {
       sendJobs.push(
@@ -279,6 +287,7 @@ export async function releasePurchaseOrder({
           to: [company.email],
           subject: `Purchase order PO-${po.number}: ${po.title} — ${projectName}`,
           text: `Hines Homes has issued you a purchase order for "${po.title}" on ${projectName}.${deadlineLine}\n\nReview and approve or decline here (no login needed):\n${link}`,
+          log,
         }).catch((e) => console.warn("[releasePurchaseOrder] email failed:", e))
       )
     }
@@ -288,6 +297,7 @@ export async function releasePurchaseOrder({
         sendQuoSms({
           to: e164,
           content: `Hines Homes purchase order PO-${po.number} "${po.title}" on ${projectName}.${deadlineLine} Review & approve: ${link}`,
+          log,
         }).catch((e) => console.warn("[releasePurchaseOrder] SMS failed:", e))
       )
     }
@@ -489,24 +499,64 @@ export async function postPoCommentStaff({
 
   const { data: po } = await supabase
     .from("purchase_orders")
-    .select("number, title, token, companies:company_id(email, notifications_enabled)")
+    .select(
+      "number, title, token, company_id, companies:company_id(name, email, notifications_enabled), projects:project_id(name)"
+    )
     .eq("id", purchase_order_id)
     .maybeSingle()
   const info = po as unknown as {
     number: number
     title: string
     token: string | null
-    companies: { email: string | null; notifications_enabled: boolean } | null
+    company_id: string | null
+    companies: {
+      name: string
+      email: string | null
+      notifications_enabled: boolean
+    } | null
+    projects: { name: string } | null
   } | null
   if (info?.token && info.companies?.email && info.companies.notifications_enabled) {
     await sendEmail({
       to: [info.companies.email],
       subject: `New message on PO-${info.number}: ${info.title}`,
       text: `${profile.full_name ?? "Hines Homes"} wrote:\n\n${body.trim()}\n\nView and reply: ${appUrl(`/po/${info.token}`)}`,
+      log: {
+        project_id,
+        company_id: info.company_id,
+        sent_by: profile.id,
+        kind: "po_comment_notify",
+        counterparty_name: info.companies.name,
+      },
     }).catch((e) => console.warn("[postPoCommentStaff] email failed:", e))
   }
 
+  // Bell notification for the sub's trade logins.
+  if (info?.company_id) {
+    try {
+      const { data: tradeProfiles } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("company_id", info.company_id)
+        .eq("role", "trade")
+      await notifyCommentPosted({
+        entityLabel: `PO-${info.number} — ${info.title}`,
+        projectName: info.projects?.name ?? null,
+        authorName: profile.full_name ?? "Hines Homes",
+        authorIsStaff: true,
+        authorProfileId: profile.id,
+        body: body.trim(),
+        staffLink: `/projects/${project_id}/purchase-orders?open=${purchase_order_id}`,
+        counterpartyProfileIds: (tradeProfiles ?? []).map((p) => p.id),
+        counterpartyLink: "/my-pos",
+      })
+    } catch (e) {
+      console.warn("[postPoCommentStaff] notification failed:", e)
+    }
+  }
+
   revalidatePath(`/projects/${project_id}/purchase-orders`)
+  revalidatePath(`/projects/${project_id}/communications`)
 }
 
 export async function getSignedUrlsForPOs(paths: string[]) {

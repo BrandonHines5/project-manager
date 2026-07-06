@@ -1,3 +1,5 @@
+import { logCommunication, type CommLogContext } from "@/lib/comms/log"
+
 /**
  * Sends an SMS via Quo (built on OpenPhone — host is api.openphone.com).
  * Graceful no-op if QUO_API_KEY or QUO_FROM_NUMBER is missing so dev / preview
@@ -12,7 +14,10 @@
 export async function sendQuoSms(opts: {
   to: string
   content: string
-}): Promise<{ sent: boolean; reason?: string }> {
+  // Counterparty-facing sends pass this so the text lands in the project's
+  // Communications feed. Omitted → not logged.
+  log?: CommLogContext
+}): Promise<{ sent: boolean; reason?: string; providerId?: string }> {
   const key = process.env.QUO_API_KEY
   const from = process.env.QUO_FROM_NUMBER
   if (!key || !from) {
@@ -50,7 +55,34 @@ export async function sendQuoSms(opts: {
       console.error(`Quo send failed (${res.status}):`, text)
       return { sent: false, reason: `Quo API ${res.status}: ${text || res.statusText}` }
     }
-    return { sent: true }
+    // The 202 body carries the created message object; its id is our dedup
+    // key against the message.delivered webhook (which logs source 'quo'
+    // too, so the unique (source, provider_id) index merges the two).
+    let providerId: string | undefined
+    try {
+      const json = (await res.json()) as { data?: { id?: string }; id?: string }
+      providerId = json?.data?.id ?? json?.id ?? undefined
+    } catch {
+      // Body wasn't JSON — fine, we just log without a provider id.
+    }
+    if (opts.log) {
+      await logCommunication({
+        channel: "sms",
+        direction: "outbound",
+        project_id: opts.log.project_id,
+        company_id: opts.log.company_id,
+        profile_id: opts.log.profile_id,
+        sent_by: opts.log.sent_by,
+        from_address: from,
+        to_address: to,
+        counterparty_name: opts.log.counterparty_name,
+        body: content,
+        source: "quo",
+        source_kind: opts.log.kind,
+        provider_id: providerId ?? null,
+      })
+    }
+    return { sent: true, providerId }
   } catch (e) {
     if (e instanceof DOMException && e.name === "TimeoutError") {
       console.error("Quo send timed out after 5s")

@@ -10,6 +10,7 @@ import { z } from "zod"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { ACCESS_TOKEN_RE } from "@/lib/tokens"
 import { sendEmail, appUrl } from "@/lib/email"
+import { notifyCommentPosted } from "@/lib/comms/notify"
 
 const UNAVAILABLE =
   "This link is unavailable right now — please try again later."
@@ -247,6 +248,7 @@ export async function postPoCommentPublic(input: { token: string; body: string }
   })
   if (error) throw new Error("Could not post your message — please try again.")
 
+  const staffLink = `/projects/${po.project_id}/purchase-orders?open=${po.id}`
   try {
     const { data: staff } = await admin
       .from("profiles")
@@ -260,12 +262,20 @@ export async function postPoCommentPublic(input: { token: string; body: string }
       await sendEmail({
         to: emails,
         subject: `New PO question from ${companyName}`,
-        text: `${companyName} wrote on PO-${po.number} "${po.title}":\n\n${parsed.body.trim()}\n\nReply here: ${appUrl(`/projects/${po.project_id}/purchase-orders`)}`,
+        text: `${companyName} wrote on PO-${po.number} "${po.title}":\n\n${parsed.body.trim()}\n\nReply here: ${appUrl(staffLink)}`,
       })
     }
   } catch (e) {
     console.warn("[postPoCommentPublic] staff email failed (non-fatal):", e)
   }
+  // Bell notifications for staff (in-app bell + Communications feed).
+  await notifyCommentPosted({
+    entityLabel: `PO-${po.number} — ${po.title}`,
+    authorName: companyName,
+    authorIsStaff: false,
+    body: parsed.body.trim(),
+    staffLink,
+  })
 
   return { ok: true as const }
 }

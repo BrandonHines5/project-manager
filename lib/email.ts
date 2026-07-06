@@ -1,4 +1,5 @@
 import { Resend } from "resend"
+import { logCommunication, type CommLogContext } from "@/lib/comms/log"
 
 /**
  * Sends a transactional email via Resend. Returns immediately as a no-op if
@@ -17,6 +18,10 @@ export async function sendEmail(opts: {
   // Optional file attachments. `content` is base64-encoded bytes — Resend's
   // expected shape. Existing callers that omit this are unaffected.
   attachments?: { filename: string; content: string }[]
+  // Counterparty-facing sends pass this so the email lands in the project's
+  // Communications feed. Staff-internal mail (digests, alerts) omits it and
+  // is never logged.
+  log?: CommLogContext
 }): Promise<{ sent: boolean; reason?: string }> {
   const key = process.env.RESEND_API_KEY
   const from = process.env.RESEND_FROM_EMAIL
@@ -33,13 +38,26 @@ export async function sendEmail(opts: {
     return { sent: false, reason: "RESEND_API_KEY or RESEND_FROM_EMAIL not set" }
   }
 
+  // Project-scoped sends default their Reply-To to the comms inbound
+  // address with a project plus-tag (comms+p_<id>@…), so a client/sub reply
+  // threads straight back into that job's Communications feed. Callers that
+  // set an explicit replyTo (e.g. insurance, utilities) are untouched.
+  let replyTo = opts.replyTo
+  if (!replyTo && opts.log?.project_id) {
+    const inbound = process.env.COMMS_INBOUND_EMAIL
+    const at = inbound?.indexOf("@") ?? -1
+    if (inbound && at > 0) {
+      replyTo = `${inbound.slice(0, at)}+p_${opts.log.project_id}${inbound.slice(at)}`
+    }
+  }
+
   const resend = new Resend(key)
   try {
-    const { error } = await resend.emails.send({
+    const { data, error } = await resend.emails.send({
       from,
       to: opts.to,
       ...(opts.cc ? { cc: opts.cc } : {}),
-      ...(opts.replyTo ? { replyTo: opts.replyTo } : {}),
+      ...(replyTo ? { replyTo } : {}),
       subject: opts.subject,
       text: opts.text,
       html: opts.html,
@@ -54,6 +72,25 @@ export async function sendEmail(opts: {
     console.log(
       `[sendEmail] sent "${opts.subject}" to ${recipientCount} recipient(s)`
     )
+    if (opts.log) {
+      const toList = Array.isArray(opts.to) ? opts.to : [opts.to]
+      await logCommunication({
+        channel: "email",
+        direction: "outbound",
+        project_id: opts.log.project_id,
+        company_id: opts.log.company_id,
+        profile_id: opts.log.profile_id,
+        sent_by: opts.log.sent_by,
+        from_address: from,
+        to_address: toList.join(", "),
+        counterparty_name: opts.log.counterparty_name,
+        subject: opts.subject,
+        body: opts.text,
+        source: "app",
+        source_kind: opts.log.kind,
+        provider_id: data?.id ?? null,
+      })
+    }
     return { sent: true }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)

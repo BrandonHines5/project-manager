@@ -10,13 +10,16 @@ export const metadata = { title: "Bid Requests — Hines Homes" }
 
 export default async function BidsPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>
+  searchParams: Promise<{ open?: string; recipient?: string }>
 }) {
   // Bids are staff-only (subs interact via their public token links), so
   // gate the whole tab like Onsite does.
   await requireStaff()
   const { id: projectId } = await params
+  const { open, recipient } = await searchParams
   const supabase = await createSupabaseServerClient()
 
   const { data: project } = await supabase
@@ -110,9 +113,19 @@ export default async function BidsPage({
     }
   )
 
+  const cleanedPackages = packages ?? []
+  const openId =
+    open && cleanedPackages.some((p) => p.id === open) ? open : null
   const data: BidsData = {
     project_id: projectId,
-    packages: packages ?? [],
+    // Deep link (?open=<package_id>[&recipient=<recipient_id>]) from the
+    // Communications feed / bell — validated server-side.
+    open_package_id: openId,
+    open_recipient_id:
+      openId && recipient && cleanedRecipients.some((r) => r.id === recipient)
+        ? recipient
+        : null,
+    packages: cleanedPackages,
     line_items: strip(lineItems) as BidsData["line_items"],
     attachments: cleanedAttachments,
     recipients: cleanedRecipients,

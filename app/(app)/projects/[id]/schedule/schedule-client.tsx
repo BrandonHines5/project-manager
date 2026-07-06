@@ -27,6 +27,12 @@ export type ScheduleData = {
   // assigned to a role resolves to "Role (Person)" for display.
   roles: Pick<Tables<"roles">, "id" | "name" | "kind">[]
   roleMembers: Pick<Tables<"project_role_members">, "role_id" | "profile_id" | "company_id">[]
+  comments: Tables<"schedule_item_comments">[]
+  role: Tables<"profiles">["role"]
+  me_name: string
+  // Deep link from the Communications feed / notifications: open this item's
+  // dialog on load (already validated server-side).
+  open_item_id: string | null
 }
 
 type View = "list" | "gantt" | "todos" | "sheet"
@@ -40,7 +46,7 @@ export function ScheduleClient({ data }: { data: ScheduleData }) {
     | { mode: "create"; kind: "work" | "todo"; parentId?: string }
     | { mode: "edit"; itemId: string }
     | null
-  >(null)
+  >(data.open_item_id ? { mode: "edit", itemId: data.open_item_id } : null)
 
   const items = data.items
   const stats = useMemo(() => {
