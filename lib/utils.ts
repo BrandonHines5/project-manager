@@ -16,7 +16,21 @@ export function formatCurrency(value: number | null | undefined): string {
 
 export function formatDate(value: string | Date | null | undefined): string {
   if (!value) return "—"
-  const date = typeof value === "string" ? new Date(value) : value
+  let date: Date
+  if (typeof value === "string") {
+    // A bare date (YYYY-MM-DD) is a calendar date with no time zone.
+    // `new Date("2025-01-01")` parses it as UTC midnight, which then renders
+    // as the PREVIOUS day for viewers west of UTC (e.g. Jan 1 shows as
+    // "Dec 31" in US time zones). Build it from local Y/M/D parts so the
+    // calendar date is preserved. Full timestamps (with a time component,
+    // e.g. logged_at) still render in local time as before.
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+    date = m
+      ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+      : new Date(value)
+  } else {
+    date = value
+  }
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
