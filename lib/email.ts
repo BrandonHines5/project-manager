@@ -38,13 +38,26 @@ export async function sendEmail(opts: {
     return { sent: false, reason: "RESEND_API_KEY or RESEND_FROM_EMAIL not set" }
   }
 
+  // Project-scoped sends default their Reply-To to the comms inbound
+  // address with a project plus-tag (comms+p_<id>@…), so a client/sub reply
+  // threads straight back into that job's Communications feed. Callers that
+  // set an explicit replyTo (e.g. insurance, utilities) are untouched.
+  let replyTo = opts.replyTo
+  if (!replyTo && opts.log?.project_id) {
+    const inbound = process.env.COMMS_INBOUND_EMAIL
+    const at = inbound?.indexOf("@") ?? -1
+    if (inbound && at > 0) {
+      replyTo = `${inbound.slice(0, at)}+p_${opts.log.project_id}${inbound.slice(at)}`
+    }
+  }
+
   const resend = new Resend(key)
   try {
     const { data, error } = await resend.emails.send({
       from,
       to: opts.to,
       ...(opts.cc ? { cc: opts.cc } : {}),
-      ...(opts.replyTo ? { replyTo: opts.replyTo } : {}),
+      ...(replyTo ? { replyTo } : {}),
       subject: opts.subject,
       text: opts.text,
       html: opts.html,
