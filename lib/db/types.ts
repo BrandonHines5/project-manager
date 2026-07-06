@@ -1378,6 +1378,27 @@ export type Database = {
           },
         ]
       }
+      outlook_sync_state: {
+        Row: {
+          delta_link: string | null
+          folder: string
+          mailbox: string
+          updated_at: string
+        }
+        Insert: {
+          delta_link?: string | null
+          folder: string
+          mailbox: string
+          updated_at?: string
+        }
+        Update: {
+          delta_link?: string | null
+          folder?: string
+          mailbox?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       payment_audit: {
         Row: {
           action: string
