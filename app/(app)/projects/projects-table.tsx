@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react"
 import Link from "next/link"
-import { Search, Activity, AlertTriangle } from "lucide-react"
+import { Search, Activity, AlertTriangle, Tag } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { cn, formatCurrency, formatDate } from "@/lib/utils"
 import { crmStatusTone } from "@/lib/crm-status"
@@ -28,6 +28,15 @@ const STATUS_FILTER_LABEL: Record<StatusFilter, string> = {
   active: "Active",
   warranty: "Warranty",
   closed: "Closed",
+}
+
+// The active filter is either a StatusFilter value ("all"…"closed") or a label
+// filter encoded as "label:<name>", so a single piece of state can drive both
+// the status chips and the tag chips. Same encoding the desktop sidebar uses.
+const LABEL_PREFIX = "label:"
+
+function isStatusFilter(f: string): f is StatusFilter {
+  return (STATUS_FILTERS as ReadonlyArray<string>).includes(f)
 }
 
 const OPEN_STATUSES: ReadonlyArray<Enums<"project_status">> = [
@@ -96,6 +105,7 @@ export type ProjectRow = {
   contract_price: number | null
   target_completion_date: string | null
   is_template: boolean
+  labels: string[]
   metrics: ProjectMetrics
   delta: number
 }
@@ -108,7 +118,8 @@ export function ProjectsTable({
   financialAccess: boolean
 }) {
   const [query, setQuery] = useState("")
-  const [filter, setFilter] = useState<StatusFilter>("all")
+  // Either a StatusFilter ("all"…"closed") or a "label:<name>" string.
+  const [filter, setFilter] = useState<string>("all")
 
   // Count per status group so each chip can show how many jobs it holds —
   // the search box narrows the visible rows but not these headline counts.
@@ -129,10 +140,32 @@ export function ProjectsTable({
     return c
   }, [rows])
 
+  // Distinct labels in use across all projects, with a per-label job count, so
+  // every label that exists on a project becomes its own filter chip.
+  const labelChips = useMemo(() => {
+    const byLabel = new Map<string, number>()
+    for (const r of rows) {
+      for (const l of r.labels ?? []) {
+        byLabel.set(l, (byLabel.get(l) ?? 0) + 1)
+      }
+    }
+    return Array.from(byLabel.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [rows])
+
+  const activeLabel = filter.startsWith(LABEL_PREFIX)
+    ? filter.slice(LABEL_PREFIX.length)
+    : null
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return rows.filter((r) => {
-      if (!matchesFilter(r.status, filter)) return false
+      if (activeLabel) {
+        if (!(r.labels ?? []).includes(activeLabel)) return false
+      } else if (isStatusFilter(filter) && !matchesFilter(r.status, filter)) {
+        return false
+      }
       if (!q) return true
       return (
         r.name.toLowerCase().includes(q) ||
@@ -140,7 +173,7 @@ export function ProjectsTable({
         (r.address?.toLowerCase().includes(q) ?? false)
       )
     })
-  }, [rows, query, filter])
+  }, [rows, query, filter, activeLabel])
 
   return (
     <div>
@@ -181,6 +214,40 @@ export function ProjectsTable({
               </span>
             </button>
           ))}
+          {labelChips.length > 0 && (
+            <span
+              aria-hidden
+              className="shrink-0 self-stretch w-px bg-border mx-0.5"
+            />
+          )}
+          {labelChips.map(({ name, count }) => {
+            const key = `${LABEL_PREFIX}${name}`
+            const isActive = filter === key
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setFilter(key)}
+                className={cn(
+                  "shrink-0 inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
+                  isActive
+                    ? "border-brand-500 bg-brand-50 text-brand-700"
+                    : "border-border bg-surface text-muted hover:text-foreground hover:bg-background"
+                )}
+              >
+                <Tag className="h-3 w-3" />
+                {name}
+                <span
+                  className={cn(
+                    "tabular-nums text-xs",
+                    isActive ? "text-brand-600" : "text-muted"
+                  )}
+                >
+                  {count}
+                </span>
+              </button>
+            )
+          })}
         </div>
       </div>
 
