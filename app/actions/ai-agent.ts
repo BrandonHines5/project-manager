@@ -16,7 +16,27 @@ import type Anthropic from "@anthropic-ai/sdk"
 // prevents a tampered client from injecting fake tool results.
 const ClientMessageSchema = z.object({
   role: z.enum(["user", "assistant"]),
-  content: z.string().min(1).max(8000),
+  // 20k chars ≈ 20 minutes of dictation — a long onsite walkthrough fits in
+  // one message. Still a trivial token count for the model.
+  content: z.string().min(1).max(20000),
+})
+// A walkthrough photo the browser already uploaded to the project-files
+// bucket. The server injects these into the plan's append_daily_log — the
+// model never sees them.
+const AttachmentInputSchema = z.object({
+  storage_path: z.string().min(1).max(500),
+  file_name: z.string().min(1).max(300),
+  file_type: z.string().max(100).nullable(),
+  file_size: z.number().int().min(0).max(50_000_000).nullable(),
+  caption: z.string().max(500).nullable(),
+})
+// Onsite walkthrough turns carry the project the user is standing at. Only
+// the id is trusted as a claim — the action re-resolves the project row
+// under the caller's session, which both validates access and supplies the
+// name/number the prompt needs.
+const OnsiteContextSchema = z.object({
+  project_id: z.string().uuid(),
+  attachments: z.array(AttachmentInputSchema).max(30).default([]),
 })
 const TurnInputSchema = z.object({
   messages: z.array(ClientMessageSchema).min(1).max(40),
@@ -27,8 +47,10 @@ const TurnInputSchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
+  context: OnsiteContextSchema.optional(),
 })
 type ClientMessage = z.infer<typeof ClientMessageSchema>
+type OnsiteContextInput = z.infer<typeof OnsiteContextSchema>
 
 // On the server we expand the simple {role, content: string} messages into
 // the full Anthropic message shape. Server-side server-turn additions (tool
@@ -46,6 +68,7 @@ function toClaudeMessages(
 export async function runAgentTurnAction(input: {
   messages: ClientMessage[]
   today?: string
+  context?: OnsiteContextInput
 }): Promise<AgentTurnResult> {
   await requireStaff()
   const apiKey = process.env.ANTHROPIC_API_KEY
@@ -64,13 +87,50 @@ export async function runAgentTurnAction(input: {
     }
   }
   const supabase = await createSupabaseServerClient()
+  const today = parsed.data.today ?? new Date().toISOString().slice(0, 10)
+
+  // Resolve the onsite project under the caller's session — RLS makes this
+  // both an access check and the source of the trusted name/number the
+  // system prompt cites. A client-supplied name is never used.
+  let projectContext = null
+  const context = parsed.data.context
+  if (context) {
+    const { data: project, error } = await supabase
+      .from("projects")
+      .select("id, name, project_number, address")
+      .eq("id", context.project_id)
+      .maybeSingle()
+    if (error) {
+      return { type: "error", message: `Failed to load project: ${error.message}` }
+    }
+    if (!project) {
+      return { type: "error", message: "Project not found or not permitted." }
+    }
+    projectContext = project
+  }
+
   try {
     const { result } = await runAgentTurn({
       messages: toClaudeMessages(parsed.data.messages),
       supabase,
       apiKey,
-      today: parsed.data.today ?? new Date().toISOString().slice(0, 10),
+      today,
+      projectContext,
     })
+    if (
+      result.type === "plan" &&
+      context &&
+      projectContext &&
+      context.attachments.length > 0
+    ) {
+      await attachWalkthroughPhotos(
+        supabase,
+        result,
+        projectContext,
+        context.attachments,
+        today
+      )
+    }
     return result
   } catch (e) {
     return {
@@ -78,6 +138,55 @@ export async function runAgentTurnAction(input: {
       message: e instanceof Error ? e.message : "Agent failed",
     }
   }
+}
+
+// Walkthrough photos ride the plan's append_daily_log mutation for the
+// onsite project. Injected server-side — deterministic regardless of what
+// the model proposed. If the plan somehow lacks a daily-log entry for the
+// project (or the walkthrough was photos-only), synthesize one so "photos
+// always land on the daily log" is a guarantee, not a prompt hope.
+async function attachWalkthroughPhotos(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  plan: Extract<AgentTurnResult, { type: "plan" }>,
+  project: { id: string; name: string; project_number: string },
+  attachments: z.infer<typeof AttachmentInputSchema>[],
+  today: string
+): Promise<void> {
+  const target = plan.mutations.find(
+    (m): m is Extract<ProposedMutation, { kind: "append_daily_log" }> =>
+      m.kind === "append_daily_log" && m.project_id === project.id
+  )
+  if (target) {
+    target.attachments = attachments
+    return
+  }
+  // appends_to_existing is a display hint only (apply re-checks), so a
+  // transient lookup failure must not sink the whole turn — the plan it
+  // decorates already cost an LLM call and the user's walkthrough.
+  let appendsToExisting = false
+  try {
+    const { data: existing } = await supabase
+      .from("daily_logs")
+      .select("id")
+      .eq("project_id", project.id)
+      .eq("log_date", today)
+      .limit(1)
+    appendsToExisting = (existing?.length ?? 0) > 0
+  } catch {
+    // Best-effort — default to "new log" wording.
+  }
+  plan.mutations.push({
+    kind: "append_daily_log",
+    project_id: project.id,
+    log_date: today,
+    note: "Site walkthrough — photos attached.",
+    attachments,
+    context: {
+      project_name: project.name,
+      project_number: project.project_number,
+      appends_to_existing: appendsToExisting,
+    },
+  })
 }
 
 // The plan is also shipped client-side and back. We re-validate every
@@ -198,6 +307,9 @@ const MutationSchema = z.discriminatedUnion("kind", [
     project_id: z.string().uuid(),
     log_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     note: z.string().min(1).max(5000),
+    // Walkthrough photos (server-injected at plan time). Apply enforces the
+    // storage-path prefix, so validation here stays structural.
+    attachments: z.array(AttachmentInputSchema).max(30).optional(),
     context: z.object({
       project_name: z.string(),
       project_number: z.string(),

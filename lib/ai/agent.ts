@@ -14,8 +14,20 @@ const MODEL = "claude-sonnet-4-6"
 // the bill up.
 const MAX_ITERATIONS = 30
 
+// Server-verified project the user is physically standing at when they
+// submit an onsite walkthrough. Resolved from the DB under the caller's
+// session — never taken from the client — so the id is safe for the model
+// to use directly.
+export type OnsiteProjectContext = {
+  id: string
+  name: string
+  project_number: string
+  address: string | null
+}
+
 const buildSystemPrompt = (
-  today: string
+  today: string,
+  projectContext?: OnsiteProjectContext | null
 ) => `You are an AI assistant for Hines Homes' project management system. You help staff make bulk updates across construction projects, and you act as a field-notes assistant when staff relay what's happening on a job site (often dictated from a phone).
 
 Today's date is ${today}.
@@ -43,6 +55,18 @@ Field notes mode — when the user relays job-site information (a status update 
   - "I need to order more 2x4s" → propose_create_todo ("Order more 2x4s").
 - AND ALWAYS propose exactly one append_daily_log per affected project per turn that records ALL of the user's notes for that project in clean plain language (e.g. "Tile sub reports finishing today. Requested dumpster swap from ABC Disposal. Need to order more 2x4s."). Site notes belong in the daily log even when no other action is needed.
 - Identify the project before proposing: if the user named it, or only one project is 'active', use it; otherwise call ask_user to pick.
+${
+  projectContext
+    ? `
+On-site context — the user is physically at a job site right now:
+- Project: ${projectContext.name} (#${projectContext.project_number}${projectContext.address ? `, ${projectContext.address}` : ""})
+- project_id: ${projectContext.id}
+- This project_id is server-verified. Exception to the IDs rule below: you may use it directly without calling list_projects first. All OTHER ids (schedule_item_id, decision_id, company_id, …) still must come from tool results.
+- Default every proposal to this project. Do not ask which project the user means. Only propose something for a different project if the user explicitly names one.
+- Any photos the user took are uploaded and attached to the daily log automatically outside this conversation — never mention needing them, and don't propose anything about photos.
+`
+    : ""
+}
 - SMS rules: keep texts short and professional, identify the project by address or name, and sign off as Hines Homes (e.g. "Hines Homes: Please swap the dumpster at 114 Oak St when you can. Thanks!"). Only propose a text when the user clearly wants a sub/vendor contacted. If the matched company has no phone on file, say so instead of proposing.
 
 Rules:
@@ -983,6 +1007,7 @@ export async function runAgentTurn({
   supabase,
   apiKey,
   today,
+  projectContext,
 }: {
   messages: Anthropic.Messages.MessageParam[]
   supabase: SupabaseTyped
@@ -990,6 +1015,9 @@ export async function runAgentTurn({
   // The user's LOCAL date (YYYY-MM-DD) — sent by the browser so "today" in
   // a dictated note means the user's today, not the server's UTC day.
   today: string
+  // Present for onsite walkthrough turns — scopes proposals to the project
+  // the user is standing at. See OnsiteProjectContext.
+  projectContext?: OnsiteProjectContext | null
 }): Promise<{
   result: AgentTurnResult
   // The updated conversation, including everything Claude produced this turn
@@ -1011,7 +1039,7 @@ export async function runAgentTurn({
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: 4096,
-      system: buildSystemPrompt(today),
+      system: buildSystemPrompt(today, projectContext),
       tools: TOOLS,
       messages: workingMessages,
     })

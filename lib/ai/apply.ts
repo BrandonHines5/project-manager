@@ -206,6 +206,7 @@ async function applyOne(
           .limit(1)
         if (exErr) throw new Error(exErr.message)
         const target = existing?.[0]
+        let logId: string
         if (target) {
           const notes = target.notes
             ? `${target.notes.trimEnd()}\n\n${mutation.note}`
@@ -220,15 +221,72 @@ async function applyOne(
           if (!data) {
             throw new Error("daily log not found or not permitted")
           }
+          logId = data.id
         } else {
-          const { error } = await supabase.from("daily_logs").insert({
-            project_id: mutation.project_id,
-            log_date: mutation.log_date,
-            visibility: "internal",
-            notes: mutation.note,
-            created_by: actorId,
-          })
+          const { data, error } = await supabase
+            .from("daily_logs")
+            .insert({
+              project_id: mutation.project_id,
+              log_date: mutation.log_date,
+              visibility: "internal",
+              notes: mutation.note,
+              created_by: actorId,
+            })
+            .select("id")
+            .single()
           if (error) throw new Error(error.message)
+          logId = data.id
+        }
+        const photos = mutation.attachments ?? []
+        if (photos.length > 0) {
+          // The prefix check is the security boundary: attachments arrive
+          // from the client (the walkthrough uploaded them with the user's
+          // own JWT), and without it a tampered plan could link any object
+          // in the bucket — say a COI under companies/insurance/ — into a
+          // log that might later be flipped to client visibility.
+          const prefix = `projects/${mutation.project_id}/daily-logs/`
+          const invalid = photos.find((p) => !p.storage_path.startsWith(prefix))
+          if (invalid) {
+            return {
+              mutation,
+              ok: false,
+              error: `Note saved, but photos were not attached: ${invalid.storage_path} is outside this project's daily-logs folder`,
+            }
+          }
+          // Position new photos after whatever the log already has (a
+          // second same-day walkthrough appends, not overwrites).
+          const { count, error: cErr } = await supabase
+            .from("daily_log_attachments")
+            .select("id", { count: "exact", head: true })
+            .eq("daily_log_id", logId)
+          if (cErr) {
+            return {
+              mutation,
+              ok: false,
+              error: `Note saved, but attaching ${photos.length} photo(s) failed: ${cErr.message}`,
+            }
+          }
+          const base = count ?? 0
+          const { error: aErr } = await supabase
+            .from("daily_log_attachments")
+            .insert(
+              photos.map((p, i) => ({
+                daily_log_id: logId,
+                storage_path: p.storage_path,
+                file_name: p.file_name,
+                file_type: p.file_type,
+                file_size: p.file_size,
+                caption: p.caption,
+                position: base + i,
+              }))
+            )
+          if (aErr) {
+            return {
+              mutation,
+              ok: false,
+              error: `Note saved, but attaching ${photos.length} photo(s) failed: ${aErr.message}`,
+            }
+          }
         }
         return { mutation, ok: true }
       }

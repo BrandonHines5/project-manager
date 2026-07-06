@@ -3,6 +3,7 @@ import { MapPin } from "lucide-react"
 import { requireStaff } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { getOnsitePrompts } from "@/lib/onsite/prompts"
+import { Walkthrough } from "@/components/onsite/walkthrough"
 import { OnsiteClient } from "./onsite-client"
 
 export default async function OnsitePage({
@@ -29,7 +30,9 @@ export default async function OnsitePage({
         <MapPin className="h-5 w-5 text-brand-600" />
         <h2 className="text-lg font-semibold">Onsite check-in</h2>
       </div>
-      <p className="text-sm text-muted mb-6">
+      <Walkthrough projectId={project.id} projectName={project.name} />
+      <h3 className="text-sm font-semibold mb-1">Quick updates</h3>
+      <p className="text-sm text-muted mb-4">
         Schedule items for {project.name}
         {project.address ? ` (${project.address})` : ""} that need a quick
         yes/no/date update right now.
