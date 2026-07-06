@@ -9,10 +9,13 @@ export const metadata = { title: "Decisions — Hines Homes" }
 
 export default async function DecisionsPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>
+  searchParams: Promise<{ open?: string }>
 }) {
   const { id: projectId } = await params
+  const { open } = await searchParams
   const profile = await requireSession()
   const supabase = await createSupabaseServerClient()
 
@@ -103,12 +106,17 @@ export default async function DecisionsPage({
     cleanedAttachments.map((a) => a.storage_path)
   )
 
+  const cleanedDecisions = decisions ?? []
   const data: DecisionsData = {
     project_id: projectId,
     role: profile.role,
     me_id: profile.id,
     me_name: profile.full_name || profile.email || "User",
-    decisions: decisions ?? [],
+    // Deep link (?open=<decision_id>) — validated against the RLS-filtered
+    // list, so a client can only target decisions they can already see.
+    open_decision_id:
+      open && cleanedDecisions.some((d) => d.id === open) ? open : null,
+    decisions: cleanedDecisions,
     followups: strip(followups) as DecisionsData["followups"],
     attachments: cleanedAttachments,
     comments: strip(comments) as DecisionsData["comments"],

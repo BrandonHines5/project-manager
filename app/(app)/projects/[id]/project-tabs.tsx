@@ -18,6 +18,9 @@ const TABS: Tab[] = [
   { label: "Decisions", slug: "decisions" },
   { label: "Bids", slug: "bids", hideForRoles: ["client", "trade"] },
   { label: "POs", slug: "purchase-orders", hideForRoles: ["client", "trade"] },
+  // Visible to every role — RLS filters the feed to each viewer's own
+  // conversations (clients: their threads; trades: their company's).
+  { label: "Communications", slug: "communications" },
   { label: "Files", slug: "files" },
   { label: "Pricing", slug: "pricing" },
   { label: "Roles", slug: "roles", hideForRoles: ["client", "trade"] },

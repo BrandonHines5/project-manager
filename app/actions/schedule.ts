@@ -13,6 +13,7 @@ import type { RecurrenceRule } from "@/lib/schedule/recurrence"
 import type { TablesUpdate } from "@/lib/db/types"
 import { sendEmail, appUrl } from "@/lib/email"
 import { sendQuoSms, normalizeE164 } from "@/lib/quo"
+import { notifyCommentPosted } from "@/lib/comms/notify"
 import { normalizeTag } from "@/lib/template-tags"
 
 // Permissive schema: accept anything reasonable and normalize inside the
@@ -350,7 +351,8 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
             notifyRows,
             parsed.project_id,
             id!,
-            parsed.title
+            parsed.title,
+            profile.id
           )
         }
       } catch (e) {
@@ -444,7 +446,8 @@ async function notifyScheduleAssignees(
   rows: { profile_id: string | null; company_id: string | null }[],
   projectId: string,
   scheduleItemId: string,
-  title: string
+  title: string,
+  senderProfileId?: string
 ) {
   const supabase = await createSupabaseServerClient()
   const profileIds = rows.map((r) => r.profile_id).filter(Boolean) as string[]
@@ -480,7 +483,12 @@ async function notifyScheduleAssignees(
     const link = appUrl(`/projects/${projectId}/schedule`)
     const emails: string[] = []
     const immediateProfileIds: string[] = []
-    const phones: string[] = []
+    const companyRecipients: {
+      id: string
+      name: string
+      email: string | null
+      phone: string | null
+    }[] = []
     if (profileIds.length) {
       const { data: profs } = await supabase
         .from("profiles")
@@ -500,18 +508,14 @@ async function notifyScheduleAssignees(
     if (companyIds.length) {
       const { data: cos } = await supabase
         .from("companies")
-        .select("name, email, phone, notifications_enabled")
+        .select("id, name, email, phone, notifications_enabled")
         .in("id", companyIds)
       for (const c of cos ?? []) {
         // Respect the per-company notification switch — a company with
         // notifications turned off (e.g. imported subs during testing) gets
         // no assignment email or SMS.
         if (!c.notifications_enabled) continue
-        if (c.email) emails.push(c.email)
-        if (c.phone) {
-          const e164 = normalizeE164(c.phone)
-          if (e164) phones.push(e164)
-        }
+        companyRecipients.push(c)
       }
     }
 
@@ -549,17 +553,37 @@ async function notifyScheduleAssignees(
           .catch((e) => console.warn("assignment email failed:", e))
       )
     }
-    // SMS goes only to sub/vendor companies (profiles get email + in-app).
+    // Companies get their own email + SMS sends (one per company, not a
+    // combined blast) so each lands in the Communications feed attributed to
+    // that company — and recipients never see each other's addresses.
     // Message is intentionally terse — texts charge per segment and busy
     // subs scan, not read.
-    if (phones.length) {
-      const smsBody = `Hines Homes: you were assigned to "${title}". Details: ${link}`
-      for (const to of phones) {
+    for (const c of companyRecipients) {
+      const log = {
+        project_id: projectId,
+        company_id: c.id,
+        sent_by: senderProfileId ?? null,
+        kind: "schedule_assignment",
+        counterparty_name: c.name,
+      }
+      if (c.email) {
         sends.push(
-          sendQuoSms({ to, content: smsBody }).then((r) => {
+          sendEmail({
+            to: [c.email],
+            subject: `New assignment: ${title}`,
+            text: `You were assigned to "${title}" on the project. Open: ${link}`,
+            log,
+          }).catch((e) => console.warn("assignment company email failed:", e))
+        )
+      }
+      const e164 = c.phone ? normalizeE164(c.phone) : null
+      if (e164) {
+        const smsBody = `Hines Homes: you were assigned to "${title}". Details: ${link}`
+        sends.push(
+          sendQuoSms({ to: e164, content: smsBody, log }).then((r) => {
             if (!r.sent) {
               console.warn(
-                `assignment SMS to ${to} failed: ${r.reason ?? "unknown"}`
+                `assignment SMS to ${e164} failed: ${r.reason ?? "unknown"}`
               )
             }
           })
@@ -1013,14 +1037,14 @@ export async function sendQuoTextToSub(input: {
   company_id: string
   message: string
 }): Promise<SendQuoTextResult> {
-  await requireStaff()
+  const profile = await requireStaff()
   const parsed = SendSubTextInput.parse(input)
   const supabase = await createSupabaseServerClient()
 
   // Verify the company is actually assigned to this schedule item.
   const { data: assignment, error: aErr } = await supabase
     .from("schedule_assignments")
-    .select("id")
+    .select("id, schedule_items!inner(project_id)")
     .eq("schedule_item_id", parsed.schedule_item_id)
     .eq("company_id", parsed.company_id)
     .maybeSingle()
@@ -1057,11 +1081,113 @@ export async function sendQuoTextToSub(input: {
     }
   }
 
-  const result = await sendQuoSms({ to: normalized, content: parsed.message })
+  const result = await sendQuoSms({
+    to: normalized,
+    content: parsed.message,
+    log: {
+      project_id:
+        (assignment as unknown as { schedule_items: { project_id: string } | null })
+          .schedule_items?.project_id ?? null,
+      company_id: parsed.company_id,
+      sent_by: profile.id,
+      kind: "manual_sms",
+      counterparty_name: company.name,
+    },
+  })
   if (!result.sent) {
     return { ok: false, error: result.reason ?? "Failed to send text." }
   }
   return { ok: true, to: normalized, company_name: company.name }
+}
+
+const ScheduleCommentInput = z.object({
+  schedule_item_id: z.string().min(1),
+  project_id: z.string().min(1),
+  body: z.string().min(1, "Comment is empty"),
+})
+
+/**
+ * Comment on a schedule item — staff or an assigned trade (RLS policy
+ * sic_trade_insert re-verifies the assignment; clients have no policy and
+ * are rejected by RLS). Fans out bell notifications: trade comments alert
+ * all staff, staff comments alert the item's assignees.
+ */
+export async function postScheduleItemComment(input: {
+  schedule_item_id: string
+  project_id: string
+  body: string
+}) {
+  const profile = await requireSession()
+  const parsed = ScheduleCommentInput.parse(input)
+  const supabase = await createSupabaseServerClient()
+  const authorName = profile.full_name ?? profile.email ?? "Someone"
+
+  const { error } = await supabase.from("schedule_item_comments").insert({
+    schedule_item_id: parsed.schedule_item_id,
+    author_id: profile.id,
+    author_name: authorName,
+    body: parsed.body.trim(),
+  })
+  if (error) throw new Error(error.message)
+
+  try {
+    const { data: item } = await supabase
+      .from("schedule_items")
+      .select("title")
+      .eq("id", parsed.schedule_item_id)
+      .maybeSingle()
+    // Project name is best-effort — trades can't read the projects table.
+    const { data: proj } = await supabase
+      .from("projects")
+      .select("name")
+      .eq("id", parsed.project_id)
+      .maybeSingle()
+
+    // Staff comment → alert the item's assignees: directly assigned profiles
+    // plus trade logins belonging to assigned companies.
+    let counterpartyIds: string[] = []
+    if (profile.role === "staff") {
+      const { data: assignments } = await supabase
+        .from("schedule_assignments")
+        .select("profile_id, company_id")
+        .eq("schedule_item_id", parsed.schedule_item_id)
+      const profileIds = (assignments ?? [])
+        .map((a) => a.profile_id)
+        .filter(Boolean) as string[]
+      const companyIds = (assignments ?? [])
+        .map((a) => a.company_id)
+        .filter(Boolean) as string[]
+      if (companyIds.length) {
+        const { data: tradeProfiles } = await supabase
+          .from("profiles")
+          .select("id")
+          .in("company_id", companyIds)
+          .eq("role", "trade")
+        for (const p of tradeProfiles ?? []) profileIds.push(p.id)
+      }
+      counterpartyIds = [...new Set(profileIds)]
+    }
+
+    await notifyCommentPosted({
+      entityLabel: item?.title ? `Schedule: ${item.title}` : "a schedule item",
+      projectName: proj?.name ?? null,
+      authorName,
+      authorIsStaff: profile.role === "staff",
+      authorProfileId: profile.id,
+      body: parsed.body.trim(),
+      staffLink: `/projects/${parsed.project_id}/schedule?open=${parsed.schedule_item_id}`,
+      counterpartyProfileIds: counterpartyIds,
+      // Trades can open the project schedule page (only clients can't) —
+      // same deep link works for both sides.
+      counterpartyLink: `/projects/${parsed.project_id}/schedule?open=${parsed.schedule_item_id}`,
+    })
+  } catch (e) {
+    console.warn("schedule comment notification failed:", e)
+  }
+
+  revalidatePath(`/projects/${parsed.project_id}/schedule`)
+  revalidatePath(`/projects/${parsed.project_id}/communications`)
+  revalidatePath("/my-assignments")
 }
 
 const AttachmentInput = z.object({

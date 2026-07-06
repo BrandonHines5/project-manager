@@ -23,6 +23,7 @@ export type DecisionsData = {
   role: UserRole
   me_id: string
   me_name: string
+  open_decision_id: string | null
   decisions: Tables<"decisions">[]
   followups: Tables<"decision_followup_templates">[]
   attachments: Tables<"decision_attachments">[]
@@ -52,7 +53,11 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
     | { mode: "create"; kind?: "change_order" | "selection" }
     | { mode: "edit"; decisionId: string }
     | null
-  >(null)
+  >(
+    data.open_decision_id
+      ? { mode: "edit", decisionId: data.open_decision_id }
+      : null
+  )
   const [kindFilter, setKindFilter] = useState<KindFilter>("all")
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all")
   const [query, setQuery] = useState("")

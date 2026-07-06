@@ -7,6 +7,8 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireSession, requireStaff } from "@/lib/auth"
 import { sendDashboardWebhook } from "@/lib/dashboard"
 import { sendQuoSms, normalizeE164 } from "@/lib/quo"
+import { notifyCommentPosted } from "@/lib/comms/notify"
+import { formatDate } from "@/lib/utils"
 
 const optStr = z.string().nullish()
 
@@ -294,7 +296,12 @@ export async function saveDailyLog(input: DailyLogInputT) {
   // even guarantees execution when the action errors or redirects.
   if (addedCompanyIds.length > 0) {
     after(() =>
-      notifyNewSubsOnSite(addedCompanyIds, parsed.project_id, parsed.log_date)
+      notifyNewSubsOnSite(
+        addedCompanyIds,
+        parsed.project_id,
+        parsed.log_date,
+        profile.id
+      )
     )
   }
   return { id }
@@ -303,7 +310,8 @@ export async function saveDailyLog(input: DailyLogInputT) {
 async function notifyNewSubsOnSite(
   companyIds: string[],
   projectId: string,
-  logDate: string
+  logDate: string,
+  senderProfileId?: string
 ) {
   try {
     const supabase = await createSupabaseServerClient()
@@ -315,7 +323,7 @@ async function notifyNewSubsOnSite(
         .maybeSingle(),
       supabase
         .from("companies")
-        .select("name, phone")
+        .select("id, name, phone")
         .in("id", companyIds),
     ])
     const label =
@@ -327,7 +335,17 @@ async function notifyNewSubsOnSite(
       const e164 = normalizeE164(c.phone)
       if (!e164) continue
       const body = `Hines Homes: ${c.name} logged on site at ${label} on ${logDate}. Reply with any access or scope notes.`
-      const r = await sendQuoSms({ to: e164, content: body })
+      const r = await sendQuoSms({
+        to: e164,
+        content: body,
+        log: {
+          project_id: projectId,
+          company_id: c.id,
+          sent_by: senderProfileId ?? null,
+          kind: "onsite_notify",
+          counterparty_name: c.name,
+        },
+      })
       if (!r.sent) {
         // Mask the recipient phone in logs (CodeRabbit #30): a full E.164
         // is PII once it lands in log storage, and the company name +
@@ -382,4 +400,84 @@ export async function getSignedUrls(paths: string[]) {
     if (d.path && d.signedUrl) out[d.path] = d.signedUrl
   }
   return out
+}
+
+const DailyLogCommentInput = z.object({
+  daily_log_id: z.string().min(1),
+  project_id: z.string().min(1),
+  body: z.string().min(1, "Comment is empty"),
+})
+
+/**
+ * Comment on a daily log — staff, or a client member on a client-visible log
+ * (RLS policy dlc_client_insert re-verifies both; trades have no policy and
+ * are rejected). Client comments alert all staff; staff comments alert the
+ * project's client members (client-visible logs only — internal logs have no
+ * client audience to notify).
+ */
+export async function postDailyLogComment(input: {
+  daily_log_id: string
+  project_id: string
+  body: string
+}) {
+  const profile = await requireSession()
+  const parsed = DailyLogCommentInput.parse(input)
+  const supabase = await createSupabaseServerClient()
+  const authorName = profile.full_name ?? profile.email ?? "Someone"
+
+  const { error } = await supabase.from("daily_log_comments").insert({
+    daily_log_id: parsed.daily_log_id,
+    author_id: profile.id,
+    author_name: authorName,
+    body: parsed.body.trim(),
+  })
+  if (error) throw new Error(error.message)
+
+  try {
+    const { data: log } = await supabase
+      .from("daily_logs")
+      .select("log_date, visibility, projects:project_id(name)")
+      .eq("id", parsed.daily_log_id)
+      .maybeSingle()
+    const logCtx = log as unknown as {
+      log_date: string
+      visibility: "internal" | "client"
+      projects: { name: string } | null
+    } | null
+
+    let counterpartyIds: string[] = []
+    if (profile.role === "staff" && logCtx?.visibility === "client") {
+      const { data: members } = await supabase
+        .from("project_members")
+        .select("profile_id, profiles!inner(role)")
+        .eq("project_id", parsed.project_id)
+      counterpartyIds = (members ?? [])
+        .filter(
+          (m) =>
+            (m as unknown as { profiles: { role: string } }).profiles.role ===
+            "client"
+        )
+        .map((m) => m.profile_id)
+    }
+
+    const link = `/projects/${parsed.project_id}/daily-logs?open=${parsed.daily_log_id}`
+    await notifyCommentPosted({
+      entityLabel: logCtx?.log_date
+        ? `Job Log ${formatDate(logCtx.log_date)}`
+        : "a job log",
+      projectName: logCtx?.projects?.name ?? null,
+      authorName,
+      authorIsStaff: profile.role === "staff",
+      authorProfileId: profile.id,
+      body: parsed.body.trim(),
+      staffLink: link,
+      counterpartyProfileIds: counterpartyIds,
+      counterpartyLink: link,
+    })
+  } catch (e) {
+    console.warn("daily log comment notification failed:", e)
+  }
+
+  revalidatePath(`/projects/${parsed.project_id}/daily-logs`)
+  revalidatePath(`/projects/${parsed.project_id}/communications`)
 }

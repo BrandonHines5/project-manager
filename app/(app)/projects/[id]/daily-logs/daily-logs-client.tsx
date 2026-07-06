@@ -1,7 +1,16 @@
 "use client"
 
 import { useState, useMemo } from "react"
-import { Plus, NotebookPen, Eye, EyeOff, Image as ImageIcon, Users, Clock } from "lucide-react"
+import {
+  Plus,
+  NotebookPen,
+  Eye,
+  EyeOff,
+  Image as ImageIcon,
+  Users,
+  Clock,
+  MessageSquare,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { EmptyState } from "@/components/ui/empty"
@@ -9,10 +18,13 @@ import { formatDate } from "@/lib/utils"
 import type { Tables } from "@/lib/db/types"
 import type { UserRole } from "@/lib/auth"
 import { DailyLogDrawer } from "@/components/daily-logs/daily-log-drawer"
+import { CommentsThread } from "@/components/comms/comments-thread"
+import { postDailyLogComment } from "@/app/actions/daily-logs"
 
 export type DailyLogsData = {
   project_id: string
   role: UserRole
+  me_name: string
   cost_plus: boolean
   logs: Tables<"daily_logs">[]
   subs_on_site: Tables<"daily_log_subs_on_site">[]
@@ -20,16 +32,24 @@ export type DailyLogsData = {
   profiles: Pick<Tables<"profiles">, "id" | "full_name" | "email">[]
   companies: Pick<Tables<"companies">, "id" | "name" | "type" | "trade_category">[]
   signed_urls: Record<string, string>
+  comments: Tables<"daily_log_comments">[]
+  open_log_id: string | null
 }
 
 export function DailyLogsClient({ data }: { data: DailyLogsData }) {
+  const canEdit = data.role === "staff"
   const [drawerState, setDrawerState] = useState<
     | { mode: "create" }
     | { mode: "edit"; logId: string }
     | null
-  >(null)
-
-  const canEdit = data.role === "staff"
+  >(
+    // Deep link from the Communications feed / bell: staff land in the
+    // drawer; clients get the card's comment thread auto-expanded instead
+    // (they never see the editor drawer).
+    data.open_log_id && canEdit
+      ? { mode: "edit", logId: data.open_log_id }
+      : null
+  )
 
   const editingLog =
     drawerState?.mode === "edit"
@@ -177,7 +197,14 @@ function DailyLogCard({
 }) {
   const subs = data.subs_on_site.filter((s) => s.daily_log_id === log.id)
   const atts = data.attachments.filter((a) => a.daily_log_id === log.id)
+  const comments = data.comments.filter((c) => c.daily_log_id === log.id)
   const isClient = log.visibility === "client"
+  // Clients comment here on the card (they never open the editor drawer);
+  // staff can too, or use the thread inside the drawer. Auto-expand when a
+  // notification deep-links a client to this log.
+  const [showComments, setShowComments] = useState(
+    data.open_log_id === log.id && data.role !== "staff"
+  )
 
   return (
     <li
@@ -274,6 +301,50 @@ function DailyLogCard({
           })}
         </div>
       )}
+
+      {/* Comments — the client's surface for this log (staff can also use
+          the drawer thread). stopPropagation so interacting with the thread
+          doesn't open the staff editor. */}
+      <div className="mt-3" onClick={(e) => e.stopPropagation()}>
+        <button
+          type="button"
+          onClick={() => setShowComments((v) => !v)}
+          className="text-xs text-brand-600 hover:underline cursor-pointer inline-flex items-center gap-1"
+        >
+          <MessageSquare className="h-3 w-3" />
+          {comments.length > 0
+            ? `Comments (${comments.length})`
+            : "Add a comment"}
+        </button>
+        {showComments && (
+          <div className="mt-2">
+            <CommentsThread
+              comments={comments.map((c) => ({
+                id: c.id,
+                author_name: c.author_name,
+                author_role: null,
+                body: c.body,
+                created_at: c.created_at,
+              }))}
+              meName={data.me_name}
+              canPost={data.role === "staff" || log.visibility === "client"}
+              hideHeader
+              placeholder={
+                data.role === "client"
+                  ? "Question or note for the builder…"
+                  : "Reply to client / leave a note"
+              }
+              onPost={(body) =>
+                postDailyLogComment({
+                  daily_log_id: log.id,
+                  project_id: data.project_id,
+                  body,
+                })
+              }
+            />
+          </div>
+        )}
+      </div>
     </li>
   )
 }

@@ -8,11 +8,14 @@ export const metadata = { title: "Schedule — Hines Homes" }
 
 export default async function SchedulePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>
+  searchParams: Promise<{ open?: string }>
 }) {
   const { id: projectId } = await params
-  await requireSession()
+  const { open } = await searchParams
+  const profile = await requireSession()
   const supabase = await createSupabaseServerClient()
 
   const { data: project } = await supabase
@@ -33,6 +36,7 @@ export default async function SchedulePage({
     { data: companies },
     { data: roles },
     { data: roleMembers },
+    { data: comments },
   ] = await Promise.all([
     supabase
       .from("schedule_items")
@@ -80,6 +84,11 @@ export default async function SchedulePage({
       .from("project_role_members")
       .select("role_id, profile_id, company_id")
       .eq("project_id", projectId),
+    supabase
+      .from("schedule_item_comments")
+      .select("*, schedule_items!inner(project_id)")
+      .eq("schedule_items.project_id", projectId)
+      .order("created_at", { ascending: true }),
   ])
 
   const strip = <T extends { schedule_items?: unknown }>(rows: T[] | null) =>
@@ -102,10 +111,11 @@ export default async function SchedulePage({
     }
   }
 
+  const cleanedItems = items ?? []
   const data: ScheduleData = {
     project_id: projectId,
     project_address: project.address,
-    items: items ?? [],
+    items: cleanedItems,
     assignments: strip(assignments) as ScheduleData["assignments"],
     predecessors: strip(predecessors) as ScheduleData["predecessors"],
     checklist: strip(checklist) as ScheduleData["checklist"],
@@ -116,6 +126,14 @@ export default async function SchedulePage({
     companies: companies ?? [],
     roles: roles ?? [],
     roleMembers: roleMembers ?? [],
+    comments: strip(comments) as ScheduleData["comments"],
+    role: profile.role,
+    me_name: profile.full_name ?? profile.email ?? "Me",
+    // Deep link (?open=<item_id>) from the Communications feed / bell —
+    // validated against the RLS-filtered items so a stale or foreign id
+    // silently no-ops.
+    open_item_id:
+      open && cleanedItems.some((i) => i.id === open) ? open : null,
   }
 
   return <ScheduleClient data={data} />

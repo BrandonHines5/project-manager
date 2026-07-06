@@ -39,9 +39,11 @@ import {
   getPredecessorDependents,
   logDelay,
   sendQuoTextToSub,
+  postScheduleItemComment,
   type ScheduleItemInputT,
   type SchedulePredecessorDependent,
 } from "@/app/actions/schedule"
+import { CommentsThread } from "@/components/comms/comments-thread"
 import { DeleteWithDependentsDialog } from "./delete-with-dependents-dialog"
 import { CopyTodoDialog } from "./copy-todo-dialog"
 import {
@@ -359,6 +361,9 @@ export function ScheduleItemDialog({
   }
 
   const delays = item ? delaysFor(item.id, data.delays) : []
+  const comments = item
+    ? data.comments.filter((c) => c.schedule_item_id === item.id)
+    : []
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -714,6 +719,35 @@ export function ScheduleItemDialog({
                 </ul>
               )}
             </div>
+          )}
+
+          {/* Comments (edit only) — staff and assigned trades; RLS enforces
+              who can actually post. */}
+          {mode === "edit" && item && (
+            <CommentsThread
+              comments={comments.map((c) => ({
+                id: c.id,
+                author_name: c.author_name,
+                author_role:
+                  data.profiles.find((p) => p.id === c.author_id)?.role ?? null,
+                body: c.body,
+                created_at: c.created_at,
+              }))}
+              meName={data.me_name}
+              canPost
+              placeholder={
+                data.role === "trade"
+                  ? "Question or note for the builder…"
+                  : "Note for the sub / team…"
+              }
+              onPost={(body) =>
+                postScheduleItemComment({
+                  schedule_item_id: item.id,
+                  project_id: data.project_id,
+                  body,
+                })
+              }
+            />
           )}
         </DialogBody>
         <DialogFooter>

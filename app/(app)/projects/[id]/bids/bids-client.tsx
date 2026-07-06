@@ -13,6 +13,8 @@ import { BidComparison } from "@/components/bids/bid-comparison"
 
 export type BidsData = {
   project_id: string
+  open_package_id: string | null
+  open_recipient_id: string | null
   packages: Tables<"bid_packages">[]
   line_items: Tables<"bid_package_line_items">[]
   attachments: Tables<"bid_package_attachments">[]
@@ -32,7 +34,13 @@ export type BidsData = {
 export function BidsClient({ data }: { data: BidsData }) {
   const [drawerState, setDrawerState] = useState<
     { mode: "create" } | { mode: "edit"; packageId: string } | null
-  >(null)
+  >(
+    // Deep link from the Communications feed / bell (already validated
+    // server-side). The optional recipient id focuses that sub's thread.
+    data.open_package_id
+      ? { mode: "edit", packageId: data.open_package_id }
+      : null
+  )
   // awardRecipientId deep-links the comparison straight into the award
   // confirm for one bid (the "Award & create PO" shortcut in the drawer).
   const [compare, setCompare] = useState<{

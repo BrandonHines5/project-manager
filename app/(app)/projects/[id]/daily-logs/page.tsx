@@ -9,10 +9,13 @@ export const metadata = { title: "Job Logs — Hines Homes" }
 
 export default async function DailyLogsPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>
+  searchParams: Promise<{ open?: string }>
 }) {
   const { id: projectId } = await params
+  const { open } = await searchParams
   const profile = await requireSession()
   const supabase = await createSupabaseServerClient()
 
@@ -29,6 +32,7 @@ export default async function DailyLogsPage({
     { data: attachments },
     { data: profiles },
     { data: companies },
+    { data: comments },
   ] = await Promise.all([
     supabase
       .from("daily_logs")
@@ -54,6 +58,11 @@ export default async function DailyLogsPage({
       .select("id, name, type, trade_category")
       .neq("type", "client")
       .order("name"),
+    supabase
+      .from("daily_log_comments")
+      .select("*, daily_logs!inner(project_id)")
+      .eq("daily_logs.project_id", projectId)
+      .order("created_at", { ascending: true }),
   ])
 
   const strip = <T extends { daily_logs?: unknown }>(rows: T[] | null) =>
@@ -68,16 +77,22 @@ export default async function DailyLogsPage({
     cleanedAttachments.map((a) => a.storage_path)
   )
 
+  const cleanedLogs = logs ?? []
   const data: DailyLogsData = {
     project_id: projectId,
     role: profile.role,
+    me_name: profile.full_name ?? profile.email ?? "Me",
     cost_plus: project.cost_plus,
-    logs: logs ?? [],
+    logs: cleanedLogs,
     subs_on_site: strip(subsOnSite) as DailyLogsData["subs_on_site"],
     attachments: cleanedAttachments,
     profiles: profiles ?? [],
     companies: companies ?? [],
     signed_urls: signedUrls,
+    comments: strip(comments) as DailyLogsData["comments"],
+    // Deep link (?open=<log_id>) — validated against the RLS-filtered logs,
+    // so clients can only target client-visible logs on their projects.
+    open_log_id: open && cleanedLogs.some((l) => l.id === open) ? open : null,
   }
 
   return <DailyLogsClient data={data} />

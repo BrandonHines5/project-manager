@@ -271,7 +271,16 @@ async function applyOne(
             `${company.name} has an invalid phone number on file: ${company.phone}`
           )
         }
-        const result = await sendQuoSms({ to: e164, content: mutation.message })
+        const result = await sendQuoSms({
+          to: e164,
+          content: mutation.message,
+          log: {
+            company_id: company.id,
+            sent_by: actorId,
+            kind: "ai_sms",
+            counterparty_name: company.name,
+          },
+        })
         if (!result.sent) {
           throw new Error(result.reason ?? "SMS send failed")
         }

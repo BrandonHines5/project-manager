@@ -1,4 +1,5 @@
 import { Resend } from "resend"
+import { logCommunication, type CommLogContext } from "@/lib/comms/log"
 
 /**
  * Sends a transactional email via Resend. Returns immediately as a no-op if
@@ -17,6 +18,10 @@ export async function sendEmail(opts: {
   // Optional file attachments. `content` is base64-encoded bytes — Resend's
   // expected shape. Existing callers that omit this are unaffected.
   attachments?: { filename: string; content: string }[]
+  // Counterparty-facing sends pass this so the email lands in the project's
+  // Communications feed. Staff-internal mail (digests, alerts) omits it and
+  // is never logged.
+  log?: CommLogContext
 }): Promise<{ sent: boolean; reason?: string }> {
   const key = process.env.RESEND_API_KEY
   const from = process.env.RESEND_FROM_EMAIL
@@ -35,7 +40,7 @@ export async function sendEmail(opts: {
 
   const resend = new Resend(key)
   try {
-    const { error } = await resend.emails.send({
+    const { data, error } = await resend.emails.send({
       from,
       to: opts.to,
       ...(opts.cc ? { cc: opts.cc } : {}),
@@ -54,6 +59,25 @@ export async function sendEmail(opts: {
     console.log(
       `[sendEmail] sent "${opts.subject}" to ${recipientCount} recipient(s)`
     )
+    if (opts.log) {
+      const toList = Array.isArray(opts.to) ? opts.to : [opts.to]
+      await logCommunication({
+        channel: "email",
+        direction: "outbound",
+        project_id: opts.log.project_id,
+        company_id: opts.log.company_id,
+        profile_id: opts.log.profile_id,
+        sent_by: opts.log.sent_by,
+        from_address: from,
+        to_address: toList.join(", "),
+        counterparty_name: opts.log.counterparty_name,
+        subject: opts.subject,
+        body: opts.text,
+        source: "app",
+        source_kind: opts.log.kind,
+        provider_id: data?.id ?? null,
+      })
+    }
     return { sent: true }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)

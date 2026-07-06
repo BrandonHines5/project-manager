@@ -215,6 +215,12 @@ export async function GET(req: Request) {
       subject: message.subject,
       text: message.text,
       html: message.html,
+      // Company-scoped (no project) — shows in the global staff hub only.
+      log: {
+        company_id: company.id,
+        kind: "insurance_reminder",
+        counterparty_name: company.name,
+      },
     })
 
     if (result.sent) {

@@ -650,6 +650,12 @@ export async function sendUtilityForms({
       subject: email.subject,
       text: email.lines.join("\n"),
       attachments,
+      log: {
+        project_id: req.project_id,
+        sent_by: sender.id,
+        kind: "utility_forms",
+        counterparty_name: req.provider,
+      },
     })
   } catch (e) {
     result = { sent: false, reason: e instanceof Error ? e.message : "Send failed." }
