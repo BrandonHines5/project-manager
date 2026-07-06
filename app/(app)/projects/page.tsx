@@ -10,39 +10,15 @@ import {
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireSession } from "@/lib/auth"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { EmptyState } from "@/components/ui/empty"
 import { Card, CardBody } from "@/components/ui/card"
 import { FeedbackNotification } from "@/components/feedback/feedback-notification"
 import { MyFeedbackNotification } from "@/components/feedback/my-feedback-notification"
-import { cn, formatCurrency, formatDate } from "@/lib/utils"
-import { crmStatusTone } from "@/lib/crm-status"
+import { cn, formatCurrency } from "@/lib/utils"
+import { ProjectsTable, type ProjectRow } from "./projects-table"
 import type { Enums } from "@/lib/db/types"
 
 export const metadata = { title: "Projects — Hines Homes" }
-
-const STATUS_TONE: Record<
-  Enums<"project_status">,
-  "brand" | "muted" | "warning" | "success" | "danger" | "info"
-> = {
-  lead: "muted",
-  pre_construction: "info",
-  active: "brand",
-  on_hold: "warning",
-  complete: "success",
-  warranty: "info",
-  cancelled: "danger",
-}
-
-const STATUS_LABEL: Record<Enums<"project_status">, string> = {
-  lead: "Lead",
-  pre_construction: "Pre-construction",
-  active: "Active",
-  on_hold: "On hold",
-  complete: "Complete",
-  warranty: "Warranty",
-  cancelled: "Cancelled",
-}
 
 // A project counts as "active for portfolio health" when it's in one of these
 // statuses. Leads / on-hold / complete / cancelled are excluded from the
@@ -135,6 +111,22 @@ export default async function ProjectsPage() {
   )
   const growthPct =
     totalContract > 0 ? (totalApprovedDelta / totalContract) * 100 : 0
+
+  // Serializable rows for the client filter/table. Metrics are pre-rolled on
+  // the server so the client component stays purely presentational.
+  const rows: ProjectRow[] = visibleProjects.map((p) => ({
+    id: p.id,
+    project_number: p.project_number,
+    name: p.name,
+    address: p.address,
+    status: p.status,
+    crm_status: p.crm_status,
+    contract_price: p.contract_price,
+    target_completion_date: p.target_completion_date,
+    is_template: p.is_template,
+    metrics: metricsByProject.get(p.id) ?? blankMetrics(),
+    delta: approvedDeltaByProject.get(p.id) ?? 0,
+  }))
 
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-6 py-6">
@@ -233,122 +225,7 @@ export default async function ProjectsPage() {
           }
         />
       ) : (
-        <div className="bg-surface border border-border rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-background/60 text-xs text-muted uppercase">
-              <tr>
-                <th className="text-left font-medium px-4 py-2.5">Project #</th>
-                <th className="text-left font-medium px-4 py-2.5">Name</th>
-                <th className="text-left font-medium px-4 py-2.5 hidden md:table-cell">
-                  Address
-                </th>
-                <th className="text-left font-medium px-4 py-2.5">Status</th>
-                <th className="text-left font-medium px-4 py-2.5 hidden xl:table-cell">
-                  Progress
-                </th>
-                <th className="text-left font-medium px-4 py-2.5 hidden xl:table-cell">
-                  Schedule
-                </th>
-                {profile.financial_access && (
-                  <th className="text-right font-medium px-4 py-2.5 hidden lg:table-cell">
-                    Contract
-                  </th>
-                )}
-                {profile.financial_access && (
-                  <th className="text-right font-medium px-4 py-2.5 hidden lg:table-cell">
-                    Changes
-                  </th>
-                )}
-                <th className="text-left font-medium px-4 py-2.5 hidden lg:table-cell">
-                  Target
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {projects.map((p) => {
-                const m = metricsByProject.get(p.id) ?? blankMetrics()
-                const pct =
-                  m.total > 0 ? Math.round((m.complete / m.total) * 100) : 0
-                const delta = approvedDeltaByProject.get(p.id) ?? 0
-                return (
-                  <tr
-                    key={p.id}
-                    className="hover:bg-background/60 transition-colors"
-                  >
-                    <td className="px-4 py-3 font-mono text-xs">
-                      <Link
-                        href={`/projects/${p.id}/schedule`}
-                        className="text-brand-600 hover:underline"
-                      >
-                        {p.project_number}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-3 font-medium">
-                      <Link
-                        href={`/projects/${p.id}/schedule`}
-                        className="hover:underline"
-                      >
-                        {p.name}
-                      </Link>
-                      {p.is_template && (
-                        <Badge tone="warning" className="ml-2 align-middle">
-                          Template
-                        </Badge>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-muted hidden md:table-cell truncate max-w-xs">
-                      {p.address || "—"}
-                    </td>
-                    <td className="px-4 py-3">
-                      {p.crm_status ? (
-                        <Badge tone={crmStatusTone(p.crm_status)}>
-                          {p.crm_status}
-                        </Badge>
-                      ) : (
-                        <Badge tone={STATUS_TONE[p.status]}>
-                          {STATUS_LABEL[p.status]}
-                        </Badge>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 hidden xl:table-cell">
-                      {m.total > 0 ? (
-                        <ProgressBar pct={pct} />
-                      ) : (
-                        <span className="text-muted text-xs">no items</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 hidden xl:table-cell text-xs">
-                      <ScheduleHealth metrics={m} status={p.status} />
-                    </td>
-                    {profile.financial_access && (
-                      <td className="px-4 py-3 text-right tabular-nums hidden lg:table-cell">
-                        {formatCurrency(p.contract_price)}
-                      </td>
-                    )}
-                    {profile.financial_access && (
-                      <td className="px-4 py-3 text-right tabular-nums hidden lg:table-cell">
-                        {delta === 0 ? (
-                          <span className="text-muted">—</span>
-                        ) : (
-                          <span
-                            className={cn(
-                              delta > 0 ? "text-amber-900" : "text-success"
-                            )}
-                          >
-                            {(delta > 0 ? "+" : "") + formatCurrency(delta)}
-                          </span>
-                        )}
-                      </td>
-                    )}
-                    <td className="px-4 py-3 text-muted hidden lg:table-cell">
-                      {formatDate(p.target_completion_date)}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+        <ProjectsTable rows={rows} financialAccess={profile.financial_access} />
       )}
     </div>
   )
@@ -420,67 +297,4 @@ function PortfolioStat({
       </CardBody>
     </Card>
   )
-}
-
-function ProgressBar({ pct }: { pct: number }) {
-  const clamped = Math.max(0, Math.min(100, pct))
-  return (
-    <div className="flex items-center gap-2 w-32">
-      <div className="flex-1 h-1.5 bg-background rounded-full overflow-hidden">
-        <div
-          className={cn(
-            "h-full",
-            clamped >= 100
-              ? "bg-success"
-              : clamped >= 60
-                ? "bg-brand-500"
-                : "bg-amber-500"
-          )}
-          style={{ width: `${clamped}%` }}
-        />
-      </div>
-      <span className="text-xs text-muted tabular-nums">{clamped}%</span>
-    </div>
-  )
-}
-
-function ScheduleHealth({
-  metrics,
-  status,
-}: {
-  metrics: ProjectMetrics
-  status: Enums<"project_status">
-}) {
-  if (metrics.total === 0) return <span className="text-muted">—</span>
-  if (status === "complete" || status === "cancelled") {
-    return <span className="text-muted">closed</span>
-  }
-  // Order matters: a past-due item is louder than a same-day "in progress",
-  // and "delayed" status outranks both. Pick the loudest signal so the row
-  // gives a one-glance health read without the PM scanning numbers.
-  if (metrics.delayed > 0) {
-    return (
-      <span className="inline-flex items-center gap-1 text-danger">
-        <AlertTriangle className="h-3 w-3" />
-        {metrics.delayed} delayed
-      </span>
-    )
-  }
-  if (metrics.pastDue > 0) {
-    return (
-      <span className="inline-flex items-center gap-1 text-amber-900">
-        <AlertTriangle className="h-3 w-3" />
-        {metrics.pastDue} past due
-      </span>
-    )
-  }
-  if (metrics.inProgress > 0) {
-    return (
-      <span className="inline-flex items-center gap-1 text-brand-700">
-        <Activity className="h-3 w-3" />
-        {metrics.inProgress} in progress
-      </span>
-    )
-  }
-  return <span className="text-muted">on track</span>
 }
