@@ -1,0 +1,993 @@
+"use client"
+
+// Site walkthrough capture on the project Onsite tab. The PM walks the job
+// dictating voice-memo segments (start/stop as needed) and snapping photos;
+// Submit hands the transcript to the AI field-notes agent scoped to this
+// project, and every suggested update comes back for per-item review before
+// anything is written or sent. Photos ride the daily-log mutation and are
+// attached server-side.
+//
+// Resilience: segments + uploaded photo paths persist to localStorage per
+// project, so a dead tab on the jobsite loses nothing that finished
+// uploading. Voice uses the same Web Speech dictation as the global AI
+// dialog — on browsers without it (Firefox), typed notes are the flow.
+
+import { useEffect, useRef, useState, useTransition } from "react"
+import { useRouter } from "next/navigation"
+import { toast } from "sonner"
+import {
+  Mic,
+  Square,
+  Plus,
+  Trash2,
+  Camera,
+  X,
+  Loader2,
+  Sparkles,
+  AlertTriangle,
+  RotateCcw,
+  MessageSquare,
+  HelpCircle,
+} from "lucide-react"
+import { Card, CardHeader, CardTitle, CardBody } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Textarea, Input } from "@/components/ui/input"
+import { cn } from "@/lib/utils"
+import { createSupabaseBrowserClient } from "@/lib/supabase/client"
+import { downscalePhoto } from "@/lib/images/downscale"
+import {
+  getSpeechRecognitionCtor,
+  type SpeechRecognitionLike,
+} from "@/lib/speech/web-speech"
+import { runAgentTurnAction, applyPlanAction } from "@/app/actions/ai-agent"
+import { getSignedUrls } from "@/app/actions/daily-logs"
+import {
+  isDestructive,
+  type ProposedMutation,
+  type AgentTurnResult,
+  type AppliedMutation,
+} from "@/lib/ai/types"
+import { PlanCard, AppliedCard } from "@/components/ai/plan-review"
+
+type Segment = { id: string; text: string }
+type Photo = {
+  id: string
+  storage_path: string
+  file_name: string
+  file_type: string
+  file_size: number
+  caption: string
+  // Object URL for fresh uploads; signed URL after a draft restore; null
+  // while the signed URL is loading.
+  preview_url: string | null
+}
+type FailedUpload = { id: string; file: File; error: string }
+type Message = { role: "user" | "assistant"; content: string }
+
+type Phase =
+  | { kind: "capture" }
+  | { kind: "thinking" }
+  | { kind: "question"; question: string }
+  | { kind: "plan"; summary: string; mutations: ProposedMutation[] }
+  | { kind: "applying" }
+  | { kind: "applied"; results: AppliedMutation[]; draftKept: boolean }
+  | { kind: "error"; message: string }
+
+// Persisted per project. Photos are only added here AFTER their upload
+// succeeded — a File object can't be serialized, so anything still in
+// flight (or failed) is lost on reload, and the retry chip says so.
+type WalkthroughDraft = {
+  v: 1
+  project_id: string
+  date: string // local YYYY-MM-DD when last edited
+  segments: Segment[]
+  photos: Omit<Photo, "preview_url">[]
+}
+
+const draftStorageKey = (projectId: string) => `onsite-walkthrough:${projectId}`
+// Local calendar date — same en-CA idiom as the AI dialog, so "today" in
+// dictated notes means the user's day, not UTC's.
+const todayLocal = () => new Date().toLocaleDateString("en-CA")
+const newId = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2)
+
+// Keep the composed message under the server's 20k cap with headroom.
+const MAX_TRANSCRIPT_CHARS = 19000
+
+export function Walkthrough({
+  projectId,
+  projectName,
+}: {
+  projectId: string
+  projectName: string
+}) {
+  const router = useRouter()
+  const [phase, setPhase] = useState<Phase>({ kind: "capture" })
+  const [segments, setSegments] = useState<Segment[]>([])
+  const [photos, setPhotos] = useState<Photo[]>([])
+  const [failedUploads, setFailedUploads] = useState<FailedUpload[]>([])
+  const [uploadingCount, setUploadingCount] = useState(0)
+  const [messages, setMessages] = useState<Message[]>([])
+  const [answerDraft, setAnswerDraft] = useState("")
+  // Per-row selection for the plan phase (parallel to plan.mutations).
+  const [checked, setChecked] = useState<boolean[]>([])
+  // Two-tap confirm when destructive rows are checked: first tap arms,
+  // second applies. Disarmed by any checkbox change.
+  const [confirmArmed, setConfirmArmed] = useState(false)
+  const [staleDraft, setStaleDraft] = useState<WalkthroughDraft | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [pending, startTransition] = useTransition()
+
+  const [listening, setListening] = useState(false)
+  const [interim, setInterim] = useState("")
+  const [speechSupported, setSpeechSupported] = useState(false)
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
+  const transcriptRef = useRef("")
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const hydratedRef = useRef(false)
+
+  // One-time hydration: feature-detect dictation and restore any saved
+  // draft for this project. A draft from a previous day isn't merged
+  // silently — the user chooses Resume or Discard first. SSR markup renders
+  // the empty capture state, so there's no mismatch — this fills it in
+  // client-side.
+  useEffect(() => {
+    setSpeechSupported(!!getSpeechRecognitionCtor())
+    try {
+      const raw = localStorage.getItem(draftStorageKey(projectId))
+      if (raw) {
+        const draft = JSON.parse(raw) as WalkthroughDraft
+        if (
+          draft.v === 1 &&
+          draft.project_id === projectId &&
+          (draft.segments.length > 0 || draft.photos.length > 0)
+        ) {
+          if (draft.date === todayLocal()) {
+            restoreDraft(draft)
+          } else {
+            setStaleDraft(draft)
+          }
+        }
+      }
+    } catch {
+      // Corrupt or unavailable storage — start fresh.
+    }
+    hydratedRef.current = true
+  }, [projectId])
+
+  // Persist the draft on every content change (post-hydration, and not
+  // while a stale draft is still awaiting the Resume/Discard decision —
+  // we must not clobber it).
+  useEffect(() => {
+    if (!hydratedRef.current || staleDraft) return
+    try {
+      const key = draftStorageKey(projectId)
+      if (segments.length === 0 && photos.length === 0) {
+        localStorage.removeItem(key)
+      } else {
+        const draft: WalkthroughDraft = {
+          v: 1,
+          project_id: projectId,
+          date: todayLocal(),
+          segments,
+          photos: photos.map((p) => ({
+            id: p.id,
+            storage_path: p.storage_path,
+            file_name: p.file_name,
+            file_type: p.file_type,
+            file_size: p.file_size,
+            caption: p.caption,
+          })),
+        }
+        localStorage.setItem(key, JSON.stringify(draft))
+      }
+    } catch {
+      // Best-effort — the in-memory state is still the working copy.
+    }
+  }, [segments, photos, projectId, staleDraft])
+
+  // Don't leave the mic hot if the user navigates away.
+  useEffect(() => () => recognitionRef.current?.stop(), [])
+
+  function restoreDraft(draft: WalkthroughDraft) {
+    setSegments(draft.segments)
+    setPhotos(draft.photos.map((p) => ({ ...p, preview_url: null })))
+    const paths = draft.photos.map((p) => p.storage_path)
+    if (paths.length > 0) {
+      // Re-sign the stored paths so thumbnails render again.
+      getSignedUrls(paths)
+        .then((map) => {
+          setPhotos((prev) =>
+            prev.map((p) =>
+              p.preview_url ? p : { ...p, preview_url: map[p.storage_path] ?? null }
+            )
+          )
+        })
+        .catch(() => {
+          // Thumbnails stay as placeholders; the paths are still valid.
+        })
+    }
+  }
+
+  // ---- Voice segments -------------------------------------------------
+
+  function toggleRecording() {
+    // The ref — not `listening` — is the source of truth (same double-tap
+    // guard as the AI dialog's dictation).
+    if (recognitionRef.current) {
+      recognitionRef.current.stop()
+      return
+    }
+    const Ctor = getSpeechRecognitionCtor()
+    if (!Ctor) return
+    const rec = new Ctor()
+    rec.lang = navigator.language || "en-US"
+    rec.continuous = true
+    rec.interimResults = true
+    transcriptRef.current = ""
+    rec.onresult = (event) => {
+      let transcript = ""
+      for (let i = 0; i < event.results.length; i++) {
+        transcript += event.results[i][0].transcript
+      }
+      transcriptRef.current = transcript
+      setInterim(transcript)
+    }
+    rec.onend = () => {
+      // The single finalization path — fires for the user's stop tap AND
+      // for iOS Safari's silence auto-stop, so a surprise stop just ends
+      // the segment cleanly and the button reads "record" again.
+      if (recognitionRef.current === rec) {
+        recognitionRef.current = null
+        setListening(false)
+        const text = transcriptRef.current.trim()
+        transcriptRef.current = ""
+        setInterim("")
+        if (text) {
+          setSegments((prev) => [...prev, { id: newId(), text }])
+        }
+      }
+    }
+    rec.onerror = () => {
+      // onend fires after onerror in every implementation — cleanup there.
+    }
+    recognitionRef.current = rec
+    setListening(true)
+    setNotice(null)
+    try {
+      rec.start()
+    } catch {
+      if (recognitionRef.current === rec) {
+        recognitionRef.current = null
+        setListening(false)
+      }
+    }
+  }
+
+  function updateSegment(id: string, text: string) {
+    setSegments((prev) => prev.map((s) => (s.id === id ? { ...s, text } : s)))
+  }
+  function removeSegment(id: string) {
+    setSegments((prev) => prev.filter((s) => s.id !== id))
+  }
+  function addTypedSegment() {
+    setSegments((prev) => [...prev, { id: newId(), text: "" }])
+  }
+
+  // ---- Photos ----------------------------------------------------------
+
+  async function onPickFiles(files: FileList | null) {
+    if (!files || files.length === 0) return
+    const list = Array.from(files)
+    if (fileInputRef.current) fileInputRef.current.value = ""
+    await uploadFiles(list)
+  }
+
+  async function uploadFiles(files: File[]) {
+    setUploadingCount((c) => c + files.length)
+    const supabase = createSupabaseBrowserClient()
+    for (const file of files) {
+      try {
+        const { blob, fileType } = await downscalePhoto(file)
+        const ext =
+          fileType === "image/jpeg"
+            ? "jpg"
+            : (file.name.split(".").pop()?.toLowerCase() ?? "bin")
+        // Same key scheme as the daily-log drawer, so these photos are
+        // managed (and cleaned up on delete) exactly like drawer uploads.
+        const path = `projects/${projectId}/daily-logs/${Date.now()}-${Math.random()
+          .toString(36)
+          .slice(2, 8)}.${ext}`
+        const { error } = await supabase.storage
+          .from("project-files")
+          .upload(path, blob, {
+            cacheControl: "3600",
+            upsert: false,
+            contentType: fileType,
+          })
+        if (error) throw new Error(error.message)
+        setPhotos((prev) => [
+          ...prev,
+          {
+            id: newId(),
+            storage_path: path,
+            file_name: file.name,
+            file_type: fileType,
+            file_size: blob.size,
+            caption: "",
+            preview_url: URL.createObjectURL(blob),
+          },
+        ])
+      } catch (e) {
+        setFailedUploads((prev) => [
+          ...prev,
+          {
+            id: newId(),
+            file,
+            error: e instanceof Error ? e.message : "upload failed",
+          },
+        ])
+      } finally {
+        setUploadingCount((c) => c - 1)
+      }
+    }
+  }
+
+  function retryUpload(f: FailedUpload) {
+    setFailedUploads((prev) => prev.filter((x) => x.id !== f.id))
+    void uploadFiles([f.file])
+  }
+  function discardFailedUpload(id: string) {
+    setFailedUploads((prev) => prev.filter((x) => x.id !== id))
+  }
+
+  function removePhoto(photo: Photo) {
+    setPhotos((prev) => prev.filter((p) => p.id !== photo.id))
+    if (photo.preview_url?.startsWith("blob:")) {
+      URL.revokeObjectURL(photo.preview_url)
+    }
+    // Best-effort cleanup so an explicitly-removed photo doesn't linger in
+    // the bucket. Failures are fine — it just becomes an unreferenced
+    // object in a private bucket.
+    void createSupabaseBrowserClient()
+      .storage.from("project-files")
+      .remove([photo.storage_path])
+  }
+
+  function updateCaption(id: string, caption: string) {
+    setPhotos((prev) => prev.map((p) => (p.id === id ? { ...p, caption } : p)))
+  }
+
+  // ---- Submit → agent → review → apply ---------------------------------
+
+  const nonEmptySegments = segments.filter((s) => s.text.trim())
+
+  function composeMessage(): string {
+    const parts: string[] = []
+    if (nonEmptySegments.length > 0) {
+      parts.push(
+        `Site walkthrough notes from ${projectName}:\n\n` +
+          nonEmptySegments.map((s) => `- ${s.text.trim()}`).join("\n")
+      )
+    } else {
+      parts.push(
+        `Site walkthrough at ${projectName} — no dictated notes, photos only.`
+      )
+    }
+    if (photos.length > 0) {
+      parts.push(
+        `(${photos.length} photo${photos.length === 1 ? "" : "s"} from the walkthrough are already uploaded and will be attached to the daily log automatically — do not propose anything about them.)`
+      )
+    }
+    return parts.join("\n\n")
+  }
+
+  const composedLength = composeMessage().length
+  const canSubmit =
+    (nonEmptySegments.length > 0 || photos.length > 0) &&
+    uploadingCount === 0 &&
+    failedUploads.length === 0 &&
+    composedLength <= MAX_TRANSCRIPT_CHARS &&
+    !pending
+
+  function buildContext() {
+    return {
+      project_id: projectId,
+      attachments: photos.map((p) => ({
+        storage_path: p.storage_path,
+        file_name: p.file_name,
+        file_type: p.file_type || null,
+        file_size: p.file_size ?? null,
+        caption: p.caption.trim() || null,
+      })),
+    }
+  }
+
+  function runTurn(nextMessages: Message[]) {
+    setPhase({ kind: "thinking" })
+    startTransition(async () => {
+      try {
+        const result = await runAgentTurnAction({
+          messages: nextMessages,
+          today: todayLocal(),
+          context: buildContext(),
+        })
+        handleResult(result, nextMessages)
+      } catch (e) {
+        setPhase({
+          kind: "error",
+          message: e instanceof Error ? e.message : "Agent failed",
+        })
+      }
+    })
+  }
+
+  function submit() {
+    recognitionRef.current?.stop()
+    setNotice(null)
+    runTurn([{ role: "user", content: composeMessage() }])
+  }
+
+  function handleResult(result: AgentTurnResult, currentMessages: Message[]) {
+    if (result.type === "error") {
+      setPhase({ kind: "error", message: result.message })
+      return
+    }
+    if (result.type === "question") {
+      setMessages([
+        ...currentMessages,
+        { role: "assistant", content: result.question },
+      ])
+      setAnswerDraft("")
+      setPhase({ kind: "question", question: result.question })
+      return
+    }
+    if (result.mutations.length === 0) {
+      // Rare — the field-notes prompt always proposes a daily log — but
+      // don't dead-end if it happens.
+      setNotice(
+        result.summary ||
+          "The AI couldn't find anything to update from those notes. Add detail and try again."
+      )
+      setMessages([])
+      setPhase({ kind: "capture" })
+      return
+    }
+    setMessages([
+      ...currentMessages,
+      { role: "assistant", content: result.summary || "Plan ready." },
+    ])
+    setChecked(result.mutations.map(() => true))
+    setConfirmArmed(false)
+    setPhase({
+      kind: "plan",
+      summary: result.summary,
+      mutations: result.mutations,
+    })
+  }
+
+  function answerQuestion() {
+    const trimmed = answerDraft.trim()
+    if (!trimmed) return
+    runTurn([...messages, { role: "user", content: trimmed }])
+  }
+
+  function backToNotes() {
+    setMessages([])
+    setAnswerDraft("")
+    setPhase({ kind: "capture" })
+  }
+
+  function toggleChecked(index: number) {
+    setChecked((prev) => prev.map((c, i) => (i === index ? !c : c)))
+    setConfirmArmed(false)
+  }
+
+  function applySelected(mutations: ProposedMutation[]) {
+    const selected = mutations.filter((_, i) => checked[i])
+    if (selected.length === 0) return
+    setPhase({ kind: "applying" })
+    startTransition(async () => {
+      try {
+        const response = await applyPlanAction({ mutations: selected })
+        if (!response.ok) {
+          setPhase({ kind: "error", message: response.error })
+          return
+        }
+        const { results } = response
+        const okCount = results.filter((r) => r.ok).length
+        const failCount = results.length - okCount
+        if (failCount === 0) {
+          toast.success(`Applied ${okCount} change${okCount === 1 ? "" : "s"}`)
+        } else {
+          toast.error(`Applied ${okCount}, failed ${failCount}.`)
+        }
+        // The daily log carries the walkthrough record (and photos) — only
+        // clear the on-device draft once it actually landed.
+        const logApplied = results.some(
+          (r) =>
+            r.ok &&
+            r.mutation.kind === "append_daily_log" &&
+            r.mutation.project_id === projectId
+        )
+        if (logApplied) {
+          setSegments([])
+          setPhotos([])
+          setMessages([])
+        }
+        setPhase({ kind: "applied", results, draftKept: !logApplied })
+        router.refresh()
+      } catch (e) {
+        console.error("[walkthrough apply] unexpected failure:", e)
+        setPhase({
+          kind: "error",
+          message:
+            e instanceof Error
+              ? e.message
+              : "Apply failed — open the dev tools console for details.",
+        })
+      }
+    })
+  }
+
+  function startNew() {
+    setSegments([])
+    setPhotos([])
+    setFailedUploads([])
+    setMessages([])
+    setNotice(null)
+    try {
+      localStorage.removeItem(draftStorageKey(projectId))
+    } catch {
+      // ignore
+    }
+    setPhase({ kind: "capture" })
+  }
+
+  // ---- Render -----------------------------------------------------------
+
+  return (
+    <Card className="mb-6">
+      <CardHeader className="flex items-center gap-2">
+        <Sparkles className="h-4 w-4 text-brand-500 shrink-0" />
+        <div>
+          <CardTitle>Site walkthrough</CardTitle>
+          <p className="text-xs text-muted mt-0.5">
+            Talk through the job and snap photos — AI drafts schedule updates,
+            to-dos, texts, and the daily log for your review. Nothing happens
+            until you approve it.
+          </p>
+        </div>
+      </CardHeader>
+      <CardBody className="space-y-4">
+        {phase.kind === "capture" && staleDraft && (
+          <StaleDraftBanner
+            draft={staleDraft}
+            onResume={() => {
+              restoreDraft(staleDraft)
+              setStaleDraft(null)
+            }}
+            onDiscard={() => {
+              try {
+                localStorage.removeItem(draftStorageKey(projectId))
+              } catch {
+                // ignore
+              }
+              setStaleDraft(null)
+            }}
+          />
+        )}
+
+        {phase.kind === "capture" && !staleDraft && (
+          <>
+            {notice && (
+              <div className="rounded-md border border-border bg-background/60 px-3 py-2 text-sm text-muted">
+                {notice}
+              </div>
+            )}
+
+            {speechSupported ? (
+              <Button
+                type="button"
+                variant={listening ? "danger" : "primary"}
+                onClick={toggleRecording}
+                className={cn("w-full h-14 text-base", listening && "animate-pulse")}
+              >
+                {listening ? (
+                  <>
+                    <Square className="h-5 w-5" />
+                    Tap to stop
+                  </>
+                ) : (
+                  <>
+                    <Mic className="h-5 w-5" />
+                    {segments.length > 0 ? "Record another note" : "Start recording"}
+                  </>
+                )}
+              </Button>
+            ) : (
+              <div className="rounded-md border border-border bg-background/60 px-3 py-2 text-xs text-muted">
+                Voice dictation isn&apos;t supported in this browser — add
+                typed notes below instead.
+              </div>
+            )}
+
+            {listening && (
+              <div className="rounded-md border border-brand-500/40 bg-brand-500/5 px-3 py-2 text-sm min-h-[2.5rem] whitespace-pre-wrap">
+                {interim || (
+                  <span className="text-muted">Listening… talk now</span>
+                )}
+              </div>
+            )}
+
+            {segments.length > 0 && (
+              <ul className="space-y-2">
+                {segments.map((s, i) => (
+                  <li key={s.id} className="flex items-start gap-2">
+                    <Textarea
+                      value={s.text}
+                      onChange={(e) => updateSegment(s.id, e.target.value)}
+                      rows={2}
+                      placeholder={`Note ${i + 1}…`}
+                      className="flex-1 text-sm"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => removeSegment(s.id)}
+                      aria-label="Delete note"
+                      className="mt-0.5 text-muted hover:text-danger"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={addTypedSegment}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Add typed note
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingCount > 0}
+              >
+                {uploadingCount > 0 ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Camera className="h-3.5 w-3.5" />
+                )}
+                {uploadingCount > 0
+                  ? `Uploading ${uploadingCount}…`
+                  : "Add photos"}
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                multiple
+                className="hidden"
+                onChange={(e) => onPickFiles(e.target.files)}
+              />
+            </div>
+
+            {failedUploads.length > 0 && (
+              <ul className="space-y-1.5">
+                {failedUploads.map((f) => (
+                  <li
+                    key={f.id}
+                    className="flex items-center gap-2 rounded-md border border-danger/40 bg-red-50 px-3 py-1.5 text-xs text-danger"
+                  >
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    <span className="flex-1 min-w-0 truncate">
+                      {f.file.name} failed — not saved on this device; retry
+                      before leaving.
+                    </span>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => retryUpload(f)}
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      Retry
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => discardFailedUpload(f.id)}
+                    >
+                      Discard
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {photos.length > 0 && (
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                {photos.map((p) => (
+                  <div key={p.id} className="space-y-1">
+                    <div className="relative aspect-square rounded-md border border-border overflow-hidden bg-background">
+                      {p.preview_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element -- signed/object URLs, not static assets
+                        <img
+                          src={p.preview_url}
+                          alt={p.caption || p.file_name}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <div className="h-full w-full flex items-center justify-center text-muted">
+                          <Camera className="h-5 w-5" />
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => removePhoto(p)}
+                        aria-label="Remove photo"
+                        className="absolute top-1 right-1 h-6 w-6 rounded-full bg-black/60 text-white flex items-center justify-center cursor-pointer"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <Input
+                      value={p.caption}
+                      onChange={(e) => updateCaption(p.id, e.target.value)}
+                      placeholder="Caption…"
+                      className="h-7 text-xs"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {composedLength > MAX_TRANSCRIPT_CHARS && (
+              <div className="text-xs text-danger">
+                Notes are too long ({composedLength.toLocaleString()} of{" "}
+                {MAX_TRANSCRIPT_CHARS.toLocaleString()} characters) — trim or
+                submit this walkthrough and start another.
+              </div>
+            )}
+
+            <Button
+              type="button"
+              onClick={submit}
+              disabled={!canSubmit}
+              className="w-full h-12"
+            >
+              <Sparkles className="h-4 w-4" />
+              Submit — review AI suggestions
+            </Button>
+          </>
+        )}
+
+        {phase.kind === "thinking" && (
+          <div className="flex items-center gap-2 text-sm text-muted py-2">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Reading your walkthrough and drafting updates — this can take up
+            to a minute…
+          </div>
+        )}
+
+        {phase.kind === "question" && (
+          <div className="space-y-3">
+            <div className="rounded-md border border-border bg-background px-3 py-2 text-sm">
+              <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted mb-1">
+                <HelpCircle className="h-3 w-3" />
+                The AI needs one answer first
+              </div>
+              <div className="whitespace-pre-wrap">{phase.question}</div>
+            </div>
+            <Textarea
+              value={answerDraft}
+              onChange={(e) => setAnswerDraft(e.target.value)}
+              rows={2}
+              placeholder="Type your answer…"
+              disabled={pending}
+            />
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                onClick={answerQuestion}
+                disabled={pending || !answerDraft.trim()}
+                className="flex-1"
+              >
+                Answer
+              </Button>
+              <Button type="button" variant="secondary" onClick={backToNotes}>
+                Back to notes
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {phase.kind === "plan" && (
+          <div className="space-y-3">
+            {phase.summary && (
+              <div className="rounded-md border border-border bg-background px-3 py-2 text-sm whitespace-pre-wrap">
+                {phase.summary}
+              </div>
+            )}
+            <div className="text-xs text-muted">
+              Uncheck anything you don&apos;t want. Nothing is applied or sent
+              until you tap Apply.
+            </div>
+            <PlanCard
+              mutations={phase.mutations}
+              selection={{ checked, onToggle: toggleChecked }}
+            />
+            <PlanActions
+              mutations={phase.mutations}
+              checked={checked}
+              confirmArmed={confirmArmed}
+              onArm={() => setConfirmArmed(true)}
+              onApply={() => applySelected(phase.mutations)}
+              onEditNotes={backToNotes}
+              pending={pending}
+            />
+          </div>
+        )}
+
+        {phase.kind === "applying" && (
+          <div className="flex items-center gap-2 text-sm text-muted py-2">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Applying…
+          </div>
+        )}
+
+        {phase.kind === "applied" && (
+          <div className="space-y-3">
+            <AppliedCard results={phase.results} />
+            {phase.draftKept && (
+              <div className="rounded-md border border-border bg-background/60 px-3 py-2 text-xs text-muted">
+                The daily-log entry wasn&apos;t applied, so your notes and
+                photos are still saved on this device.
+              </div>
+            )}
+            <Button type="button" variant="secondary" onClick={startNew}>
+              Start a new walkthrough
+            </Button>
+          </div>
+        )}
+
+        {phase.kind === "error" && (
+          <div className="space-y-3">
+            <div className="rounded-md border border-danger/40 bg-red-50 px-3 py-2 text-sm text-danger">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                <div>{phase.message}</div>
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setPhase({ kind: "capture" })}
+            >
+              Back to notes
+            </Button>
+          </div>
+        )}
+      </CardBody>
+    </Card>
+  )
+}
+
+function StaleDraftBanner({
+  draft,
+  onResume,
+  onDiscard,
+}: {
+  draft: WalkthroughDraft
+  onResume: () => void
+  onDiscard: () => void
+}) {
+  return (
+    <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm space-y-2">
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
+        <div>
+          You have an unsubmitted walkthrough from {draft.date} (
+          {draft.segments.length} note
+          {draft.segments.length === 1 ? "" : "s"}, {draft.photos.length} photo
+          {draft.photos.length === 1 ? "" : "s"}).
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <Button type="button" size="sm" onClick={onResume}>
+          Resume
+        </Button>
+        <Button type="button" variant="secondary" size="sm" onClick={onDiscard}>
+          Discard
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function PlanActions({
+  mutations,
+  checked,
+  confirmArmed,
+  onArm,
+  onApply,
+  onEditNotes,
+  pending,
+}: {
+  mutations: ProposedMutation[]
+  checked: boolean[]
+  confirmArmed: boolean
+  onArm: () => void
+  onApply: () => void
+  onEditNotes: () => void
+  pending: boolean
+}) {
+  const selected = mutations.filter((_, i) => checked[i])
+  const smsCount = selected.filter((m) => m.kind === "send_sms").length
+  const hasDestructive = selected.some(isDestructive)
+  // Per-item checkboxes already forced an explicit look at every row; the
+  // residual risk on a phone is a fat-finger tap, so destructive plans get
+  // a second confirming tap instead of the dialog's typed-"apply" gate.
+  const needsArm = hasDestructive && !confirmArmed
+  return (
+    <div className="space-y-2">
+      {confirmArmed && hasDestructive && (
+        <div className="flex items-center gap-2 text-xs text-muted">
+          <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+          This updates existing data
+          {smsCount > 0 && (
+            <>
+              {" "}
+              and sends {smsCount} text{smsCount === 1 ? "" : "s"}
+            </>
+          )}
+          . Tap again to confirm.
+        </div>
+      )}
+      <div className="flex gap-2">
+        <Button
+          type="button"
+          onClick={needsArm ? onArm : onApply}
+          disabled={pending || selected.length === 0}
+          className="flex-1 h-11"
+          variant={confirmArmed && hasDestructive ? "danger" : "primary"}
+        >
+          {confirmArmed && hasDestructive ? (
+            <>
+              <AlertTriangle className="h-4 w-4" />
+              Tap again to apply {selected.length}
+            </>
+          ) : (
+            <>
+              <Sparkles className="h-4 w-4" />
+              Apply {selected.length} change{selected.length === 1 ? "" : "s"}
+              {smsCount > 0 && (
+                <span className="inline-flex items-center gap-1 text-xs opacity-90">
+                  <MessageSquare className="h-3 w-3" />
+                  {smsCount} text{smsCount === 1 ? "" : "s"}
+                </span>
+              )}
+            </>
+          )}
+        </Button>
+        <Button type="button" variant="secondary" onClick={onEditNotes}>
+          Edit notes
+        </Button>
+      </div>
+    </div>
+  )
+}
