@@ -160,12 +160,21 @@ async function attachWalkthroughPhotos(
     target.attachments = attachments
     return
   }
-  const { data: existing } = await supabase
-    .from("daily_logs")
-    .select("id")
-    .eq("project_id", project.id)
-    .eq("log_date", today)
-    .limit(1)
+  // appends_to_existing is a display hint only (apply re-checks), so a
+  // transient lookup failure must not sink the whole turn — the plan it
+  // decorates already cost an LLM call and the user's walkthrough.
+  let appendsToExisting = false
+  try {
+    const { data: existing } = await supabase
+      .from("daily_logs")
+      .select("id")
+      .eq("project_id", project.id)
+      .eq("log_date", today)
+      .limit(1)
+    appendsToExisting = (existing?.length ?? 0) > 0
+  } catch {
+    // Best-effort — default to "new log" wording.
+  }
   plan.mutations.push({
     kind: "append_daily_log",
     project_id: project.id,
@@ -175,7 +184,7 @@ async function attachWalkthroughPhotos(
     context: {
       project_name: project.name,
       project_number: project.project_number,
-      appends_to_existing: (existing?.length ?? 0) > 0,
+      appends_to_existing: appendsToExisting,
     },
   })
 }

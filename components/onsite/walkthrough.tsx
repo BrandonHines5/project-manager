@@ -250,8 +250,18 @@ export function Walkthrough({
         }
       }
     }
-    rec.onerror = () => {
-      // onend fires after onerror in every implementation — cleanup there.
+    rec.onerror = (event) => {
+      // onend fires after onerror in every implementation — cleanup happens
+      // there. Here we just explain the failure, which otherwise looks like
+      // the mic silently giving up (likely on a fresh permission prompt).
+      const code = event.error ?? ""
+      if (code === "not-allowed" || code === "service-not-allowed") {
+        setNotice(
+          "Microphone access is blocked — allow it in your browser settings, or type your notes instead."
+        )
+      } else if (code !== "no-speech" && code !== "aborted") {
+        setNotice("Voice recording hit a problem — your other notes are safe. Try again or type instead.")
+      }
     }
     recognitionRef.current = rec
     setListening(true)
@@ -288,51 +298,56 @@ export function Walkthrough({
   async function uploadFiles(files: File[]) {
     setUploadingCount((c) => c + files.length)
     const supabase = createSupabaseBrowserClient()
-    for (const file of files) {
-      try {
-        const { blob, fileType } = await downscalePhoto(file)
-        const ext =
-          fileType === "image/jpeg"
-            ? "jpg"
-            : (file.name.split(".").pop()?.toLowerCase() ?? "bin")
-        // Same key scheme as the daily-log drawer, so these photos are
-        // managed (and cleaned up on delete) exactly like drawer uploads.
-        const path = `projects/${projectId}/daily-logs/${Date.now()}-${Math.random()
-          .toString(36)
-          .slice(2, 8)}.${ext}`
-        const { error } = await supabase.storage
-          .from("project-files")
-          .upload(path, blob, {
-            cacheControl: "3600",
-            upsert: false,
-            contentType: fileType,
-          })
-        if (error) throw new Error(error.message)
-        setPhotos((prev) => [
-          ...prev,
-          {
-            id: newId(),
-            storage_path: path,
-            file_name: file.name,
-            file_type: fileType,
-            file_size: blob.size,
-            caption: "",
-            preview_url: URL.createObjectURL(blob),
-          },
-        ])
-      } catch (e) {
-        setFailedUploads((prev) => [
-          ...prev,
-          {
-            id: newId(),
-            file,
-            error: e instanceof Error ? e.message : "upload failed",
-          },
-        ])
-      } finally {
-        setUploadingCount((c) => c - 1)
-      }
-    }
+    // Concurrent per-file pipelines — on jobsite LTE a sequential loop would
+    // make a 6-photo batch take 6x as long. Each file handles its own
+    // success/failure, so one bad photo never blocks the rest.
+    await Promise.all(
+      files.map(async (file) => {
+        try {
+          const { blob, fileType } = await downscalePhoto(file)
+          const ext =
+            fileType === "image/jpeg"
+              ? "jpg"
+              : (file.name.split(".").pop()?.toLowerCase() ?? "bin")
+          // Same key scheme as the daily-log drawer, so these photos are
+          // managed (and cleaned up on delete) exactly like drawer uploads.
+          const path = `projects/${projectId}/daily-logs/${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2, 8)}.${ext}`
+          const { error } = await supabase.storage
+            .from("project-files")
+            .upload(path, blob, {
+              cacheControl: "3600",
+              upsert: false,
+              contentType: fileType,
+            })
+          if (error) throw new Error(error.message)
+          setPhotos((prev) => [
+            ...prev,
+            {
+              id: newId(),
+              storage_path: path,
+              file_name: file.name,
+              file_type: fileType,
+              file_size: blob.size,
+              caption: "",
+              preview_url: URL.createObjectURL(blob),
+            },
+          ])
+        } catch (e) {
+          setFailedUploads((prev) => [
+            ...prev,
+            {
+              id: newId(),
+              file,
+              error: e instanceof Error ? e.message : "upload failed",
+            },
+          ])
+        } finally {
+          setUploadingCount((c) => c - 1)
+        }
+      })
+    )
   }
 
   function retryUpload(f: FailedUpload) {
@@ -390,6 +405,10 @@ export function Walkthrough({
     uploadingCount === 0 &&
     failedUploads.length === 0 &&
     composedLength <= MAX_TRANSCRIPT_CHARS &&
+    // Recording must be stopped first: the active segment only lands in
+    // `segments` when onend fires, so submitting mid-dictation would
+    // silently drop whatever is being said.
+    !listening &&
     !pending
 
   function buildContext() {

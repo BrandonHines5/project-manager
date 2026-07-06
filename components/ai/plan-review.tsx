@@ -74,7 +74,11 @@ export function PlanCard({
   )
 }
 
-export function MutationRow({ mutation }: { mutation: ProposedMutation }) {
+export function MutationRow({
+  mutation,
+}: {
+  mutation: ProposedMutation
+}): React.ReactNode {
   // Project crumb shared by every row.
   const crumb = (parts: { project_name: string; project_number: string }) => (
     <div className="text-xs text-muted mt-0.5">
@@ -309,6 +313,13 @@ export function MutationRow({ mutation }: { mutation: ProposedMutation }) {
           )}
         </RowFrame>
       )
+    default: {
+      // Compiler-enforced exhaustiveness: adding a ProposedMutation kind
+      // without a row here becomes a type error instead of a silently
+      // blank plan row.
+      const exhaustive: never = mutation
+      return exhaustive
+    }
   }
 }
 
