@@ -13,6 +13,20 @@
 //
 // `is_destructive` (helper) below classifies which mutations require the
 // typed-confirmation gate in the dialog footer.
+// A photo captured during an onsite walkthrough, already uploaded to the
+// project-files bucket by the browser. Attached to the daily log when the
+// append_daily_log mutation applies. Never produced by the model — the
+// server injects these into the plan from the walkthrough submission.
+export type DailyLogPhotoAttachment = {
+  // Must live under projects/{project_id}/daily-logs/ — apply rejects
+  // anything else so a tampered plan can't link arbitrary bucket objects.
+  storage_path: string
+  file_name: string
+  file_type: string | null
+  file_size: number | null
+  caption: string | null
+}
+
 export type ProposedMutation =
   // ---- Additive (no typed confirmation) ----
   | {
@@ -83,6 +97,9 @@ export type ProposedMutation =
       // date, or creates a new internal log when none exists.
       log_date: string
       note: string
+      // Walkthrough photos to link to the log (server-injected; absent for
+      // plans from the global dialog).
+      attachments?: DailyLogPhotoAttachment[]
       context: {
         project_name: string
         project_number: string

@@ -18,6 +18,7 @@ import {
   UserPlus,
   MessageSquare,
   NotebookPen,
+  Image as ImageIcon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { ProposedMutation, AppliedMutation } from "@/lib/ai/types"
@@ -272,6 +273,12 @@ export function MutationRow({ mutation }: { mutation: ProposedMutation }) {
           <div className="text-xs mt-1 whitespace-pre-wrap">
             {mutation.note}
           </div>
+          {mutation.attachments && mutation.attachments.length > 0 && (
+            <div className="text-xs text-muted mt-0.5 flex items-center gap-1">
+              <ImageIcon className="h-3 w-3" />+{mutation.attachments.length}{" "}
+              photo{mutation.attachments.length === 1 ? "" : "s"} attached
+            </div>
+          )}
           {crumb(mutation.context)}
         </RowFrame>
       )
