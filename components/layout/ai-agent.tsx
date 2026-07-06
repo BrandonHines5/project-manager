@@ -39,6 +39,7 @@ import {
   getSpeechRecognitionCtor,
   type SpeechRecognitionLike,
 } from "@/lib/speech/web-speech"
+import { useScreenWakeLock } from "@/lib/hooks/use-wake-lock"
 
 type Message = { role: "user" | "assistant"; content: string }
 
@@ -85,6 +86,10 @@ export function AIAgent() {
   useEffect(() => {
     if (!open) recognitionRef.current?.stop()
   }, [open])
+
+  // Phones auto-lock mid-turn and iOS kills the in-flight fetch when they
+  // do — keep the screen awake while dictating or waiting on the agent.
+  useScreenWakeLock(pending || listening)
 
   const stopDictation = useCallback(() => {
     recognitionRef.current?.stop()

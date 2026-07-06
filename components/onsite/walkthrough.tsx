@@ -35,6 +35,7 @@ import { Textarea, Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
 import { downscalePhoto } from "@/lib/images/downscale"
+import { useScreenWakeLock } from "@/lib/hooks/use-wake-lock"
 import {
   getSpeechRecognitionCtor,
   type SpeechRecognitionLike,
@@ -64,6 +65,14 @@ type Photo = {
 type FailedUpload = { id: string; file: File; error: string }
 type Message = { role: "user" | "assistant"; content: string }
 
+// What a failed step left behind, so the error state can offer recovery
+// instead of a dead end: a failed turn can re-run with the same messages
+// (proposals only — safe to retry), a failed apply returns to the reviewed
+// plan (retrying blind could double-apply, so the user re-confirms).
+type ErrorRetry =
+  | { kind: "turn"; messages: Message[] }
+  | { kind: "plan"; summary: string; mutations: ProposedMutation[] }
+
 type Phase =
   | { kind: "capture" }
   | { kind: "thinking" }
@@ -71,7 +80,7 @@ type Phase =
   | { kind: "plan"; summary: string; mutations: ProposedMutation[] }
   | { kind: "applying" }
   | { kind: "applied"; results: AppliedMutation[]; draftKept: boolean }
-  | { kind: "error"; message: string }
+  | { kind: "error"; message: string; retry: ErrorRetry | null }
 
 // Persisted per project. Photos are only added here AFTER their upload
 // succeeded — a File object can't be serialized, so anything still in
@@ -95,6 +104,17 @@ const newId = () =>
 
 // Keep the composed message under the server's 20k cap with headroom.
 const MAX_TRANSCRIPT_CHARS = 19000
+
+// iOS Safari reports a fetch killed mid-flight (screen locked, app switched,
+// WiFi→LTE handoff) as the bare "Load failed"; Chrome says "Failed to
+// fetch". Translate to something a PM standing on a slab can act on.
+function friendlyError(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e)
+  if (/load failed|failed to fetch|network\s?error|fetch failed/i.test(raw)) {
+    return "The connection dropped while working — a locked screen or weak signal can cause this. Your notes and photos are safe on this device."
+  }
+  return raw
+}
 
 export function Walkthrough({
   projectId,
@@ -127,6 +147,11 @@ export function Walkthrough({
   const transcriptRef = useRef("")
   const fileInputRef = useRef<HTMLInputElement>(null)
   const hydratedRef = useRef(false)
+
+  // Keep the screen awake while dictating or waiting on the AI/apply round
+  // trip. iPhones auto-lock at ~30s idle and iOS kills the in-flight fetch
+  // when they do — the walkthrough's biggest real-world failure mode.
+  useScreenWakeLock(pending || listening)
 
   // One-time hydration: feature-detect dictation and restore any saved
   // draft for this project. A draft from a previous day isn't merged
@@ -435,9 +460,12 @@ export function Walkthrough({
         })
         handleResult(result, nextMessages)
       } catch (e) {
+        // A turn only proposes — nothing was written or sent — so retrying
+        // with the same messages is always safe.
         setPhase({
           kind: "error",
-          message: e instanceof Error ? e.message : "Agent failed",
+          message: friendlyError(e),
+          retry: { kind: "turn", messages: nextMessages },
         })
       }
     })
@@ -451,7 +479,11 @@ export function Walkthrough({
 
   function handleResult(result: AgentTurnResult, currentMessages: Message[]) {
     if (result.type === "error") {
-      setPhase({ kind: "error", message: result.message })
+      setPhase({
+        kind: "error",
+        message: result.message,
+        retry: { kind: "turn", messages: currentMessages },
+      })
       return
     }
     if (result.type === "question") {
@@ -504,15 +536,19 @@ export function Walkthrough({
     setConfirmArmed(false)
   }
 
-  function applySelected(mutations: ProposedMutation[]) {
+  function applySelected(plan: { summary: string; mutations: ProposedMutation[] }) {
+    const { summary, mutations } = plan
     const selected = mutations.filter((_, i) => checked[i])
     if (selected.length === 0) return
+    // On any failure, hand the reviewed plan back to the error state so the
+    // user can return to it — regenerating it costs another AI run.
+    const retry: ErrorRetry = { kind: "plan", summary, mutations }
     setPhase({ kind: "applying" })
     startTransition(async () => {
       try {
         const response = await applyPlanAction({ mutations: selected })
         if (!response.ok) {
-          setPhase({ kind: "error", message: response.error })
+          setPhase({ kind: "error", message: response.error, retry })
           return
         }
         const { results } = response
@@ -540,13 +576,7 @@ export function Walkthrough({
         router.refresh()
       } catch (e) {
         console.error("[walkthrough apply] unexpected failure:", e)
-        setPhase({
-          kind: "error",
-          message:
-            e instanceof Error
-              ? e.message
-              : "Apply failed — open the dev tools console for details.",
-        })
+        setPhase({ kind: "error", message: friendlyError(e), retry })
       }
     })
   }
@@ -798,8 +828,8 @@ export function Walkthrough({
         {phase.kind === "thinking" && (
           <div className="flex items-center gap-2 text-sm text-muted py-2">
             <Loader2 className="h-4 w-4 animate-spin" />
-            Reading your walkthrough and drafting updates — this can take up
-            to a minute…
+            Reading your walkthrough and drafting updates — keep this screen
+            open, it can take up to a minute…
           </div>
         )}
 
@@ -855,7 +885,9 @@ export function Walkthrough({
               checked={checked}
               confirmArmed={confirmArmed}
               onArm={() => setConfirmArmed(true)}
-              onApply={() => applySelected(phase.mutations)}
+              onApply={() =>
+                applySelected({ summary: phase.summary, mutations: phase.mutations })
+              }
               onEditNotes={backToNotes}
               pending={pending}
             />
@@ -892,17 +924,72 @@ export function Walkthrough({
                 <div>{phase.message}</div>
               </div>
             </div>
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => setPhase({ kind: "capture" })}
-            >
-              Back to notes
-            </Button>
+            {phase.retry?.kind === "plan" && (
+              <div className="text-xs text-muted">
+                If the connection dropped mid-apply, some changes may have
+                already gone through — glance at the Schedule or Job Logs tab
+                before applying again.
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              {phase.retry?.kind === "turn" && (
+                <RetryTurnButton retry={phase.retry} onRetry={runTurn} />
+              )}
+              {phase.retry?.kind === "plan" && (
+                <RetryPlanButton
+                  retry={phase.retry}
+                  onBackToReview={(summary, mutations) => {
+                    setConfirmArmed(false)
+                    setPhase({ kind: "plan", summary, mutations })
+                  }}
+                />
+              )}
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setPhase({ kind: "capture" })}
+              >
+                Back to notes
+              </Button>
+            </div>
           </div>
         )}
       </CardBody>
     </Card>
+  )
+}
+
+// Tiny wrappers so the retry payload is a typed prop — TS narrowing on
+// phase.retry doesn't survive into an onClick closure.
+function RetryTurnButton({
+  retry,
+  onRetry,
+}: {
+  retry: Extract<ErrorRetry, { kind: "turn" }>
+  onRetry: (messages: Message[]) => void
+}) {
+  return (
+    <Button type="button" onClick={() => onRetry(retry.messages)}>
+      <RotateCcw className="h-4 w-4" />
+      Try again
+    </Button>
+  )
+}
+
+function RetryPlanButton({
+  retry,
+  onBackToReview,
+}: {
+  retry: Extract<ErrorRetry, { kind: "plan" }>
+  onBackToReview: (summary: string, mutations: ProposedMutation[]) => void
+}) {
+  return (
+    <Button
+      type="button"
+      onClick={() => onBackToReview(retry.summary, retry.mutations)}
+    >
+      Back to review
+    </Button>
   )
 }
 
