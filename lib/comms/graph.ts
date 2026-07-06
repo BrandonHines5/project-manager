@@ -99,3 +99,98 @@ export async function fetchDeltaPage(
     deltaLink: json["@odata.deltaLink"] ?? null,
   }
 }
+
+export type GraphSendResult = {
+  sent: boolean
+  reason?: string
+  /** RFC internetMessageId — the dedup key against the Outlook sync. */
+  internetMessageId?: string
+}
+
+/**
+ * Send an email from a user's real mailbox (app-only auth; the Exchange
+ * application access policy gates which mailboxes we can act as). Uses
+ * draft → send instead of /sendMail so we can capture the draft's
+ * internetMessageId first — logging with it means the Outlook sync's later
+ * pass over Sent Items upserts onto the same (source, provider_id) row
+ * instead of duplicating the message in the feed.
+ */
+export async function sendGraphMail(opts: {
+  fromMailbox: string
+  to: string[]
+  cc?: string[]
+  replyTo?: string[]
+  subject: string
+  text: string
+  html?: string
+  /** base64-encoded bytes, same shape sendEmail already accepts. */
+  attachments?: { filename: string; content: string }[]
+}): Promise<GraphSendResult> {
+  const token = await getGraphToken()
+  if (!token) return { sent: false, reason: "Graph token unavailable" }
+
+  const asRecipients = (list: string[]) =>
+    list.map((address) => ({ emailAddress: { address } }))
+  const base = `${GRAPH}/users/${encodeURIComponent(opts.fromMailbox)}`
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  }
+
+  const draftRes = await fetch(`${base}/messages`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      subject: opts.subject,
+      body: {
+        contentType: opts.html ? "HTML" : "Text",
+        content: opts.html ?? opts.text,
+      },
+      toRecipients: asRecipients(opts.to),
+      ...(opts.cc?.length ? { ccRecipients: asRecipients(opts.cc) } : {}),
+      ...(opts.replyTo?.length ? { replyTo: asRecipients(opts.replyTo) } : {}),
+      ...(opts.attachments?.length
+        ? {
+            attachments: opts.attachments.map((a) => ({
+              "@odata.type": "#microsoft.graph.fileAttachment",
+              name: a.filename,
+              contentBytes: a.content,
+            })),
+          }
+        : {}),
+    }),
+    signal: AbortSignal.timeout(20_000),
+  })
+  if (!draftRes.ok) {
+    const text = await draftRes.text().catch(() => "")
+    return {
+      sent: false,
+      reason: `Graph draft failed (${draftRes.status}): ${text.slice(0, 200)}`,
+    }
+  }
+  const draft = (await draftRes.json()) as {
+    id?: string
+    internetMessageId?: string
+  }
+  if (!draft.id) return { sent: false, reason: "Graph draft returned no id" }
+
+  const sendRes = await fetch(`${base}/messages/${draft.id}/send`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(20_000),
+  })
+  if (!sendRes.ok) {
+    const text = await sendRes.text().catch(() => "")
+    // Best-effort cleanup so failed sends don't strand drafts in the mailbox.
+    await fetch(`${base}/messages/${draft.id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(10_000),
+    }).catch(() => {})
+    return {
+      sent: false,
+      reason: `Graph send failed (${sendRes.status}): ${text.slice(0, 200)}`,
+    }
+  }
+  return { sent: true, internetMessageId: draft.internetMessageId }
+}

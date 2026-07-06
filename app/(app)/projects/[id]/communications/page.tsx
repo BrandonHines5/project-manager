@@ -7,10 +7,12 @@ import {
   type BidCommentRow,
   type DailyLogCommentRow,
   type DecisionCommentRow,
+  type FeedItem,
   type FeedProfile,
   type PoCommentRow,
   type ScheduleCommentRow,
 } from "@/lib/comms/feed"
+import { createCrmClient } from "@/lib/supabase/crm"
 import { CommunicationsClient } from "./communications-client"
 
 export const metadata = { title: "Communications — Hines Homes" }
@@ -30,7 +32,7 @@ export default async function CommunicationsPage({
 
   const { data: project } = await supabase
     .from("projects")
-    .select("id, name")
+    .select("id, name, client_email, client_email_2, created_at")
     .eq("id", projectId)
     .maybeSingle()
   if (!project) notFound()
@@ -121,6 +123,24 @@ export default async function CommunicationsPage({
     profiles,
   })
 
+  // Sales-stage email history from the CRM (staff only — it predates the
+  // client's portal relationship). The CRM synced these from Outlook against
+  // the sales deal; we surface the ones exchanged with this project's client
+  // BEFORE the job existed. Anything after that is (or will be) captured by
+  // this app's own pipeline, so the date cutoff prevents double rows once
+  // the Outlook sync is live.
+  if (profile.role === "staff") {
+    const crmItems = await fetchCrmEmailHistory(
+      projectId,
+      [project.client_email, project.client_email_2].filter(
+        (e): e is string => Boolean(e)
+      ),
+      project.created_at
+    )
+    feed.push(...crmItems)
+    feed.sort((a, b) => (a.occurredAt < b.occurredAt ? 1 : -1))
+  }
+
   return (
     <CommunicationsClient
       feed={feed}
@@ -128,4 +148,76 @@ export default async function CommunicationsPage({
       role={profile.role}
     />
   )
+}
+
+type CrmEmailRow = {
+  id: string
+  subject: string | null
+  body: string | null
+  sender: string | null
+  recipients: string | null
+  sent_at: string | null
+}
+
+async function fetchCrmEmailHistory(
+  projectId: string,
+  clientEmails: string[],
+  before: string
+): Promise<FeedItem[]> {
+  if (!clientEmails.length) return []
+  const crm = createCrmClient()
+  if (!crm) return []
+  try {
+    const pattern = clientEmails
+      .map((e) => `sender.ilike.%${e}%,recipients.ilike.%${e}%`)
+      .join(",")
+    const { data, error } = await crm
+      .from("emails")
+      .select("id, subject, body, sender, recipients, sent_at")
+      .or(pattern)
+      .lt("sent_at", before)
+      .order("sent_at", { ascending: false })
+      .limit(100)
+    if (error) {
+      console.warn("[comms] CRM email history failed:", error.message)
+      return []
+    }
+    const lowered = clientEmails.map((e) => e.toLowerCase())
+    return ((data ?? []) as CrmEmailRow[]).map((e) => {
+      const inbound = lowered.some((c) =>
+        (e.sender ?? "").toLowerCase().includes(c)
+      )
+      return {
+        id: `crm_email:${e.id}`,
+        kind: "email" as const,
+        direction: inbound ? ("inbound" as const) : ("outbound" as const),
+        author: {
+          name: (inbound ? e.sender : e.sender) ?? "CRM history",
+          role: inbound ? ("external" as const) : ("staff" as const),
+        },
+        subject: e.subject,
+        body: stripHtml(e.body ?? ""),
+        occurredAt: e.sent_at ?? before,
+        href: "",
+        projectId,
+        reply: null,
+      }
+    })
+  } catch (err) {
+    console.warn(
+      "[comms] CRM email history exception:",
+      err instanceof Error ? err.message : err
+    )
+    return []
+  }
+}
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 2000)
 }
