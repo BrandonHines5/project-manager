@@ -6,64 +6,33 @@ import { Search, Activity, AlertTriangle, Tag } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { cn, formatCurrency, formatDate } from "@/lib/utils"
 import { crmStatusTone } from "@/lib/crm-status"
+import {
+  ALL_STATUSES,
+  STATUS_FILTER_LABEL,
+  matchesStatusFilter,
+  type ProjectStatusFilter,
+} from "@/lib/project-status"
 import type { Enums } from "@/lib/db/types"
 
-// Mirrors the vocabulary of the desktop project sidebar
-// (components/layout/project-list-sidebar.tsx) so the two filters read the same
-// way. Filtering runs off the `status` enum, not the verbatim CRM word, so the
-// groups stay stable even when a job's crm_status is an unmapped label.
-type StatusFilter = "all" | "open" | "active" | "warranty" | "closed"
-
-const STATUS_FILTERS: ReadonlyArray<StatusFilter> = [
+// Shares the filter vocabulary with the desktop project sidebar
+// (components/layout/project-list-sidebar.tsx) via lib/project-status.ts, so
+// the two filters read the same way: All, the Open group, then each CRM status
+// by its exact word. Filtering runs off the `status` enum, not the verbatim
+// CRM word, so the chips stay stable even when a job's crm_status is an
+// unmapped label.
+const STATUS_FILTERS: ReadonlyArray<ProjectStatusFilter> = [
   "all",
   "open",
-  "active",
-  "warranty",
-  "closed",
+  ...ALL_STATUSES,
 ]
 
-const STATUS_FILTER_LABEL: Record<StatusFilter, string> = {
-  all: "All",
-  open: "Open",
-  active: "Active",
-  warranty: "Warranty",
-  closed: "Closed",
-}
-
-// The active filter is either a StatusFilter value ("all"…"closed") or a label
-// filter encoded as "label:<name>", so a single piece of state can drive both
-// the status chips and the tag chips. Same encoding the desktop sidebar uses.
+// The active filter is either a ProjectStatusFilter value or a label filter
+// encoded as "label:<name>", so a single piece of state can drive both the
+// status chips and the tag chips. Same encoding the desktop sidebar uses.
 const LABEL_PREFIX = "label:"
 
-function isStatusFilter(f: string): f is StatusFilter {
+function isStatusFilter(f: string): f is ProjectStatusFilter {
   return (STATUS_FILTERS as ReadonlyArray<string>).includes(f)
-}
-
-const OPEN_STATUSES: ReadonlyArray<Enums<"project_status">> = [
-  "upcoming",
-  "in_work",
-  "inventory",
-  "paused",
-]
-
-function matchesFilter(
-  status: Enums<"project_status">,
-  filter: StatusFilter
-): boolean {
-  switch (filter) {
-    case "all":
-      return true
-    case "open":
-      return OPEN_STATUSES.includes(status)
-    case "active":
-      // A live build: In Work or Inventory (same pair the old enum collapsed
-      // into its single 'active' value).
-      return status === "in_work" || status === "inventory"
-    case "warranty":
-      return status === "warranty"
-    case "closed":
-      return !OPEN_STATUSES.includes(status)
-  }
 }
 
 // The enum mirrors the CRM's statuses, so labels are the CRM's exact words
@@ -122,24 +91,18 @@ export function ProjectsTable({
   financialAccess: boolean
 }) {
   const [query, setQuery] = useState("")
-  // Either a StatusFilter ("all"…"closed") or a "label:<name>" string.
+  // Either a ProjectStatusFilter or a "label:<name>" string.
   const [filter, setFilter] = useState<string>("all")
 
-  // Count per status group so each chip can show how many jobs it holds —
+  // Count per status filter so each chip can show how many jobs it holds —
   // the search box narrows the visible rows but not these headline counts.
   const counts = useMemo(() => {
-    const c: Record<StatusFilter, number> = {
-      all: rows.length,
-      open: 0,
-      active: 0,
-      warranty: 0,
-      closed: 0,
-    }
+    const c = {} as Record<ProjectStatusFilter, number>
+    for (const f of STATUS_FILTERS) c[f] = 0
     for (const r of rows) {
-      if (matchesFilter(r.status, "open")) c.open += 1
-      if (matchesFilter(r.status, "active")) c.active += 1
-      if (matchesFilter(r.status, "warranty")) c.warranty += 1
-      if (matchesFilter(r.status, "closed")) c.closed += 1
+      for (const f of STATUS_FILTERS) {
+        if (matchesStatusFilter(r.status, f)) c[f] += 1
+      }
     }
     return c
   }, [rows])
@@ -167,7 +130,7 @@ export function ProjectsTable({
     return rows.filter((r) => {
       if (activeLabel) {
         if (!(r.labels ?? []).includes(activeLabel)) return false
-      } else if (isStatusFilter(filter) && !matchesFilter(r.status, filter)) {
+      } else if (isStatusFilter(filter) && !matchesStatusFilter(r.status, filter)) {
         return false
       }
       if (!q) return true
