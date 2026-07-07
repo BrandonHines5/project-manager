@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { Pencil, Plus, Trash2, Users } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { Card, CardBody } from "@/components/ui/card"
 import { Field, Input, Select } from "@/components/ui/input"
 import {
@@ -45,10 +44,8 @@ type Company = {
   trade_category: string | null
 }
 
-const KIND_LABEL: Record<RoleKind, string> = {
-  staff: "Staff",
-  company: "Sub / vendor",
-  any: "Anyone",
+function normalizeRoleKind(kind: string): RoleKind {
+  return (["staff", "company", "any"].includes(kind) ? kind : "any") as RoleKind
 }
 
 export function RolesClient({
@@ -74,6 +71,22 @@ export function RolesClient({
     for (const row of members) m.set(row.role_id, row)
     return m
   }, [members])
+
+  // Group by kind — staff first, then subs/vendors, then "anyone" — and
+  // alphabetize within each group so a long role list is scannable.
+  const groups = useMemo(() => {
+    const byKind = (k: RoleKind) =>
+      roles
+        .filter((r) => normalizeRoleKind(r.kind) === k)
+        .sort((a, b) => a.name.localeCompare(b.name))
+    return (
+      [
+        { key: "staff", label: "Staff", roles: byKind("staff") },
+        { key: "company", label: "Subs / vendors", roles: byKind("company") },
+        { key: "any", label: "Anyone", roles: byKind("any") },
+      ] as const
+    ).filter((g) => g.roles.length > 0)
+  }, [roles])
 
   return (
     <div className="max-w-3xl mx-auto px-4 md:px-6 py-5">
@@ -109,20 +122,29 @@ export function RolesClient({
               </p>
             </div>
           ) : (
-            <ul className="divide-y divide-border">
-              {roles.map((role) => (
-                <RoleRow
-                  key={role.id}
-                  projectId={projectId}
-                  role={role}
-                  member={memberByRole.get(role.id) ?? null}
-                  profiles={profiles}
-                  companies={companies}
-                  projectManager={projectManager}
-                  onEdit={() => setEditing(role)}
-                />
+            <div>
+              {groups.map((group) => (
+                <div key={group.key}>
+                  <div className="px-4 py-1.5 bg-background/60 border-b border-border text-[11px] font-medium uppercase tracking-wide text-muted first:rounded-t-md">
+                    {group.label}
+                  </div>
+                  <ul className="divide-y divide-border border-b border-border last:border-b-0">
+                    {group.roles.map((role) => (
+                      <RoleRow
+                        key={role.id}
+                        projectId={projectId}
+                        role={role}
+                        member={memberByRole.get(role.id) ?? null}
+                        profiles={profiles}
+                        companies={companies}
+                        projectManager={projectManager}
+                        onEdit={() => setEditing(role)}
+                      />
+                    ))}
+                  </ul>
+                </div>
               ))}
-            </ul>
+            </div>
           )}
         </CardBody>
       </Card>
@@ -155,9 +177,7 @@ function RoleRow({
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
-  const kind = (["staff", "company", "any"].includes(role.kind)
-    ? role.kind
-    : "any") as RoleKind
+  const kind = normalizeRoleKind(role.kind)
 
   // People = non-client profiles; companies = already filtered to non-client.
   const people = useMemo(
@@ -205,10 +225,7 @@ function RoleRow({
   return (
     <li className="px-4 py-3 flex items-center gap-3 flex-wrap sm:flex-nowrap">
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="font-medium">{role.name}</span>
-          <Badge tone="muted">{KIND_LABEL[kind]}</Badge>
-        </div>
+        <span className="font-medium">{role.name}</span>
         {pmHint && <p className="text-xs text-muted mt-0.5">{pmHint}</p>}
       </div>
       <div className="w-full sm:w-64">

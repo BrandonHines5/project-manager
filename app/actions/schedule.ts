@@ -43,11 +43,12 @@ const ChecklistItem = z.object({
   id: optStr,
   label: z.string().default(""),
   is_done: z.boolean().default(false),
-  // Optional per-item assignee — exactly one of profile/company, or neither.
-  // When set, the assignee is also rolled up onto the parent to-do's
+  // Optional per-item assignee — exactly one of profile/company/role, or
+  // none. When set, the assignee is also rolled up onto the parent to-do's
   // assignments so the to-do shows in their queue (see saveScheduleItem).
   assignee_profile_id: optStr,
   assignee_company_id: optStr,
+  assignee_role_id: optStr,
 })
 
 const Predecessor = z.object({
@@ -252,6 +253,39 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     }
   }
 
+  // Checklist assignees mirror the assignment shape: exactly one of
+  // profile/company/role, or none. Validate before the sole-assignee rule so
+  // a malformed row can't sneak through by being overwritten.
+  let checklistItems = parsed.checklist
+  if (parsed.kind === "todo") {
+    for (const c of checklistItems) {
+      const set =
+        Number(!!nz(c.assignee_profile_id)) +
+        Number(!!nz(c.assignee_company_id)) +
+        Number(!!nz(c.assignee_role_id))
+      if (set > 1) {
+        throw new Error(
+          "A checklist item assignee must be exactly one of profile, company, or role."
+        )
+      }
+    }
+  }
+
+  // Sole-assignee rule: when the to-do itself has exactly one assignee
+  // (person, company, or role), every checklist item follows it. The
+  // checklist picker only offers the to-do's own assignees anyway, so with
+  // one assignee there is nothing else a row could point at — this just
+  // keeps rows added through other paths (AI, copy) consistent.
+  if (parsed.kind === "todo" && cleanedAssignments.length === 1) {
+    const sole = cleanedAssignments[0]
+    checklistItems = checklistItems.map((c) => ({
+      ...c,
+      assignee_profile_id: sole.profile_id,
+      assignee_company_id: sole.company_id,
+      assignee_role_id: sole.role_id,
+    }))
+  }
+
   // Roll checklist-item assignees up onto the to-do's assignments. Assigning
   // someone to a checklist item implicitly makes them responsible for the
   // to-do, so we de-dupe them into the assignment set. Only meaningful for
@@ -262,20 +296,19 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
         (a) => `${a.profile_id ?? ""}|${a.company_id ?? ""}|${a.role_id ?? ""}`
       )
     )
-    for (const c of parsed.checklist) {
+    for (const c of checklistItems) {
       const pid = nz(c.assignee_profile_id)
       const cid = nz(c.assignee_company_id)
-      if (pid && cid) {
-        throw new Error(
-          "A checklist item assignee must be a profile or a company, not both."
-        )
-      }
-      if (!pid && !cid) continue
-      const key = `${pid ?? ""}|${cid ?? ""}|`
+      const rid = nz(c.assignee_role_id)
+      if (!pid && !cid && !rid) continue
+      const key = `${pid ?? ""}|${cid ?? ""}|${rid ?? ""}`
       if (seen.has(key)) continue
       seen.add(key)
-      // Checklist assignees are always concrete (profile/company), never roles.
-      cleanedAssignments.push({ profile_id: pid, company_id: cid, role_id: null })
+      cleanedAssignments.push({
+        profile_id: pid,
+        company_id: cid,
+        role_id: rid,
+      })
     }
   }
 
@@ -529,8 +562,8 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     .delete()
     .eq("schedule_item_id", id)
   if (clDelErr) throw new Error(clDelErr.message)
-  if (parsed.kind === "todo" && parsed.checklist.length) {
-    const rows = parsed.checklist
+  if (parsed.kind === "todo" && checklistItems.length) {
+    const rows = checklistItems
       .filter((c) => c.label.trim() !== "")
       .map((c, i) => ({
         schedule_item_id: id!,
@@ -539,6 +572,7 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
         position: i,
         assignee_profile_id: nz(c.assignee_profile_id),
         assignee_company_id: nz(c.assignee_company_id),
+        assignee_role_id: nz(c.assignee_role_id),
       }))
     if (rows.length) {
       const { error: chErr } = await supabase
@@ -1740,12 +1774,14 @@ export async function copyTodoToTargets(input: {
   const [{ data: checklist }, { data: assignments }] = await Promise.all([
     supabase
       .from("todo_checklist_items")
-      .select("label, is_done, position, assignee_profile_id, assignee_company_id")
+      .select(
+        "label, is_done, position, assignee_profile_id, assignee_company_id, assignee_role_id"
+      )
       .eq("schedule_item_id", source.id)
       .order("position", { ascending: true }),
     supabase
       .from("schedule_assignments")
-      .select("profile_id, company_id")
+      .select("profile_id, company_id, role_id")
       .eq("schedule_item_id", source.id),
   ])
 
@@ -1840,7 +1876,9 @@ export async function copyTodoToTargets(input: {
       continue
     }
 
-    // Copy checklist (reset is_done — a copy starts fresh).
+    // Copy checklist (reset is_done — a copy starts fresh). Role assignees
+    // copy as-is: a role is project-agnostic and re-resolves through the
+    // target project's role map.
     if (checklist && checklist.length) {
       const rows = checklist.map((c, i) => ({
         schedule_item_id: newItem.id,
@@ -1849,6 +1887,7 @@ export async function copyTodoToTargets(input: {
         position: i,
         assignee_profile_id: c.assignee_profile_id,
         assignee_company_id: c.assignee_company_id,
+        assignee_role_id: c.assignee_role_id,
       }))
       const { error: clErr } = await supabase
         .from("todo_checklist_items")
@@ -1858,14 +1897,15 @@ export async function copyTodoToTargets(input: {
       }
     }
 
-    // Copy direct assignments.
+    // Copy direct assignments (role assignments re-resolve per project).
     if (assignments && assignments.length) {
       const rows = assignments
-        .filter((a) => a.profile_id || a.company_id)
+        .filter((a) => a.profile_id || a.company_id || a.role_id)
         .map((a) => ({
           schedule_item_id: newItem.id,
           profile_id: a.profile_id,
           company_id: a.company_id,
+          role_id: a.role_id,
         }))
       if (rows.length) {
         const { error: asErr } = await supabase

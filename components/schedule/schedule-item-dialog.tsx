@@ -77,6 +77,7 @@ type ChecklistItem = {
   is_done: boolean
   assignee_profile_id?: string | null
   assignee_company_id?: string | null
+  assignee_role_id?: string | null
 }
 type PredEdit = { predecessor_id: string; dep_type: Enums<"dependency_type">; lag_days: number }
 
@@ -213,6 +214,7 @@ export function ScheduleItemDialog({
       is_done: c.is_done,
       assignee_profile_id: c.assignee_profile_id,
       assignee_company_id: c.assignee_company_id,
+      assignee_role_id: c.assignee_role_id,
     }))
   })
   const [predecessors, setPredecessors] = useState<PredEdit[]>(() => {
@@ -250,6 +252,25 @@ export function ScheduleItemDialog({
         }))
     }
   )
+
+  // Mirror the server's sole-assignee rule live: when the to-do ends up with
+  // exactly one assignee, every checklist item follows it (the server
+  // re-applies the same rule on save, so this is purely so the user sees the
+  // effect before saving).
+  function handleAssignmentsChange(next: Assignment[]) {
+    setAssignments(next)
+    if (kind === "todo" && next.length === 1) {
+      const sole = next[0]
+      setChecklist((cl) =>
+        cl.map((c) => ({
+          ...c,
+          assignee_profile_id: sole.profile_id ?? null,
+          assignee_company_id: sole.company_id ?? null,
+          assignee_role_id: sole.role_id ?? null,
+        }))
+      )
+    }
+  }
 
   const workItemOptions = data.items.filter(
     (i) => i.kind === "work" && i.id !== item?.id
@@ -691,7 +712,7 @@ export function ScheduleItemDialog({
           {/* Assignments */}
           <AssignmentsEditor
             assignments={assignments}
-            onChange={setAssignments}
+            onChange={handleAssignmentsChange}
             profiles={data.profiles}
             companies={data.companies}
             roles={data.roles}
@@ -713,8 +734,11 @@ export function ScheduleItemDialog({
             <ChecklistEditor
               value={checklist}
               onChange={setChecklist}
+              assignments={assignments}
               profiles={data.profiles}
               companies={data.companies}
+              roles={data.roles}
+              roleMembers={data.roleMembers}
             />
           )}
 
@@ -1195,37 +1219,68 @@ function PredecessorsEditor({
 function ChecklistEditor({
   value,
   onChange,
+  assignments,
   profiles,
   companies,
+  roles,
+  roleMembers,
 }: {
   value: ChecklistItem[]
   onChange: (v: ChecklistItem[]) => void
+  assignments: Assignment[]
   profiles: ScheduleData["profiles"]
   companies: ScheduleData["companies"]
+  roles: ScheduleData["roles"]
+  roleMembers: ScheduleData["roleMembers"]
 }) {
-  // A single dropdown encodes both kinds of assignee with a prefixed value
-  // ("p:<id>" for a profile, "c:<id>" for a company) so we can keep the
-  // profile-XOR-company shape the server expects.
+  // A single dropdown encodes all three kinds of assignee with a prefixed
+  // value ("p:<id>" profile, "c:<id>" company, "r:<id>" role) so we can keep
+  // the one-of-three shape the server expects.
   function setAssignee(idx: number, raw: string) {
     const next = [...value]
     const c = next[idx]
-    if (!raw) {
-      next[idx] = { ...c, assignee_profile_id: null, assignee_company_id: null }
-    } else if (raw.startsWith("p:")) {
-      next[idx] = {
-        ...c,
-        assignee_profile_id: raw.slice(2),
-        assignee_company_id: null,
-      }
-    } else {
-      next[idx] = {
-        ...c,
-        assignee_profile_id: null,
-        assignee_company_id: raw.slice(2),
-      }
+    next[idx] = {
+      ...c,
+      assignee_profile_id: raw.startsWith("p:") ? raw.slice(2) : null,
+      assignee_company_id: raw.startsWith("c:") ? raw.slice(2) : null,
+      assignee_role_id: raw.startsWith("r:") ? raw.slice(2) : null,
     }
     onChange(next)
   }
+
+  function optionLabel(v: string): string {
+    if (v.startsWith("p:")) {
+      const p = profiles.find((x) => x.id === v.slice(2))
+      return p?.full_name || p?.email || "?"
+    }
+    if (v.startsWith("c:")) {
+      return companies.find((x) => x.id === v.slice(2))?.name ?? "?"
+    }
+    return resolveRoleLabel(v.slice(2), {
+      profiles,
+      companies,
+      roles,
+      roleMembers,
+    })
+  }
+
+  // The picker only offers who's already assigned on this to-do — pick from
+  // the short list instead of scrolling the full company directory. Add
+  // someone under Assignments first to make them available here.
+  const options = assignments
+    .map((a) =>
+      a.profile_id
+        ? `p:${a.profile_id}`
+        : a.company_id
+          ? `c:${a.company_id}`
+          : a.role_id
+            ? `r:${a.role_id}`
+            : ""
+    )
+    .filter(Boolean)
+  // The to-do's sole assignee (if it has exactly one) — new checklist items
+  // default to them, mirroring the server's sole-assignee rule.
+  const sole = assignments.length === 1 ? assignments[0] : null
 
   return (
     <div>
@@ -1235,8 +1290,13 @@ function ChecklistEditor({
           const assigneeValue = c.assignee_profile_id
             ? `p:${c.assignee_profile_id}`
             : c.assignee_company_id
-            ? `c:${c.assignee_company_id}`
-            : ""
+              ? `c:${c.assignee_company_id}`
+              : c.assignee_role_id
+                ? `r:${c.assignee_role_id}`
+                : ""
+          // A stored assignee that's no longer on the to-do still needs an
+          // option, or the select would silently show the wrong value.
+          const stale = assigneeValue !== "" && !options.includes(assigneeValue)
           return (
             <li key={i} className="flex items-center gap-2">
               <GripVertical className="h-3.5 w-3.5 text-muted shrink-0" />
@@ -1265,25 +1325,19 @@ function ChecklistEditor({
                 onChange={(e) => setAssignee(i, e.target.value)}
                 className="w-36 shrink-0 text-xs"
                 aria-label="Assign checklist item"
-                title="Assigning someone here also adds them to this to-do"
+                title="Offers the people already assigned on this to-do — add someone under Assignments to make them available here"
               >
                 <option value="">Unassigned</option>
-                <optgroup label="Staff / users">
-                  {profiles.map((p) => (
-                    <option key={p.id} value={`p:${p.id}`}>
-                      {p.full_name || p.email}
-                    </option>
-                  ))}
-                </optgroup>
-                <optgroup label="Subs / vendors">
-                  {companies
-                    .filter((co) => co.type !== "client")
-                    .map((co) => (
-                      <option key={co.id} value={`c:${co.id}`}>
-                        {co.name}
-                      </option>
-                    ))}
-                </optgroup>
+                {options.map((v) => (
+                  <option key={v} value={v}>
+                    {optionLabel(v)}
+                  </option>
+                ))}
+                {stale && (
+                  <option value={assigneeValue}>
+                    {optionLabel(assigneeValue)} (not on this to-do)
+                  </option>
+                )}
               </Select>
               <button
                 type="button"
@@ -1304,8 +1358,9 @@ function ChecklistEditor({
             {
               label: "",
               is_done: false,
-              assignee_profile_id: null,
-              assignee_company_id: null,
+              assignee_profile_id: sole?.profile_id ?? null,
+              assignee_company_id: sole?.company_id ?? null,
+              assignee_role_id: sole?.role_id ?? null,
             },
           ])
         }
@@ -1314,7 +1369,9 @@ function ChecklistEditor({
         <Plus className="h-3 w-3" /> Add checklist item
       </button>
       <p className="mt-1.5 text-[11px] text-muted">
-        Assigning a checklist item to someone also adds them to this to-do.
+        The assignee list offers who&apos;s already on this to-do. When the
+        to-do has exactly one assignee, all checklist items follow them
+        automatically.
       </p>
     </div>
   )
