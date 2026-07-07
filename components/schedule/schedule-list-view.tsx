@@ -589,9 +589,7 @@ function WorkItemRow({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {assignees.length > 0 && (
-              <AvatarStack names={assignees} size="sm" />
-            )}
+            <AssigneeChips names={assignees} size="sm" />
           </div>
         </div>
       </div>
@@ -702,7 +700,34 @@ function TodoRow({
           )}
         </div>
       </div>
-      {assignees.length > 0 && <AvatarStack names={assignees} size="xs" />}
+      <AssigneeChips names={assignees} size="xs" />
     </li>
+  )
+}
+
+// Avatar bubble(s) plus the assignees' full names (person, company, or
+// resolved role label). Names are hidden on phone widths where the row
+// doesn't have room for them.
+function AssigneeChips({
+  names,
+  size,
+}: {
+  names: string[]
+  size: "xs" | "sm"
+}) {
+  if (names.length === 0) return null
+  const joined = names.join(", ")
+  return (
+    <div className="flex items-center gap-1.5 min-w-0" title={joined}>
+      <AvatarStack names={names} size={size} />
+      <span
+        className={cn(
+          "hidden sm:inline text-muted truncate max-w-48 text-right",
+          size === "xs" ? "text-[11px]" : "text-xs"
+        )}
+      >
+        {joined}
+      </span>
+    </div>
   )
 }
