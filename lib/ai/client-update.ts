@@ -70,7 +70,10 @@ export async function composeClientUpdate(
   if (!apiKey) {
     throw new Error("ANTHROPIC_API_KEY is not configured")
   }
-  const client = new Anthropic({ apiKey })
+  // 60s timeout: this backs a button in the UI, so failing fast beats the
+  // SDK's multi-minute default leaving the spinner hanging. A ~200-word
+  // draft over a week of notes completes in a fraction of this.
+  const client = new Anthropic({ apiKey, timeout: 60_000 })
   const response = await client.messages.create({
     model: MODEL,
     max_tokens: 4096,
@@ -80,6 +83,12 @@ export async function composeClientUpdate(
   })
   if (response.stop_reason === "refusal") {
     throw new Error("The model declined to draft this update.")
+  }
+  if (response.stop_reason === "max_tokens") {
+    // Don't hand a silently-truncated draft to the drawer.
+    throw new Error(
+      "The draft was cut off before it finished. Try a narrower date range."
+    )
   }
   const text = response.content
     .filter((b): b is Anthropic.Messages.TextBlock => b.type === "text")

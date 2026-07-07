@@ -16,7 +16,7 @@ export type Database = {
     Tables: {
       ai_plan_applications: {
         Row: {
-          applied_by: string
+          applied_by: string | null
           applied_count: number
           created_at: string
           failed_count: number
@@ -27,7 +27,7 @@ export type Database = {
           summary: string | null
         }
         Insert: {
-          applied_by: string
+          applied_by?: string | null
           applied_count?: number
           created_at?: string
           failed_count?: number
@@ -38,7 +38,7 @@ export type Database = {
           summary?: string | null
         }
         Update: {
-          applied_by?: string
+          applied_by?: string | null
           applied_count?: number
           created_at?: string
           failed_count?: number

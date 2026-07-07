@@ -144,7 +144,13 @@ export function DailyLogsClient({ data }: { data: DailyLogsData }) {
               )}
               Draft client update
             </Button>
-            <Button onClick={() => setDrawerState({ mode: "create" })}>
+            <Button
+              onClick={() => setDrawerState({ mode: "create" })}
+              // Disabled while a draft resolves: opening a blank create
+              // drawer mid-draft would race the draft's own drawer open and
+              // silently drop the AI text.
+              disabled={drafting}
+            >
               <Plus className="h-4 w-4" /> New job log
             </Button>
           </div>
@@ -213,6 +219,17 @@ export function DailyLogsClient({ data }: { data: DailyLogsData }) {
 
       {drawerState && canEdit && (
         <DailyLogDrawer
+          // The drawer seeds its notes/visibility state on mount, so any
+          // change of what we're editing must remount it — otherwise a
+          // drawerState swap (e.g. an AI draft resolving after "New job log"
+          // was already open) updates props the drawer never re-reads.
+          key={
+            drawerState.mode === "edit"
+              ? `edit-${drawerState.logId}`
+              : drawerState.initial
+                ? "create-draft"
+                : "create-blank"
+          }
           open={true}
           onClose={() => setDrawerState(null)}
           data={data}

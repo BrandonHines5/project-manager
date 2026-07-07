@@ -25,7 +25,10 @@ create table if not exists public.ai_plan_applications (
   -- The agent's per-turn plan id. Unique so the same plan can't be applied
   -- twice; this is the idempotency key.
   plan_id uuid not null unique,
-  applied_by uuid not null references public.profiles(id) on delete cascade,
+  -- Nullable + SET NULL: this is an audit ledger, so deleting a staff
+  -- profile must not erase the history of what was applied — the row
+  -- survives with the actor anonymized. (CodeRabbit #125.)
+  applied_by uuid references public.profiles(id) on delete set null,
   -- The plan's text summary (what the agent said it would do).
   summary text,
   -- The full proposed plan and the per-mutation apply results, as returned

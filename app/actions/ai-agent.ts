@@ -386,7 +386,7 @@ const MutationSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("send_bid_reminder"),
     bid_package_id: z.string().uuid(),
-    company_ids: z.array(z.string().uuid()).min(1).max(50),
+    company_ids: z.array(z.string().uuid()).min(1).max(25),
     context: z.object({
       project_name: z.string(),
       project_number: z.string(),
@@ -401,7 +401,11 @@ const MutationSchema = z.discriminatedUnion("kind", [
 // send_bid_reminder entries would be a texting cannon. Field notes
 // realistically message at most a handful of subs per apply.
 const MAX_SMS_PER_PLAN = 5
-const MAX_BID_REMINDERS_PER_PLAN = 10
+// Bid reminders fan out per RECIPIENT (each gets an email and possibly an
+// SMS), so the cap counts total recipients across every send_bid_reminder
+// in the plan — not mutation rows. 25 covers reminding every open package
+// on a job without becoming a messaging cannon.
+const MAX_BID_REMINDER_RECIPIENTS_PER_PLAN = 25
 const ApplyInputSchema = z.object({
   // Server-generated per-turn UUID (from the plan result). Used as an
   // idempotency key so re-applying the same plan can't duplicate writes.
@@ -421,10 +425,13 @@ const ApplyInputSchema = z.object({
     )
     .refine(
       (ms) =>
-        ms.filter((m) => m.kind === "send_bid_reminder").length <=
-        MAX_BID_REMINDERS_PER_PLAN,
+        ms.reduce(
+          (sum, m) =>
+            sum + (m.kind === "send_bid_reminder" ? m.company_ids.length : 0),
+          0
+        ) <= MAX_BID_REMINDER_RECIPIENTS_PER_PLAN,
       {
-        message: `a plan may contain at most ${MAX_BID_REMINDERS_PER_PLAN} send_bid_reminder mutations`,
+        message: `a plan may remind at most ${MAX_BID_REMINDER_RECIPIENTS_PER_PLAN} bid recipients in total`,
       }
     ),
 })

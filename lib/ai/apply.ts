@@ -18,13 +18,21 @@ async function notifyProfileAssignee(
   itemTitle: string
 ): Promise<void> {
   try {
-    await supabase.from("notifications").insert({
+    // supabase-js resolves with { error } instead of throwing, so check it
+    // explicitly — the try/catch only covers transport-level rejections.
+    const { error } = await supabase.from("notifications").insert({
       recipient_id: profileId,
       type: "schedule_assignment",
       title: `Assigned: ${itemTitle}`,
       body: "You were assigned to a schedule item",
       link_url: `/projects/${projectId}/schedule`,
     })
+    if (error) {
+      console.warn(
+        "[ai apply] assignment notification failed (non-fatal):",
+        error.message
+      )
+    }
   } catch (e) {
     console.warn(
       "[ai apply] assignment notification failed (non-fatal):",

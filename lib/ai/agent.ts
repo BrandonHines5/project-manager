@@ -1378,22 +1378,34 @@ async function executeTool({
       if (!pkg) return JSON.stringify({ error: "bid package not found" })
       if (pkg.status === "closed")
         return JSON.stringify({ error: "this bid package is closed" })
-      // Only invited-but-unresponded recipients with a live token can be
-      // reminded — mirror the guards in sendBidPackage's re-send path.
+      // Only invited-but-unresponded recipients with a live token AND
+      // notifications enabled can be reminded — mirror ALL of the apply
+      // path's guards here so the plan the user approves lists exactly who
+      // will actually be contacted (apply re-checks; this keeps the preview
+      // honest).
       const { data: recipients, error: rErr } = await supabase
         .from("bid_recipients")
-        .select("company_id, status, token, companies:company_id(name)")
+        .select(
+          "company_id, status, token, companies:company_id(name, notifications_enabled)"
+        )
         .eq("bid_package_id", bidPackageId)
         .in("company_id", companyIds)
       if (rErr) return JSON.stringify({ error: rErr.message })
-      const remindable = (recipients ?? []).filter(
-        (r) => r.status === "invited" && !!r.token
-      )
+      const remindable = (recipients ?? [])
+        .filter((r) => {
+          const co = Array.isArray(r.companies) ? r.companies[0] : r.companies
+          return (
+            r.status === "invited" && !!r.token && !!co?.notifications_enabled
+          )
+        })
+        // Match the apply-side plan cap (MAX_BID_REMINDER_RECIPIENTS_PER_PLAN)
+        // so a queued plan can always pass validation.
+        .slice(0, 25)
       if (!remindable.length) {
         return JSON.stringify({
           queued: false,
           reason:
-            "none of those recipients can be reminded (already responded, not invited, or link revoked)",
+            "none of those recipients can be reminded (already responded, not invited, link revoked, or notifications disabled for the company)",
         })
       }
       const project = Array.isArray(pkg.projects)

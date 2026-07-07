@@ -482,11 +482,22 @@ export async function postDailyLogComment(input: {
   revalidatePath(`/projects/${parsed.project_id}/communications`)
 }
 
-const DraftClientUpdateInput = z.object({
-  project_id: z.string().uuid(),
-  from_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  to_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-})
+const DraftClientUpdateInput = z
+  .object({
+    project_id: z.string().uuid(),
+    from_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    to_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  })
+  // Bound the window so a tampered request can't pull months of logs into
+  // one prompt. The UI sends 7 days; 60 leaves room for a monthly recap.
+  .refine(
+    (v) => {
+      const days =
+        (Date.parse(v.to_date) - Date.parse(v.from_date)) / 86_400_000
+      return days >= 0 && days <= 60
+    },
+    { message: "Date range must be between 0 and 60 days." }
+  )
 
 export type DraftClientUpdateResult =
   | { ok: true; draft: string }
@@ -539,6 +550,9 @@ export async function draftClientUpdate(input: {
     .gte("log_date", from_date)
     .lte("log_date", to_date)
     .order("log_date", { ascending: true })
+    // Belt to the range refine's suspenders — keeps the prompt bounded even
+    // for a log-heavy project (a few logs/day tops in practice).
+    .limit(200)
   if (lErr) return { ok: false, error: lErr.message }
   const logFacts = (logs ?? [])
     .filter((l) => l.notes && l.notes.trim())
