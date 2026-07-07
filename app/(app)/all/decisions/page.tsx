@@ -1,4 +1,5 @@
 import Link from "next/link"
+import { CalendarClock } from "lucide-react"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireSession } from "@/lib/auth"
 import { Badge } from "@/components/ui/badge"
@@ -41,10 +42,13 @@ export default async function AggregateDecisionsPage({
 
   // Newest first with a cap, mirroring the daily-logs page — the scope can
   // now span every open job, so the fetch must not grow without bound.
+  // The due-anchor embed names its FK: decisions↔schedule_items has two
+  // relationships (due_anchor_schedule_item_id here, source_decision_id on
+  // schedule_items), so a bare embed would be PGRST201-ambiguous.
   const decisionsRes = await supabase
     .from("decisions")
     .select(
-      "id, project_id, number, kind, title, status, due_date, approved_at, created_at"
+      "id, project_id, number, kind, title, status, due_date, approved_at, created_at, due_anchor_schedule_item_id, due_anchor_item:schedule_items!decisions_due_anchor_schedule_item_id_fkey(title)"
     )
     .in("project_id", projectIds)
     .order("created_at", { ascending: false })
@@ -118,6 +122,15 @@ export default async function AggregateDecisionsPage({
                     </td>
                     <td className="px-3 py-2 align-top hidden md:table-cell text-xs text-muted">
                       {d.due_date ? formatDate(d.due_date) : "—"}
+                      {d.due_anchor_schedule_item_id && (
+                        <span
+                          title={`Follows ${
+                            d.due_anchor_item?.title ?? "the schedule"
+                          }`}
+                        >
+                          <CalendarClock className="inline h-3 w-3 ml-1 text-brand-500 align-[-2px]" />
+                        </span>
+                      )}
                     </td>
                   </tr>
                 )

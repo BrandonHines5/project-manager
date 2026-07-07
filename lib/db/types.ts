@@ -1066,6 +1066,11 @@ export type Database = {
           delay_cost_per_day: number | null
           delay_days: number | null
           description: string | null
+          due_anchor:
+            | Database["public"]["Enums"]["schedule_parent_anchor"]
+            | null
+          due_anchor_offset_days: number | null
+          due_anchor_schedule_item_id: string | null
           due_date: string | null
           id: string
           kind: Database["public"]["Enums"]["decision_kind"]
@@ -1089,6 +1094,11 @@ export type Database = {
           delay_cost_per_day?: number | null
           delay_days?: number | null
           description?: string | null
+          due_anchor?:
+            | Database["public"]["Enums"]["schedule_parent_anchor"]
+            | null
+          due_anchor_offset_days?: number | null
+          due_anchor_schedule_item_id?: string | null
           due_date?: string | null
           id?: string
           kind: Database["public"]["Enums"]["decision_kind"]
@@ -1112,6 +1122,11 @@ export type Database = {
           delay_cost_per_day?: number | null
           delay_days?: number | null
           description?: string | null
+          due_anchor?:
+            | Database["public"]["Enums"]["schedule_parent_anchor"]
+            | null
+          due_anchor_offset_days?: number | null
+          due_anchor_schedule_item_id?: string | null
           due_date?: string | null
           id?: string
           kind?: Database["public"]["Enums"]["decision_kind"]
@@ -1144,6 +1159,13 @@ export type Database = {
             columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "decisions_due_anchor_schedule_item_id_fkey"
+            columns: ["due_anchor_schedule_item_id"]
+            isOneToOne: false
+            referencedRelation: "schedule_items"
             referencedColumns: ["id"]
           },
           {
@@ -1990,6 +2012,13 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "projects_baseline_set_by_fkey"
+            columns: ["baseline_set_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "projects_client_company_id_fkey"
             columns: ["client_company_id"]
             isOneToOne: false
@@ -2795,21 +2824,21 @@ export type Database = {
       match_contacts_by_email: {
         Args: { p: string }
         Returns: {
+          company_id: string
+          display_name: string
           kind: string
-          company_id: string | null
-          project_id: string | null
-          profile_id: string | null
-          display_name: string | null
+          profile_id: string
+          project_id: string
         }[]
       }
       match_contacts_by_phone: {
         Args: { p: string }
         Returns: {
+          company_id: string
+          display_name: string
           kind: string
-          company_id: string | null
-          project_id: string | null
-          profile_id: string | null
-          display_name: string | null
+          profile_id: string
+          project_id: string
         }[]
       }
       next_bid_package_number: { Args: { p_project: string }; Returns: number }
@@ -2837,10 +2866,7 @@ export type Database = {
         Args: { p_add: boolean; p_ids: string[]; p_label: string }
         Returns: number
       }
-      set_schedule_baseline: {
-        Args: { p_project: string }
-        Returns: undefined
-      }
+      set_schedule_baseline: { Args: { p_project: string }; Returns: undefined }
       trade_sees_assignment_via_role: {
         Args: { p_item: string; p_role: string }
         Returns: boolean

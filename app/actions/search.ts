@@ -138,8 +138,11 @@ export async function globalSearch(input: SearchInput): Promise<SearchResult[]> 
 
   const choicesQ = supabase
     .from("decision_choices")
+    // FK-hinted: decisions↔decision_choices has two relationships
+    // (decision_id + selected_choice_id), so the bare embed is PGRST201-
+    // ambiguous and returns nothing.
     .select(
-      "id, decision_id, title, description, decisions!inner(id, number, project_id, projects!inner(id, name, project_number))"
+      "id, decision_id, title, description, decisions!decision_choices_decision_id_fkey!inner(id, number, project_id, projects!inner(id, name, project_number))"
     )
     .or(ilikeOr(safeQuery, ["title", "description"]))
     .limit(PER_TYPE_LIMIT)
