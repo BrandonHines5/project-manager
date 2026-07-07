@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useMemo } from "react"
+import { useRouter, usePathname, useSearchParams } from "next/navigation"
 import { Plus, List, BarChart3, CheckSquare, Table, Eye, EyeOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -42,6 +43,9 @@ export type ScheduleData = {
 type View = "list" | "gantt" | "todos" | "sheet"
 
 export function ScheduleClient({ data }: { data: ScheduleData }) {
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const [view, setView] = useState<View>("list")
   // Schedule-wide toggle: hide completed items across every view. Lives here
   // so it persists as the user switches between List / To-dos / Sheet / Gantt.
@@ -51,6 +55,29 @@ export function ScheduleClient({ data }: { data: ScheduleData }) {
     | { mode: "edit"; itemId: string }
     | null
   >(data.open_item_id ? { mode: "edit", itemId: data.open_item_id } : null)
+
+  // The ?open= deep link also has to work when the user is ALREADY on this
+  // schedule page (e.g. clicking a global-search result for this project):
+  // the client component doesn't remount on a searchParams change, so the
+  // useState initializer above never re-runs. Sync during render — React's
+  // sanctioned derived-state pattern — instead of an effect.
+  const [lastOpenItemId, setLastOpenItemId] = useState(data.open_item_id)
+  if (data.open_item_id !== lastOpenItemId) {
+    setLastOpenItemId(data.open_item_id)
+    if (data.open_item_id) {
+      setDialogState({ mode: "edit", itemId: data.open_item_id })
+    }
+  }
+
+  function closeDialog() {
+    setDialogState(null)
+    // Drop a consumed ?open= from the URL. Leaving it would make the next
+    // click on the same search result a same-URL navigation (a no-op), and
+    // a browser refresh would unexpectedly reopen the drawer.
+    if (searchParams.get("open")) {
+      router.replace(pathname, { scroll: false })
+    }
+  }
 
   const items = data.items
   const stats = useMemo(() => {
@@ -205,7 +232,7 @@ export function ScheduleClient({ data }: { data: ScheduleData }) {
       {dialogState && (
         <ScheduleItemDialog
           open={true}
-          onClose={() => setDialogState(null)}
+          onClose={closeDialog}
           data={data}
           mode={dialogState.mode === "edit" ? "edit" : "create"}
           item={editItem ?? undefined}

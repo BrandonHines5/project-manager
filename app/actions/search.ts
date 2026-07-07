@@ -250,7 +250,11 @@ export async function globalSearch(input: SearchInput): Promise<SearchResult[]> 
       project_number: p?.project_number ?? null,
       title: s.title,
       snippet: snippet(s.description, query),
-      href: `/projects/${s.project_id}/schedule`,
+      // ?open= deep-links straight into the item's edit drawer (the schedule
+      // page validates the id server-side). Without it, clicking a result
+      // while already on that project's schedule navigated to the same URL —
+      // i.e. did nothing visible.
+      href: `/projects/${s.project_id}/schedule?open=${s.id}`,
       meta: s.kind === "work" ? "Work item" : "To-do",
     })
   }
