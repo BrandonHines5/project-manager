@@ -1,5 +1,4 @@
 import { requireSession } from "@/lib/auth"
-import { Sidebar } from "@/components/layout/sidebar"
 import { Topbar } from "@/components/layout/topbar"
 import { SectionTabs } from "@/components/layout/section-tabs"
 import { ProjectContextShell } from "@/components/layout/project-context-shell"
@@ -47,39 +46,43 @@ export default async function AppLayout({
       ? brandForProjectTypes((projects ?? []).map((p) => p.project_type))
       : HINES_HOMES
 
+  // Buildertrend-style shell: dark menu bar on top, section tabs under it,
+  // jobs list on the left, and the page content scrolling on its own inside
+  // a viewport-height column (so the jobs list and its controls never
+  // scroll out of view).
   return (
-    <div className="flex min-h-screen flex-1">
+    <div className="flex h-dvh flex-col">
       {/* Skip-to-main: invisible until focused. Keyboard users hit Tab on
-          load and get a way to bypass the long sidebar / topbar nav. */}
+          load and get a way to bypass the topbar / jobs-list nav. */}
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:rounded-md focus:bg-brand-500 focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-white focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-brand-500/40"
       >
         Skip to main content
       </a>
-      <Sidebar role={profile.role} brand={brand} />
-      <div className="flex flex-1 flex-col min-w-0">
-        <Topbar
-          fullName={profile.full_name}
-          email={profile.email ?? ""}
-          role={profile.role}
-          unreadCount={unreadCount ?? 0}
-          brand={brand}
-        />
-        <SectionTabs role={profile.role} />
-        <ProjectContextShell
-          sidebar={
-            <ProjectListSidebar
-              projects={projects ?? []}
-              canSync={profile.role === "staff"}
-            />
-          }
+      <Topbar
+        fullName={profile.full_name}
+        email={profile.email ?? ""}
+        role={profile.role}
+        unreadCount={unreadCount ?? 0}
+        brand={brand}
+      />
+      <SectionTabs role={profile.role} />
+      <ProjectContextShell
+        sidebar={
+          <ProjectListSidebar
+            projects={projects ?? []}
+            canSync={profile.role === "staff"}
+          />
+        }
+      >
+        <main
+          id="main-content"
+          className="flex-1 min-w-0 overflow-y-auto"
         >
-          <main id="main-content" className="flex-1 overflow-y-auto">
-            {children}
-          </main>
-        </ProjectContextShell>
-      </div>
+          {children}
+        </main>
+      </ProjectContextShell>
     </div>
   )
 }

@@ -59,7 +59,9 @@ const TYPE_ORDER: SearchResultType[] = [
   "project_file",
 ]
 
-export function GlobalSearch() {
+// `dark` restyles the trigger for the dark top bar; the dialog itself is a
+// light overlay either way.
+export function GlobalSearch({ dark = false }: { dark?: boolean }) {
   const router = useRouter()
   const pathname = usePathname()
   const [open, setOpen] = useState(false)
@@ -184,12 +186,24 @@ export function GlobalSearch() {
       <button
         type="button"
         onClick={openDialog}
-        className="inline-flex h-9 items-center gap-2 rounded-md border border-border-strong bg-background/40 px-2.5 text-sm text-muted hover:bg-background hover:text-foreground transition-colors cursor-pointer min-w-0 sm:w-72"
+        className={cn(
+          "inline-flex h-9 items-center gap-2 rounded-md border px-2.5 text-sm transition-colors cursor-pointer min-w-0 sm:w-72",
+          dark
+            ? "border-white/20 bg-white/10 text-white/70 hover:bg-white/15 hover:text-white"
+            : "border-border-strong bg-background/40 text-muted hover:bg-background hover:text-foreground"
+        )}
         aria-label="Search"
       >
         <Search className="h-4 w-4 shrink-0" />
         <span className="hidden sm:inline truncate">Search projects, items…</span>
-        <kbd className="ml-auto hidden sm:inline rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] font-mono text-muted">
+        <kbd
+          className={cn(
+            "ml-auto hidden sm:inline rounded border px-1.5 py-0.5 text-[10px] font-mono",
+            dark
+              ? "border-white/20 bg-white/10 text-white/60"
+              : "border-border bg-surface text-muted"
+          )}
+        >
           ⌘K
         </kbd>
       </button>

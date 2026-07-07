@@ -54,13 +54,13 @@ const SECTIONS: Section[] = [
 
 /**
  * Buildertrend-style section bar that sits directly under the topbar on every
- * job-context page. Two scopes:
+ * page. Two scopes:
  *
  * - Job scope (/projects/{id}/…): tabs switch sections within that job; the
  *   leading "All jobs" chip jumps to the same section across all jobs.
- * - All-jobs scope (/projects index, /all/*, /communications): only sections
- *   with an aggregate view show, and they span every open job by default
- *   (or the ?ids= selection carried from the jobs list).
+ * - Everywhere else: only sections with an aggregate view show, spanning
+ *   every open job by default (or the ?ids= selection carried from the jobs
+ *   list). The chip lights up on pages that actually show all-jobs data.
  */
 export function SectionTabs({ role }: { role: UserRole }) {
   const path = usePathname()
@@ -78,8 +78,6 @@ export function SectionTabs({ role }: { role: UserRole }) {
     path === "/communications" || path.startsWith("/communications/")
   const inAllScope = onProjectsIndex || onAll || onComms
 
-  if (!projectId && !inAllScope) return null
-
   const visible = SECTIONS.filter((s) => !s.hideForRoles?.includes(role))
   const aggregateTabs = visible.filter(
     (s) =>
@@ -90,9 +88,10 @@ export function SectionTabs({ role }: { role: UserRole }) {
   const withIds = (href: string) =>
     ids && href.startsWith("/all/") ? `${href}?ids=${ids}` : href
 
-  // Where the "All jobs" chip lands from a job page: the same section when
-  // it has an aggregate view the viewer may see, else the viewer's first
-  // aggregate section (clients, e.g., have no Schedule).
+  // Where the "All jobs" chip lands from a job page (or an unscoped page
+  // like /companies): the same section when it has an aggregate view the
+  // viewer may see, else the viewer's first aggregate section (clients,
+  // e.g., have no Schedule).
   const chipHref = withIds(
     aggregateTabs.find((s) => s.slug === projectSlug)?.aggregateHref ??
       aggregateTabs[0]?.aggregateHref ??

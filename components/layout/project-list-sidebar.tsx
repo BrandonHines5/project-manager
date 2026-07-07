@@ -135,15 +135,19 @@ export function ProjectListSidebar({
 
   // Derive both the current project and the current sub-route from the
   // pathname so clicking a different project keeps the user on the same tab
-  // (i.e. /projects/A/daily-logs → /projects/B/daily-logs). On /all/* there's
-  // no "current project", but the section still carries (/all/daily-logs →
-  // /projects/X/daily-logs).
+  // (i.e. /projects/A/daily-logs → /projects/B/daily-logs). On /all/* and
+  // /communications there's no "current project", but the section still
+  // carries (/all/daily-logs → /projects/X/daily-logs; the Communications
+  // hub → /projects/X/communications).
   const { currentProjectId, currentSubRoute } = useMemo(() => {
     const m = pathname.match(/^\/projects\/([^/]+)(?:\/([^/]+))?/)
     const all = pathname.match(/^\/all\/([^/]+)/)
+    const onComms =
+      pathname === "/communications" || pathname.startsWith("/communications/")
     return {
       currentProjectId: m?.[1] ?? null,
-      currentSubRoute: m?.[2] ?? all?.[1] ?? "schedule",
+      currentSubRoute:
+        m?.[2] ?? all?.[1] ?? (onComms ? "communications" : "schedule"),
     }
   }, [pathname])
 

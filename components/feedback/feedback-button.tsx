@@ -19,19 +19,24 @@ import { submitFeedback } from "@/app/actions/feedback"
 import { FEEDBACK_TYPES, type FeedbackType } from "@/lib/feedback"
 
 // "Request an update" — lives in the top nav so any signed-in user can fire off
-// a request from anywhere in the app.
-export function FeedbackButton() {
+// a request from anywhere in the app. `dark` restyles the trigger for the
+// dark top bar.
+export function FeedbackButton({ dark = false }: { dark?: boolean }) {
   const [open, setOpen] = useState(false)
   return (
     <>
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="inline-flex h-9 items-center gap-1.5 rounded-md px-2.5 text-sm text-muted hover:bg-background hover:text-foreground cursor-pointer"
+        className={
+          dark
+            ? "inline-flex h-9 items-center gap-1.5 rounded-md px-2.5 text-sm text-white/70 hover:bg-white/10 hover:text-white cursor-pointer"
+            : "inline-flex h-9 items-center gap-1.5 rounded-md px-2.5 text-sm text-muted hover:bg-background hover:text-foreground cursor-pointer"
+        }
         title="Request an update"
       >
         <MessageSquarePlus className="h-4 w-4" />
-        <span className="hidden lg:inline">Request an update</span>
+        <span className="hidden xl:inline">Request an update</span>
       </button>
       {open && <FeedbackDialog onClose={() => setOpen(false)} />}
     </>

@@ -56,7 +56,7 @@ export function MobileNav({
         onClick={() => setOpen(true)}
         aria-label="Open menu"
         aria-expanded={open}
-        className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted hover:bg-background hover:text-foreground cursor-pointer"
+        className="inline-flex h-9 w-9 items-center justify-center rounded-md text-white/70 hover:bg-white/10 hover:text-white cursor-pointer"
       >
         <Menu className="h-5 w-5" />
       </button>
