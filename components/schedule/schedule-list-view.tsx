@@ -15,6 +15,8 @@ import {
   Paperclip,
   Zap,
   Flag,
+  Search,
+  X,
 } from "lucide-react"
 import { cn, formatDateRange, formatDate } from "@/lib/utils"
 import { AvatarStack } from "@/components/ui/avatar"
@@ -90,6 +92,21 @@ export function ScheduleListView({
   const visibleUnlinkedTodos = hideComplete
     ? unlinkedTodos.filter((t) => t.status !== "complete")
     : unlinkedTodos
+
+  // Keyword filter for the work-items list (the field just above it).
+  // Case-insensitive substring match on the work item's title; to-dos and
+  // the critical-path summary are untouched.
+  const [workSearch, setWorkSearch] = useState("")
+  const workQuery = workSearch.trim().toLowerCase()
+  const searchedWorkItems = useMemo(
+    () =>
+      workQuery
+        ? visibleWorkItems.filter((w) =>
+            w.title.toLowerCase().includes(workQuery)
+          )
+        : visibleWorkItems,
+    [visibleWorkItems, workQuery]
+  )
 
   // Expansion state lifted out of WorkItemRow so the Expand/Collapse all
   // buttons can drive every row in one click. Default: every work item is
@@ -188,43 +205,76 @@ export function ScheduleListView({
         )}
 
       {visibleWorkItems.length > 0 && (
-        <div className="bg-surface border border-border rounded-lg overflow-hidden">
-          <div className="px-4 py-2.5 bg-background/60 border-b border-border text-xs uppercase tracking-wide text-muted font-medium flex items-center justify-between">
-            <span>Work items</span>
-            <button
-              type="button"
-              onClick={allCollapsed ? expandAll : collapseAll}
-              className="inline-flex items-center gap-1 text-[11px] font-medium normal-case tracking-normal text-muted hover:text-foreground cursor-pointer"
-              title={allCollapsed ? "Expand all work items" : "Collapse all work items"}
-            >
-              {allCollapsed ? (
-                <>
-                  <ChevronsUpDown className="h-3.5 w-3.5" /> Expand all
-                </>
-              ) : (
-                <>
-                  <ChevronsDownUp className="h-3.5 w-3.5" /> Collapse all
-                </>
-              )}
-            </button>
+        <>
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted pointer-events-none" />
+            <input
+              type="text"
+              value={workSearch}
+              onChange={(e) => setWorkSearch(e.target.value)}
+              placeholder="Search work items…"
+              aria-label="Search work items"
+              className="h-9 w-full rounded-md border border-border-strong bg-surface pl-8 pr-8 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40"
+            />
+            {workSearch !== "" && (
+              <button
+                type="button"
+                onClick={() => setWorkSearch("")}
+                aria-label="Clear work item search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted hover:text-foreground cursor-pointer"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
-          <ul className="divide-y divide-border">
-            {visibleWorkItems.map((item) => (
-              <WorkItemRow
-                key={item.id}
-                item={item}
-                data={data}
-                onEdit={onEdit}
-                onAddTodo={onAddTodo}
-                expanded={!collapsedIds.has(item.id)}
-                onToggleExpanded={(next) => setExpandedFor(item.id, next)}
-                selectedIds={selectedIds}
-                onToggleSelected={toggleSelected}
-                hideComplete={hideComplete}
-              />
-            ))}
-          </ul>
-        </div>
+          <div className="bg-surface border border-border rounded-lg overflow-hidden">
+            <div className="px-4 py-2.5 bg-background/60 border-b border-border text-xs uppercase tracking-wide text-muted font-medium flex items-center justify-between">
+              <span>
+                Work items
+                {workQuery &&
+                  ` · ${searchedWorkItems.length} of ${visibleWorkItems.length}`}
+              </span>
+              <button
+                type="button"
+                onClick={allCollapsed ? expandAll : collapseAll}
+                className="inline-flex items-center gap-1 text-[11px] font-medium normal-case tracking-normal text-muted hover:text-foreground cursor-pointer"
+                title={allCollapsed ? "Expand all work items" : "Collapse all work items"}
+              >
+                {allCollapsed ? (
+                  <>
+                    <ChevronsUpDown className="h-3.5 w-3.5" /> Expand all
+                  </>
+                ) : (
+                  <>
+                    <ChevronsDownUp className="h-3.5 w-3.5" /> Collapse all
+                  </>
+                )}
+              </button>
+            </div>
+            {searchedWorkItems.length === 0 ? (
+              <p className="px-4 py-6 text-sm text-muted">
+                No work items match &ldquo;{workSearch.trim()}&rdquo;.
+              </p>
+            ) : (
+              <ul className="divide-y divide-border">
+                {searchedWorkItems.map((item) => (
+                  <WorkItemRow
+                    key={item.id}
+                    item={item}
+                    data={data}
+                    onEdit={onEdit}
+                    onAddTodo={onAddTodo}
+                    expanded={!collapsedIds.has(item.id)}
+                    onToggleExpanded={(next) => setExpandedFor(item.id, next)}
+                    selectedIds={selectedIds}
+                    onToggleSelected={toggleSelected}
+                    hideComplete={hideComplete}
+                  />
+                ))}
+              </ul>
+            )}
+          </div>
+        </>
       )}
 
       {visibleUnlinkedTodos.length > 0 && (
