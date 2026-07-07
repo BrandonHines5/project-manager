@@ -44,6 +44,10 @@ type Company = {
   trade_category: string | null
 }
 
+function normalizeRoleKind(kind: string): RoleKind {
+  return (["staff", "company", "any"].includes(kind) ? kind : "any") as RoleKind
+}
+
 export function RolesClient({
   projectId,
   isTemplate,
@@ -71,11 +75,9 @@ export function RolesClient({
   // Group by kind — staff first, then subs/vendors, then "anyone" — and
   // alphabetize within each group so a long role list is scannable.
   const groups = useMemo(() => {
-    const normKind = (r: Role): RoleKind =>
-      (["staff", "company", "any"].includes(r.kind) ? r.kind : "any") as RoleKind
     const byKind = (k: RoleKind) =>
       roles
-        .filter((r) => normKind(r) === k)
+        .filter((r) => normalizeRoleKind(r.kind) === k)
         .sort((a, b) => a.name.localeCompare(b.name))
     return (
       [
@@ -175,9 +177,7 @@ function RoleRow({
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
-  const kind = (["staff", "company", "any"].includes(role.kind)
-    ? role.kind
-    : "any") as RoleKind
+  const kind = normalizeRoleKind(role.kind)
 
   // People = non-client profiles; companies = already filtered to non-client.
   const people = useMemo(
