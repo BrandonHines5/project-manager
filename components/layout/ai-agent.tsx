@@ -59,7 +59,9 @@ const STARTER_EXAMPLES = [
   "Add 'Check that nails are picked up' to the framing to-do in every open project",
 ]
 
-export function AIAgent() {
+// `dark` restyles the trigger for the dark top bar; the dialog is a light
+// overlay either way.
+export function AIAgent({ dark = false }: { dark?: boolean }) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
@@ -278,7 +280,12 @@ export function AIAgent() {
       <button
         type="button"
         onClick={openDialog}
-        className="inline-flex h-9 items-center gap-1.5 rounded-md border border-brand-500 bg-brand-500/10 px-2.5 text-sm font-medium text-brand-700 hover:bg-brand-500/20 transition-colors cursor-pointer"
+        className={cn(
+          "inline-flex h-9 items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium transition-colors cursor-pointer",
+          dark
+            ? "border-brand-500/70 bg-brand-500/25 text-white hover:bg-brand-500/40"
+            : "border-brand-500 bg-brand-500/10 text-brand-700 hover:bg-brand-500/20"
+        )}
         aria-label="Open AI assistant"
         title="AI smart updates"
       >
