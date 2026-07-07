@@ -93,20 +93,31 @@ export function ScheduleListView({
     ? unlinkedTodos.filter((t) => t.status !== "complete")
     : unlinkedTodos
 
-  // Keyword filter for the work-items list (the field just above it).
-  // Case-insensitive substring match on the work item's title; to-dos and
-  // the critical-path summary are untouched.
+  // Keyword filter for the schedule list (the field just above it).
+  // Case-insensitive substring match on work item AND to-do titles: a work
+  // item stays visible when its own title matches or any of its child
+  // to-dos match (the rows then show just the matching to-dos). Unlinked
+  // to-dos filter by their own title. The critical-path summary is untouched.
   const [workSearch, setWorkSearch] = useState("")
   const workQuery = workSearch.trim().toLowerCase()
   const searchedWorkItems = useMemo(
     () =>
       workQuery
-        ? visibleWorkItems.filter((w) =>
-            w.title.toLowerCase().includes(workQuery)
+        ? visibleWorkItems.filter(
+            (w) =>
+              w.title.toLowerCase().includes(workQuery) ||
+              childItemsOf(w.id, data.items).some((c) =>
+                c.title.toLowerCase().includes(workQuery)
+              )
           )
         : visibleWorkItems,
-    [visibleWorkItems, workQuery]
+    [visibleWorkItems, workQuery, data.items]
   )
+  const searchedUnlinkedTodos = workQuery
+    ? visibleUnlinkedTodos.filter((t) =>
+        t.title.toLowerCase().includes(workQuery)
+      )
+    : visibleUnlinkedTodos
 
   // Expansion state lifted out of WorkItemRow so the Expand/Collapse all
   // buttons can drive every row in one click. Default: every work item is
@@ -212,8 +223,8 @@ export function ScheduleListView({
               type="text"
               value={workSearch}
               onChange={(e) => setWorkSearch(e.target.value)}
-              placeholder="Search work items…"
-              aria-label="Search work items"
+              placeholder="Search work items & to-dos…"
+              aria-label="Search work items and to-dos"
               className="h-9 w-full rounded-md border border-border-strong bg-surface pl-8 pr-8 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40"
             />
             {workSearch !== "" && (
@@ -253,7 +264,7 @@ export function ScheduleListView({
             </div>
             {searchedWorkItems.length === 0 ? (
               <p className="px-4 py-6 text-sm text-muted">
-                No work items match &ldquo;{workSearch.trim()}&rdquo;.
+                No work items or to-dos match &ldquo;{workSearch.trim()}&rdquo;.
               </p>
             ) : (
               <ul className="divide-y divide-border">
@@ -264,11 +275,14 @@ export function ScheduleListView({
                     data={data}
                     onEdit={onEdit}
                     onAddTodo={onAddTodo}
-                    expanded={!collapsedIds.has(item.id)}
+                    // While searching, matches may live in collapsed rows —
+                    // force-expand so they're actually visible.
+                    expanded={!!workQuery || !collapsedIds.has(item.id)}
                     onToggleExpanded={(next) => setExpandedFor(item.id, next)}
                     selectedIds={selectedIds}
                     onToggleSelected={toggleSelected}
                     hideComplete={hideComplete}
+                    searchQuery={workQuery}
                   />
                 ))}
               </ul>
@@ -277,10 +291,14 @@ export function ScheduleListView({
         </>
       )}
 
-      {visibleUnlinkedTodos.length > 0 && (
+      {searchedUnlinkedTodos.length > 0 && (
         <div className="bg-surface border border-border rounded-lg overflow-hidden">
           <div className="px-4 py-2.5 bg-background/60 border-b border-border text-xs uppercase tracking-wide text-muted font-medium flex items-center justify-between">
-            <span>Unlinked to-dos</span>
+            <span>
+              Unlinked to-dos
+              {workQuery &&
+                ` · ${searchedUnlinkedTodos.length} of ${visibleUnlinkedTodos.length}`}
+            </span>
             <button
               onClick={() => onAddTodo(undefined)}
               className="text-brand-600 hover:underline inline-flex items-center gap-1 cursor-pointer"
@@ -289,7 +307,7 @@ export function ScheduleListView({
             </button>
           </div>
           <ul className="divide-y divide-border">
-            {visibleUnlinkedTodos.map((todo) => (
+            {searchedUnlinkedTodos.map((todo) => (
               <TodoRow
                 key={todo.id}
                 item={todo}
@@ -457,6 +475,7 @@ function WorkItemRow({
   selectedIds,
   onToggleSelected,
   hideComplete,
+  searchQuery = "",
 }: {
   item: Tables<"schedule_items">
   data: ScheduleData
@@ -467,13 +486,25 @@ function WorkItemRow({
   selectedIds: Set<string>
   onToggleSelected: (id: string) => void
   hideComplete: boolean
+  // Active list-filter keyword (already lowercased). When this row is shown
+  // only because some of its to-dos match, the rendered children narrow to
+  // those matches; a title-matched row keeps all its children.
+  searchQuery?: string
 }) {
   const children = childItemsOf(item.id, data.items)
   // The "X/Y to-dos" count below still reflects all children; only the
-  // rendered rows are filtered when hiding completed items.
-  const visibleChildren = hideComplete
+  // rendered rows are filtered when hiding completed items or searching.
+  const hideFiltered = hideComplete
     ? children.filter((c) => c.status !== "complete")
     : children
+  const titleMatches =
+    searchQuery !== "" && item.title.toLowerCase().includes(searchQuery)
+  const visibleChildren =
+    searchQuery !== "" && !titleMatches
+      ? hideFiltered.filter((c) =>
+          c.title.toLowerCase().includes(searchQuery)
+        )
+      : hideFiltered
   const assignees = assigneeNamesFor(item.id, data)
   const delays = delaysFor(item.id, data.delays)
   const isSelected = selectedIds.has(item.id)
