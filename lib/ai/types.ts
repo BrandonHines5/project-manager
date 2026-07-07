@@ -4,12 +4,13 @@
 // of the propose_* tools to add an entry to the plan; nothing executes until
 // the user reviews and approves.
 //
-// Adding a new mutation kind takes four edits (kept in sync — see
+// Adding a new mutation kind takes five edits (kept in sync — see
 // CLAUDE.md → "AI smart-update agent — model"):
 //   1. extend this union
 //   2. add the propose_* tool definition + handler in lib/ai/agent.ts
 //   3. add the apply branch in lib/ai/apply.ts
-//   4. add a case in components/layout/ai-agent.tsx:MutationRow
+//   4. add a case in components/ai/plan-review.tsx:MutationRow
+//   5. add the Zod case in app/actions/ai-agent.ts:MutationSchema
 //
 // `is_destructive` (helper) below classifies which mutations require the
 // typed-confirmation gate in the dialog footer.
@@ -46,10 +47,30 @@ export type ProposedMutation =
       description: string | null
       due_date: string | null
       parent_id: string | null
+      // Optional assignee — exactly one of profile/company, or neither.
+      // Applied as a schedule_assignments row after the to-do is created.
+      assignee_profile_id: string | null
+      assignee_company_id: string | null
       context: {
         project_name: string
         project_number: string
         parent_title: string | null
+        assignee_name: string | null
+      }
+    }
+  | {
+      // Add an assignment to an EXISTING schedule item (work or todo).
+      // Exactly one of profile/company. Idempotent on apply (skips if the
+      // same assignee is already on the item).
+      kind: "assign_schedule_item"
+      schedule_item_id: string
+      assignee_profile_id: string | null
+      assignee_company_id: string | null
+      context: {
+        project_name: string
+        project_number: string
+        item_title: string
+        assignee_name: string
       }
     }
   | {
@@ -100,6 +121,14 @@ export type ProposedMutation =
       // Walkthrough photos to link to the log (server-injected; absent for
       // plans from the global dialog).
       attachments?: DailyLogPhotoAttachment[]
+      // Subs/vendors that were on site, recorded structurally in
+      // daily_log_subs_on_site (not just as prose in the note). company_name
+      // is resolved at propose time for the review UI; apply uses company_id.
+      subs_on_site?: {
+        company_id: string
+        company_name: string
+        notes: string | null
+      }[]
       context: {
         project_name: string
         project_number: string
@@ -168,6 +197,21 @@ export type ProposedMutation =
         project_number: string | null
       }
     }
+  | {
+      // Re-send a bid package's invite to recipients who were invited but
+      // haven't responded. Apply reuses each recipient's existing token —
+      // it never creates recipients or changes the package status.
+      kind: "send_bid_reminder"
+      bid_package_id: string
+      company_ids: string[]
+      context: {
+        project_name: string
+        project_number: string
+        package_number: number
+        package_title: string
+        recipient_names: string[]
+      }
+    }
 
 /**
  * Mutations that change existing data — or leave the building entirely,
@@ -179,15 +223,25 @@ export function isDestructive(m: ProposedMutation): boolean {
     m.kind === "update_schedule_item_status" ||
     m.kind === "update_schedule_item" ||
     m.kind === "update_decision_status" ||
-    m.kind === "send_sms"
+    m.kind === "send_sms" ||
+    m.kind === "send_bid_reminder"
   )
 }
 
 export type AgentTurnResult =
   | {
       type: "plan"
+      // Server-generated per-turn UUID. Round-trips through the client and
+      // is required at apply time as an idempotency key — re-applying the
+      // same plan is a no-op that returns the first apply's results instead
+      // of duplicating writes (or re-texting subs). See ai_plan_applications.
+      plan_id: string
       summary: string
       mutations: ProposedMutation[]
+      // Set when the turn was cut short: "max_tokens" (the model's response
+      // was truncated) or "iteration_cap" (hit MAX_ITERATIONS). The plan may
+      // be missing its tail — the UI warns before the user applies.
+      incomplete?: "max_tokens" | "iteration_cap"
     }
   | {
       type: "question"

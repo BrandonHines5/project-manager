@@ -1,7 +1,67 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { Database, TablesUpdate } from "@/lib/db/types"
 import { sendQuoSms, normalizeE164 } from "@/lib/quo"
+import { sendEmail, appUrl } from "@/lib/email"
+import { formatDate } from "@/lib/utils"
 import type { ProposedMutation, AppliedMutation } from "./types"
+
+// Best-effort in-app notification for a staff (profile) assignee, mirroring
+// the in-app portion of notifyScheduleAssignees in app/actions/schedule.ts.
+// Company assignees are external subs (no in-app notifications); the AI path
+// records the assignment — they see it in their portal — but does not
+// email/SMS them in v1. Never throws: a failed notify must not fail the
+// assignment that already committed.
+async function notifyProfileAssignee(
+  supabase: SupabaseClient<Database>,
+  profileId: string,
+  projectId: string,
+  itemTitle: string
+): Promise<void> {
+  try {
+    await supabase.from("notifications").insert({
+      recipient_id: profileId,
+      type: "schedule_assignment",
+      title: `Assigned: ${itemTitle}`,
+      body: "You were assigned to a schedule item",
+      link_url: `/projects/${projectId}/schedule`,
+    })
+  } catch (e) {
+    console.warn(
+      "[ai apply] assignment notification failed (non-fatal):",
+      e instanceof Error ? e.message : String(e)
+    )
+  }
+}
+
+// Insert an assignment idempotently: skip when the same (item, profile,
+// company) pair already exists so re-applying a plan doesn't error on the
+// uq_schedule_assignments_target unique index. Returns the profile_id that
+// was NEWLY assigned (for notification), or null.
+async function upsertAssignment(
+  supabase: SupabaseClient<Database>,
+  scheduleItemId: string,
+  profileId: string | null,
+  companyId: string | null
+): Promise<{ newlyAssignedProfileId: string | null }> {
+  let q = supabase
+    .from("schedule_assignments")
+    .select("id")
+    .eq("schedule_item_id", scheduleItemId)
+  q = profileId ? q.eq("profile_id", profileId) : q.is("profile_id", null)
+  q = companyId ? q.eq("company_id", companyId) : q.is("company_id", null)
+  const { data: existing, error: exErr } = await q.is("role_id", null).limit(1)
+  if (exErr) throw new Error(exErr.message)
+  if (existing && existing.length > 0) {
+    return { newlyAssignedProfileId: null }
+  }
+  const { error } = await supabase.from("schedule_assignments").insert({
+    schedule_item_id: scheduleItemId,
+    profile_id: profileId,
+    company_id: companyId,
+  })
+  if (error) throw new Error(error.message)
+  return { newlyAssignedProfileId: profileId }
+}
 
 /**
  * Execute a single approved mutation. RLS is the source of truth for who can
@@ -191,16 +251,74 @@ async function applyOne(
         return { mutation, ok: true }
       }
       case "create_todo": {
-        const { error } = await supabase.from("schedule_items").insert({
-          project_id: mutation.project_id,
-          kind: "todo",
-          title: mutation.title,
-          description: mutation.description,
-          due_date: mutation.due_date,
-          parent_id: mutation.parent_id,
-          created_by: actorId,
-        })
+        const { data: created, error } = await supabase
+          .from("schedule_items")
+          .insert({
+            project_id: mutation.project_id,
+            kind: "todo",
+            title: mutation.title,
+            description: mutation.description,
+            due_date: mutation.due_date,
+            parent_id: mutation.parent_id,
+            created_by: actorId,
+          })
+          .select("id")
+          .single()
         if (error) throw new Error(error.message)
+        // Optional assignee: add the assignment and notify a staff assignee.
+        // Best-effort — the to-do already exists, so a failed assignment
+        // shouldn't sink the whole mutation.
+        if (mutation.assignee_profile_id || mutation.assignee_company_id) {
+          try {
+            const { newlyAssignedProfileId } = await upsertAssignment(
+              supabase,
+              created.id,
+              mutation.assignee_profile_id,
+              mutation.assignee_company_id
+            )
+            if (newlyAssignedProfileId) {
+              await notifyProfileAssignee(
+                supabase,
+                newlyAssignedProfileId,
+                mutation.project_id,
+                mutation.title
+              )
+            }
+          } catch (e) {
+            console.warn(
+              "[ai apply] create_todo assignment failed (non-fatal):",
+              e instanceof Error ? e.message : String(e)
+            )
+          }
+        }
+        return { mutation, ok: true }
+      }
+      case "assign_schedule_item": {
+        // Verify the target exists under the caller's session (RLS) and pull
+        // the project id for the notification link.
+        const { data: item, error: iErr } = await supabase
+          .from("schedule_items")
+          .select("id, title, project_id")
+          .eq("id", mutation.schedule_item_id)
+          .maybeSingle()
+        if (iErr) throw new Error(iErr.message)
+        if (!item) {
+          throw new Error("schedule item not found or not permitted")
+        }
+        const { newlyAssignedProfileId } = await upsertAssignment(
+          supabase,
+          mutation.schedule_item_id,
+          mutation.assignee_profile_id,
+          mutation.assignee_company_id
+        )
+        if (newlyAssignedProfileId) {
+          await notifyProfileAssignee(
+            supabase,
+            newlyAssignedProfileId,
+            item.project_id,
+            item.title
+          )
+        }
         return { mutation, ok: true }
       }
       case "create_work_item": {
@@ -381,6 +499,32 @@ async function applyOne(
             }
           }
         }
+        // Record subs on site structurally (in addition to the note prose) so
+        // the who-was-on-site report is complete for AI-created logs. Upsert
+        // with the (daily_log_id, company_id) PK so re-applying — or a second
+        // same-day walkthrough — dedupes instead of erroring. (The manual
+        // drawer's "newly on site" courtesy SMS is intentionally not fired
+        // here; the AI path just records presence.)
+        const subs = mutation.subs_on_site ?? []
+        if (subs.length > 0) {
+          const { error: sErr } = await supabase
+            .from("daily_log_subs_on_site")
+            .upsert(
+              subs.map((s) => ({
+                daily_log_id: logId,
+                company_id: s.company_id,
+                notes: s.notes,
+              })),
+              { onConflict: "daily_log_id,company_id", ignoreDuplicates: true }
+            )
+          if (sErr) {
+            return {
+              mutation,
+              ok: false,
+              error: `Note saved, but recording ${subs.length} sub(s) on site failed: ${sErr.message}`,
+            }
+          }
+        }
         return { mutation, ok: true }
       }
       case "send_sms": {
@@ -459,6 +603,94 @@ async function applyOne(
             position: nextPos,
           })
         if (error) throw new Error(error.message)
+        return { mutation, ok: true }
+      }
+      case "send_bid_reminder": {
+        // Re-send the invite link to invited-but-unresponded recipients.
+        // Never creates recipients and never changes the package status —
+        // this is strictly a reminder. Mirrors sendBidPackage's re-send
+        // guards (closed package blocks; non-'invited' or token-revoked
+        // recipients are skipped).
+        const { data: pkg, error: pErr } = await supabase
+          .from("bid_packages")
+          .select(
+            "id, project_id, title, number, due_date, status, projects:project_id(name)"
+          )
+          .eq("id", mutation.bid_package_id)
+          .maybeSingle()
+        if (pErr) throw new Error(pErr.message)
+        if (!pkg) throw new Error("bid package not found or not permitted")
+        if (pkg.status === "closed") {
+          throw new Error("this bid package is closed")
+        }
+        const { data: recipients, error: rErr } = await supabase
+          .from("bid_recipients")
+          .select(
+            "id, company_id, token, status, companies:company_id(name, email, phone, notifications_enabled)"
+          )
+          .eq("bid_package_id", mutation.bid_package_id)
+          .in("company_id", mutation.company_ids)
+        if (rErr) throw new Error(rErr.message)
+
+        const projectName =
+          (
+            pkg as unknown as { projects: { name: string } | null }
+          ).projects?.name ?? "our project"
+        const dueLine = pkg.due_date
+          ? ` Bids are due by ${formatDate(pkg.due_date)}.`
+          : ""
+        const now = new Date().toISOString()
+
+        const sendJobs: Promise<unknown>[] = []
+        for (const r of recipients ?? []) {
+          if (r.status !== "invited" || !r.token) continue
+          const co = Array.isArray(r.companies) ? r.companies[0] : r.companies
+          if (!co || !co.notifications_enabled) continue
+          const { error: upErr } = await supabase
+            .from("bid_recipients")
+            .update({
+              last_sent_at: now,
+              sent_to_email: co.email,
+              sent_to_phone: co.phone,
+            })
+            .eq("id", r.id)
+          if (upErr) throw new Error(upErr.message)
+          const link = appUrl(`/bid/${r.token}`)
+          const log = {
+            project_id: pkg.project_id,
+            company_id: r.company_id,
+            sent_by: actorId,
+            kind: "bid_invite",
+            counterparty_name: co.name,
+          }
+          if (co.email) {
+            sendJobs.push(
+              sendEmail({
+                to: [co.email],
+                subject: `Reminder — bid request: ${pkg.title} — ${projectName}`,
+                text: `Reminder from Hines Homes: we're still waiting on your bid for "${pkg.title}" on ${projectName}.${dueLine}\n\nView the scope and submit your bid here (no login needed):\n${link}`,
+                log,
+              }).catch((e) =>
+                console.warn("[ai apply] bid reminder email failed:", e)
+              )
+            )
+          }
+          const e164 = co.phone ? normalizeE164(co.phone) : null
+          if (e164) {
+            sendJobs.push(
+              sendQuoSms({
+                to: e164,
+                content: `Hines Homes reminder: still waiting on your bid for "${pkg.title}" on ${projectName}.${dueLine} Submit here: ${link}`,
+                log,
+              }).catch((e) =>
+                console.warn("[ai apply] bid reminder SMS failed:", e)
+              )
+            )
+          }
+        }
+        await Promise.all(sendJobs)
+        // Zero reminders is a soft no-op (everyone may have responded between
+        // propose and apply) — not an error.
         return { mutation, ok: true }
       }
     }

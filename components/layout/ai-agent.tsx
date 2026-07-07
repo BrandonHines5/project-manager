@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, usePathname } from "next/navigation"
 import { toast } from "sonner"
 import {
   Sparkles,
@@ -11,6 +11,8 @@ import {
   AlertTriangle,
   Mic,
   MicOff,
+  MapPin,
+  X,
 } from "lucide-react"
 import {
   Dialog,
@@ -27,6 +29,7 @@ import { cn } from "@/lib/utils"
 import {
   runAgentTurnAction,
   applyPlanAction,
+  getScopedProject,
 } from "@/app/actions/ai-agent"
 import {
   isDestructive,
@@ -47,10 +50,29 @@ type Phase =
   | { kind: "compose" }
   | { kind: "thinking" }
   | { kind: "question"; question: string }
-  | { kind: "plan"; summary: string; mutations: ProposedMutation[] }
+  | {
+      kind: "plan"
+      plan_id: string
+      summary: string
+      mutations: ProposedMutation[]
+      incomplete?: "max_tokens" | "iteration_cap"
+    }
   | { kind: "applying" }
   | { kind: "applied"; results: AppliedMutation[] }
   | { kind: "error"; message: string }
+
+type ScopedProject = { id: string; name: string; project_number: string }
+
+// Pull a project id out of a /projects/{uuid}/… route so the dialog can
+// auto-scope to the project the user is viewing.
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+function projectIdFromPath(path: string | null): string | null {
+  if (!path) return null
+  const m = path.match(/^\/projects\/([^/]+)/)
+  if (!m) return null
+  return UUID_RE.test(m[1]) ? m[1] : null
+}
 
 const STARTER_EXAMPLES = [
   "The tile guy says he will finish today",
@@ -63,11 +85,18 @@ const STARTER_EXAMPLES = [
 // overlay either way.
 export function AIAgent({ dark = false }: { dark?: boolean }) {
   const router = useRouter()
+  const pathname = usePathname()
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState("")
   const [phase, setPhase] = useState<Phase>({ kind: "compose" })
   const [pending, startTransition] = useTransition()
+  // Auto-scope: when opened from a project route, default all requests to
+  // that project (mirrors the walkthrough's trusted-context model). The user
+  // can clear the scope for a cross-project request.
+  const [scopedProject, setScopedProject] = useState<ScopedProject | null>(null)
+  const [scopeCleared, setScopeCleared] = useState(false)
+  const activeScope = scopeCleared ? null : scopedProject
   // Typed confirmation gate for plans that include destructive mutations
   // (any update_*). User must type "apply" before the Apply button enables.
   // Reset whenever the phase transitions to a new plan.
@@ -149,12 +178,26 @@ export function AIAgent({ dark = false }: { dark?: boolean }) {
     setDraft("")
     setConfirmText("")
     setPhase({ kind: "compose" })
+    setScopedProject(null)
+    setScopeCleared(false)
+    // If we're on a project route, resolve the project name for the scope
+    // chip. RLS both authorizes the scope and supplies the display fields.
+    const pid = projectIdFromPath(pathname)
+    if (pid) {
+      getScopedProject(pid)
+        .then((p) => {
+          if (p) setScopedProject(p)
+        })
+        .catch(() => {
+          // Non-fatal — the dialog still works unscoped.
+        })
+    }
     // Feature-detect dictation here (not in an effect) — window isn't
     // available during SSR and this is the first moment we need to know.
     setSpeechSupported(!!getSpeechRecognitionCtor())
     setOpen(true)
     requestAnimationFrame(() => textareaRef.current?.focus())
-  }, [])
+  }, [pathname])
   const closeDialog = useCallback(() => setOpen(false), [])
 
   // Auto-scroll the transcript to the bottom when new content lands.
@@ -180,6 +223,16 @@ export function AIAgent({ dark = false }: { dark?: boolean }) {
           // en-CA formats as YYYY-MM-DD in the browser's local timezone, so
           // "today" in a dictated note means the user's today, not UTC's.
           today: new Date().toLocaleDateString("en-CA"),
+          // Auto-scope to the project route we're on (page mode = no photos).
+          ...(activeScope
+            ? {
+                context: {
+                  project_id: activeScope.id,
+                  attachments: [],
+                  mode: "page" as const,
+                },
+              }
+            : {}),
         })
         handleResult(result, next)
       } catch (e) {
@@ -229,18 +282,20 @@ export function AIAgent({ dark = false }: { dark?: boolean }) {
     setConfirmText("")
     setPhase({
       kind: "plan",
+      plan_id: result.plan_id,
       summary: result.summary,
       mutations: result.mutations,
+      incomplete: result.incomplete,
     })
   }
 
   function applyPlan() {
     if (phase.kind !== "plan") return
-    const mutations = phase.mutations
+    const { mutations, plan_id, summary } = phase
     setPhase({ kind: "applying" })
     startTransition(async () => {
       try {
-        const response = await applyPlanAction({ mutations })
+        const response = await applyPlanAction({ mutations, plan_id, summary })
         if (!response.ok) {
           // Validation / pre-flight failure — show the real reason in the
           // dialog. (Per-mutation failures during apply land in
@@ -252,7 +307,9 @@ export function AIAgent({ dark = false }: { dark?: boolean }) {
         setPhase({ kind: "applied", results })
         const okCount = results.filter((r) => r.ok).length
         const failCount = results.length - okCount
-        if (failCount === 0) {
+        if (response.alreadyApplied) {
+          toast("This plan was already applied — no changes were repeated.")
+        } else if (failCount === 0) {
           toast.success(`Applied ${okCount} change${okCount === 1 ? "" : "s"}`)
         } else {
           toast.error(
@@ -315,6 +372,24 @@ export function AIAgent({ dark = false }: { dark?: boolean }) {
               ref={scrollRef}
               className="px-6 py-4 max-h-[55vh] overflow-y-auto space-y-3"
             >
+              {activeScope && (
+                <div className="flex items-center gap-1.5 rounded-md border border-brand-500/40 bg-brand-500/10 px-2.5 py-1.5 text-xs text-brand-700">
+                  <MapPin className="h-3.5 w-3.5 shrink-0" />
+                  <span className="min-w-0 truncate">
+                    Scoped to <span className="font-medium">{activeScope.name}</span>{" "}
+                    <span className="font-mono">#{activeScope.project_number}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setScopeCleared(true)}
+                    className="ml-auto inline-flex h-5 w-5 items-center justify-center rounded hover:bg-brand-500/20 cursor-pointer"
+                    aria-label="Clear project scope"
+                    title="Clear scope (ask across all projects)"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )}
               {messages.length === 0 && phase.kind === "compose" && (
                 <Starter onPick={(s) => setDraft(s)} />
               )}
@@ -330,6 +405,7 @@ export function AIAgent({ dark = false }: { dark?: boolean }) {
               {phase.kind === "plan" && (
                 <PlanCard
                   mutations={phase.mutations}
+                  incomplete={phase.incomplete}
                   className="max-h-72 overflow-y-auto"
                 />
               )}

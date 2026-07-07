@@ -14,6 +14,50 @@ export type Database = {
   }
   public: {
     Tables: {
+      ai_plan_applications: {
+        Row: {
+          applied_by: string
+          applied_count: number
+          created_at: string
+          failed_count: number
+          id: string
+          mutations: Json
+          plan_id: string
+          results: Json | null
+          summary: string | null
+        }
+        Insert: {
+          applied_by: string
+          applied_count?: number
+          created_at?: string
+          failed_count?: number
+          id?: string
+          mutations: Json
+          plan_id: string
+          results?: Json | null
+          summary?: string | null
+        }
+        Update: {
+          applied_by?: string
+          applied_count?: number
+          created_at?: string
+          failed_count?: number
+          id?: string
+          mutations?: Json
+          plan_id?: string
+          results?: Json | null
+          summary?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_plan_applications_applied_by_fkey"
+            columns: ["applied_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bid_comments: {
         Row: {
           author_name: string

@@ -4,9 +4,10 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
-import { runAgentTurn } from "@/lib/ai/agent"
+import { runAgentTurn, type OnsiteProjectContext } from "@/lib/ai/agent"
 import { applyPlan as applyPlanInternal } from "@/lib/ai/apply"
 import type { AgentTurnResult, AppliedMutation, ProposedMutation } from "@/lib/ai/types"
+import type { Json } from "@/lib/db/types"
 import type Anthropic from "@anthropic-ai/sdk"
 
 // The conversation is stored client-side and shipped in full on every turn.
@@ -37,6 +38,9 @@ const AttachmentInputSchema = z.object({
 const OnsiteContextSchema = z.object({
   project_id: z.string().uuid(),
   attachments: z.array(AttachmentInputSchema).max(30).default([]),
+  // "onsite" = walkthrough (photos auto-attach); "page" = the global dialog
+  // auto-scoped to the project route the user is viewing (no photos).
+  mode: z.enum(["onsite", "page"]).default("onsite"),
 })
 const TurnInputSchema = z.object({
   messages: z.array(ClientMessageSchema).min(1).max(40),
@@ -50,7 +54,10 @@ const TurnInputSchema = z.object({
   context: OnsiteContextSchema.optional(),
 })
 type ClientMessage = z.infer<typeof ClientMessageSchema>
-type OnsiteContextInput = z.infer<typeof OnsiteContextSchema>
+// Input type (not output): `attachments` and `mode` have Zod defaults, so
+// callers may omit them — the walkthrough sends only project_id+attachments,
+// the auto-scoped dialog sends project_id+attachments+mode.
+type OnsiteContextInput = z.input<typeof OnsiteContextSchema>
 
 // On the server we expand the simple {role, content: string} messages into
 // the full Anthropic message shape. Server-side server-turn additions (tool
@@ -63,6 +70,30 @@ function toClaudeMessages(
   msgs: ClientMessage[]
 ): Anthropic.Messages.MessageParam[] {
   return msgs.map((m) => ({ role: m.role, content: m.content }))
+}
+
+// Resolve a project id (parsed from the route the user is viewing) to its
+// name/number for the "Scoped to …" chip in the global AI dialog. Runs under
+// the caller's session so RLS both authorizes the scope and supplies the
+// display fields; returns null for an unknown/forbidden id.
+export async function getScopedProject(
+  projectId: string
+): Promise<{ id: string; name: string; project_number: string } | null> {
+  await requireStaff()
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      projectId
+    )
+  ) {
+    return null
+  }
+  const supabase = await createSupabaseServerClient()
+  const { data } = await supabase
+    .from("projects")
+    .select("id, name, project_number")
+    .eq("id", projectId)
+    .maybeSingle()
+  return data ?? null
 }
 
 export async function runAgentTurnAction(input: {
@@ -92,7 +123,7 @@ export async function runAgentTurnAction(input: {
   // Resolve the onsite project under the caller's session — RLS makes this
   // both an access check and the source of the trusted name/number the
   // system prompt cites. A client-supplied name is never used.
-  let projectContext = null
+  let projectContext: OnsiteProjectContext | null = null
   const context = parsed.data.context
   if (context) {
     const { data: project, error } = await supabase
@@ -106,7 +137,7 @@ export async function runAgentTurnAction(input: {
     if (!project) {
       return { type: "error", message: "Project not found or not permitted." }
     }
-    projectContext = project
+    projectContext = { ...project, mode: context.mode }
   }
 
   try {
@@ -246,10 +277,25 @@ const MutationSchema = z.discriminatedUnion("kind", [
     description: z.string().max(5000).nullable(),
     due_date: z.string().nullable(),
     parent_id: z.string().uuid().nullable(),
+    assignee_profile_id: z.string().uuid().nullable(),
+    assignee_company_id: z.string().uuid().nullable(),
     context: z.object({
       project_name: z.string(),
       project_number: z.string(),
       parent_title: z.string().nullable(),
+      assignee_name: z.string().nullable(),
+    }),
+  }),
+  z.object({
+    kind: z.literal("assign_schedule_item"),
+    schedule_item_id: z.string().uuid(),
+    assignee_profile_id: z.string().uuid().nullable(),
+    assignee_company_id: z.string().uuid().nullable(),
+    context: z.object({
+      project_name: z.string(),
+      project_number: z.string(),
+      item_title: z.string(),
+      assignee_name: z.string(),
     }),
   }),
   z.object({
@@ -310,6 +356,16 @@ const MutationSchema = z.discriminatedUnion("kind", [
     // Walkthrough photos (server-injected at plan time). Apply enforces the
     // storage-path prefix, so validation here stays structural.
     attachments: z.array(AttachmentInputSchema).max(30).optional(),
+    subs_on_site: z
+      .array(
+        z.object({
+          company_id: z.string().uuid(),
+          company_name: z.string(),
+          notes: z.string().max(2000).nullable(),
+        })
+      )
+      .max(50)
+      .optional(),
     context: z.object({
       project_name: z.string(),
       project_number: z.string(),
@@ -327,12 +383,32 @@ const MutationSchema = z.discriminatedUnion("kind", [
       project_number: z.string().nullable(),
     }),
   }),
+  z.object({
+    kind: z.literal("send_bid_reminder"),
+    bid_package_id: z.string().uuid(),
+    company_ids: z.array(z.string().uuid()).min(1).max(50),
+    context: z.object({
+      project_name: z.string(),
+      project_number: z.string(),
+      package_number: z.number(),
+      package_title: z.string(),
+      recipient_names: z.array(z.string()),
+    }),
+  }),
 ])
-// A plan is capped at 200 mutations overall, but SMS leaves the building —
-// a tampered payload with 200 send_sms entries would be a texting cannon.
-// Field notes realistically text at most a handful of subs per apply.
+// A plan is capped at 200 mutations overall, but anything that leaves the
+// building needs a tighter cap — a tampered payload with 200 send_sms /
+// send_bid_reminder entries would be a texting cannon. Field notes
+// realistically message at most a handful of subs per apply.
 const MAX_SMS_PER_PLAN = 5
+const MAX_BID_REMINDERS_PER_PLAN = 10
 const ApplyInputSchema = z.object({
+  // Server-generated per-turn UUID (from the plan result). Used as an
+  // idempotency key so re-applying the same plan can't duplicate writes.
+  plan_id: z.string().uuid(),
+  // The plan's summary, stored on the audit row. Optional — the walkthrough
+  // and dialog both send it, but a tampered payload may omit it.
+  summary: z.string().max(20000).optional(),
   mutations: z
     .array(MutationSchema)
     .min(1)
@@ -342,15 +418,25 @@ const ApplyInputSchema = z.object({
       {
         message: `a plan may contain at most ${MAX_SMS_PER_PLAN} send_sms mutations`,
       }
+    )
+    .refine(
+      (ms) =>
+        ms.filter((m) => m.kind === "send_bid_reminder").length <=
+        MAX_BID_REMINDERS_PER_PLAN,
+      {
+        message: `a plan may contain at most ${MAX_BID_REMINDERS_PER_PLAN} send_bid_reminder mutations`,
+      }
     ),
 })
 
 export type ApplyPlanResult =
-  | { ok: true; results: AppliedMutation[] }
+  | { ok: true; results: AppliedMutation[]; alreadyApplied?: boolean }
   | { ok: false; error: string }
 
 export async function applyPlanAction(input: {
   mutations: ProposedMutation[]
+  plan_id: string
+  summary?: string
 }): Promise<ApplyPlanResult> {
   // Important: never `throw` from this action. Thrown errors get their
   // message scrubbed by Next.js in production builds and surface to the
@@ -373,11 +459,84 @@ export async function applyPlanAction(input: {
     }
   }
   const supabase = await createSupabaseServerClient()
+
+  // Idempotency + audit: claim the plan_id BEFORE applying. The unique
+  // constraint on ai_plan_applications.plan_id means a second apply of the
+  // same plan (a double-click, or the walkthrough's blind retry after a
+  // network error) loses the race and returns the FIRST apply's results
+  // instead of re-running — critical for send_sms / send_bid_reminder, which
+  // can't be un-sent. The claim row also becomes the permanent audit trail.
+  let auditEnabled = true
+  const { error: claimErr } = await supabase.from("ai_plan_applications").insert({
+    plan_id: parsed.data.plan_id,
+    applied_by: profile.id,
+    summary: parsed.data.summary ?? null,
+    mutations: parsed.data.mutations as unknown as Json,
+    results: null,
+    applied_count: 0,
+    failed_count: 0,
+  })
+  if (claimErr) {
+    // Migration 0071 not applied yet (e.g. a preview deploy before the DB
+    // migration runs): degrade gracefully — apply without the idempotency
+    // guard / audit trail rather than blocking every apply. Self-heals once
+    // the table exists.
+    if ((claimErr as { code?: string }).code === "42P01") {
+      console.warn(
+        "[applyPlanAction] ai_plan_applications missing — apply proceeding without idempotency/audit. Apply migration 0071."
+      )
+      auditEnabled = false
+    } else if ((claimErr as { code?: string }).code === "23505") {
+      // Already applied (or applying) — return the stored per-mutation
+      // results rather than an opaque error, so an honest retry sees what
+      // the first apply did.
+      const { data: prior } = await supabase
+        .from("ai_plan_applications")
+        .select("results")
+        .eq("plan_id", parsed.data.plan_id)
+        .maybeSingle()
+      const priorResults = prior?.results as AppliedMutation[] | null
+      if (priorResults && Array.isArray(priorResults)) {
+        return { ok: true, results: priorResults, alreadyApplied: true }
+      }
+      return {
+        ok: false,
+        error:
+          "This plan was already applied. Refine the prompt and re-run to make further changes.",
+      }
+    } else {
+      console.warn("[applyPlanAction] claim insert failed:", claimErr.message)
+      return {
+        ok: false,
+        error: `Could not record the plan before applying: ${claimErr.message}`,
+      }
+    }
+  }
+
   const results = await applyPlanInternal(
     supabase,
     parsed.data.mutations,
     profile.id
   )
+
+  // Record the outcome on the audit row. Best-effort — the writes already
+  // landed, so a failed audit update shouldn't fail the apply. Skipped when
+  // the audit table isn't present yet (see the 42P01 degrade above).
+  if (auditEnabled) {
+    const appliedCount = results.filter((r) => r.ok).length
+    const { error: auditErr } = await supabase
+      .from("ai_plan_applications")
+      .update({
+        results: results as unknown as Json,
+        applied_count: appliedCount,
+        failed_count: results.length - appliedCount,
+      })
+      .eq("plan_id", parsed.data.plan_id)
+    if (auditErr) {
+      console.warn("[applyPlanAction] audit update failed:", auditErr.message)
+    }
+  }
+
   if (results.some((r) => r.ok)) {
     // Only some mutation kinds carry the project_id on the wire; the
     // schedule_item-scoped ones (add_checklist_item, update_schedule_item*)
@@ -401,7 +560,8 @@ export async function applyPlanAction(input: {
           projectIds.add(m.project_id)
           break
         case "send_sms":
-          // Nothing in the DB changed — no revalidation needed.
+        case "send_bid_reminder":
+          // Nothing user-facing in the DB changed — no revalidation needed.
           break
         default:
           needsBroadRevalidate = true

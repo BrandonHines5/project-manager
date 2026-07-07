@@ -1,12 +1,20 @@
 import Anthropic from "@anthropic-ai/sdk"
+import { randomUUID } from "crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { Database } from "@/lib/db/types"
+import { computeScheduleHealth, type MilestoneItem } from "@/lib/schedule/health"
 import type { ProposedMutation, AgentTurnResult } from "./types"
 
-// The model. Sonnet 4.6 is the right balance for tool-use loops here: it's
-// fast enough that a 10-tool plan finishes in seconds, and cheap enough that
-// each plan run is well under a dollar even with the breadth of read tools.
-const MODEL = "claude-sonnet-4-6"
+// The model. Sonnet 5 is near-Opus quality on exactly this workload —
+// tool-use loops and the literal instruction-following the propose_* contract
+// depends on (IDs only from tool results, no duplicate proposals) — at
+// Sonnet-tier cost. Adaptive thinking is left on (Sonnet 5's default): with
+// thinking disabled the model reaches for tools less eagerly, which hurts a
+// loop that must call read + propose_* tools to do anything. max_tokens is
+// raised to 8192 so a turn's thinking + tool calls + summary never truncate
+// (thinking shares the max_tokens budget).
+const MODEL = "claude-sonnet-5"
+const MAX_TOKENS = 8192
 
 // Hard ceiling on the agent loop. The framing example needs ~3-4 turns
 // (list_projects, list_schedule_items per project, then a propose call per
@@ -14,15 +22,19 @@ const MODEL = "claude-sonnet-4-6"
 // the bill up.
 const MAX_ITERATIONS = 30
 
-// Server-verified project the user is physically standing at when they
-// submit an onsite walkthrough. Resolved from the DB under the caller's
-// session — never taken from the client — so the id is safe for the model
-// to use directly.
+// Server-verified project the model may reference without a list_projects
+// call. Resolved from the DB under the caller's session — never taken from
+// the client — so the id is safe for the model to use directly. Two modes:
+//   - "onsite": the user is physically at the job site (walkthrough) — photos
+//     are attached to the daily log automatically.
+//   - "page":   the user is viewing this project in the app (global dialog
+//     auto-scope) — no photos, just a default project for their request.
 export type OnsiteProjectContext = {
   id: string
   name: string
   project_number: string
   address: string | null
+  mode?: "onsite" | "page"
 }
 
 const buildSystemPrompt = (
@@ -38,32 +50,54 @@ Your job in a single turn:
 3. End with a short text summary describing what you queued and why.
 
 Capability map — what you CAN propose:
-- Schedule: create a to-do, create a work item, add a checklist item to an existing to-do, update a schedule item's status, update other fields on a schedule item (title/description/dates/parent).
+- Schedule: create a to-do (optionally assigned to a staff member or a sub/vendor), create a work item, add a checklist item to an existing to-do, update a schedule item's status, update other fields on a schedule item (title/description/dates/parent), and assign an existing schedule item to a staff member or a sub/vendor.
 - Decisions: create a draft change order or selection, update its status, add a follow-up to-do template.
-- Communication: send an SMS text message to a sub/vendor company that has a phone number on file (find them with list_companies).
-- Daily logs: append a note to a project's daily log for a given date (creates the log if none exists yet).
+- Communication: send an SMS text message to a sub/vendor company that has a phone number on file (find them with list_companies); send a bid reminder to the recipients of a bid package who were invited but haven't responded (find the package with list_bid_packages / get_bid_package).
+- Daily logs: append a note to a project's daily log for a given date (creates the log if none exists yet), optionally recording which subs/vendors were on site.
+
+Read-only tools for answering questions (they change nothing): list_projects, list_schedule_items, get_schedule_item, list_decisions, get_decision, list_companies, list_staff, get_schedule_health, list_schedule_delays, list_daily_logs, list_bid_packages, get_bid_package, list_purchase_orders.
 
 What you CANNOT do (don't pretend you can):
 - Delete or archive anything.
-- Manage assignments, predecessors, or attachments.
+- Manage predecessors/dependencies, set the schedule baseline, or edit attachments.
+- Create or edit bid packages or purchase orders (you can READ them and send bid reminders, but not change their contents).
 - Touch files, payments, or edit companies.
+- See or report dollar amounts on purchase orders — list_purchase_orders returns status only, never costs.
+
+Reporting mode — when the user asks a QUESTION rather than relaying site notes (e.g. "what's slipping this week?", "which open projects are out of buffer?", "who hasn't bid on the framing package?", "is ABC's workers comp current?", "is the plumber's PO approved?"):
+- Use the read-only tools to gather the answer, then reply with a concise plain-text answer. Cite the projects/items by name.
+- Do NOT propose any mutations for a pure question, and do NOT append a daily log — a question is not a site note.
+- get_schedule_health returns whether a project is in its buffer, days late, and the projected finish; list_schedule_delays explains logged slippage; list_purchase_orders reports PO status (no dollar amounts).
 
 Field notes mode — when the user relays job-site information (a status update from a sub, something that needs doing, an observation):
 - Propose the concrete action(s) the note implies. Typical mappings:
   - "The tile guy says he'll finish today" → find the matching schedule work item and propose updating its end_date (and status if clearly implied).
   - "The dumpster needs to be flipped" → find the dumpster/waste company with list_companies and propose_send_sms asking them to swap it.
   - "I need to order more 2x4s" → propose_create_todo ("Order more 2x4s").
-- AND ALWAYS propose exactly one append_daily_log per affected project per turn that records ALL of the user's notes for that project in clean plain language (e.g. "Tile sub reports finishing today. Requested dumpster swap from ABC Disposal. Need to order more 2x4s."). Site notes belong in the daily log even when no other action is needed.
+  - "Have Jake order the windows" → propose_create_todo with the assignee set (find Jake with list_staff for a staff member, or list_companies for a sub/vendor).
+  - "Get the plumber back for the punch item" → find the existing to-do and propose_assign_schedule_item to the plumber's company.
+  - "Framers from ABC were on site today" → include ABC in the daily log's subs_on_site (find the company with list_companies).
+  - "Remind the electrician about the bid" → find the package with list_bid_packages and propose_send_bid_reminder.
+- AND ALWAYS propose exactly one append_daily_log per affected project per turn that records ALL of the user's notes for that project in clean plain language (e.g. "Tile sub reports finishing today. Requested dumpster swap from ABC Disposal. Need to order more 2x4s."), recording any subs/vendors mentioned as on site in subs_on_site. Site notes belong in the daily log even when no other action is needed.
 - Identify the project before proposing: if the user named it, or only one project is 'active', use it; otherwise call ask_user to pick.
+- Assignments use exactly one assignee — a staff profile OR a sub/vendor company, never both.
 ${
   projectContext
     ? `
-On-site context — the user is physically at a job site right now:
+${
+  projectContext.mode === "page"
+    ? "Current project context — the user is viewing this project in the app:"
+    : "On-site context — the user is physically at a job site right now:"
+}
 - Project: ${projectContext.name} (#${projectContext.project_number}${projectContext.address ? `, ${projectContext.address}` : ""})
 - project_id: ${projectContext.id}
 - This project_id is server-verified. Exception to the IDs rule below: you may use it directly without calling list_projects first. All OTHER ids (schedule_item_id, decision_id, company_id, …) still must come from tool results.
-- Default every proposal to this project. Do not ask which project the user means. Only propose something for a different project if the user explicitly names one.
-- Any photos the user took are uploaded and attached to the daily log automatically outside this conversation — never mention needing them, and don't propose anything about photos.
+- Default every proposal and every question to this project. Do not ask which project the user means. Only act on a different project if the user explicitly names one.${
+      projectContext.mode === "page"
+        ? ""
+        : `
+- Any photos the user took are uploaded and attached to the daily log automatically outside this conversation — never mention needing them, and don't propose anything about photos.`
+    }
 `
     : ""
 }
@@ -200,7 +234,7 @@ const TOOLS: Anthropic.Messages.Tool[] = [
   {
     name: "propose_create_todo",
     description:
-      "Queue creation of a new to-do (kind='todo') in a project. Optionally nests under a work item via parent_id. Use this when the user wants to ADD a new actionable task (e.g. 'Add a Final Inspection to-do').",
+      "Queue creation of a new to-do (kind='todo') in a project. Optionally nests under a work item via parent_id and/or assigns it to one staff member or one sub/vendor. Use this when the user wants to ADD a new actionable task (e.g. 'Add a Final Inspection to-do', 'Have Jake order the windows').",
     input_schema: {
       type: "object",
       properties: {
@@ -212,8 +246,40 @@ const TOOLS: Anthropic.Messages.Tool[] = [
           type: "string",
           description: "A work item id to nest this to-do under. Optional.",
         },
+        assignee_profile_id: {
+          type: "string",
+          description:
+            "Staff profile UUID (from list_staff) to assign this to-do to. Mutually exclusive with assignee_company_id.",
+        },
+        assignee_company_id: {
+          type: "string",
+          description:
+            "Sub/vendor company UUID (from list_companies) to assign this to-do to. Mutually exclusive with assignee_profile_id.",
+        },
       },
       required: ["project_id", "title"],
+    },
+  },
+  {
+    name: "propose_assign_schedule_item",
+    description:
+      "Queue assigning an EXISTING schedule item (work item or to-do) to one staff member or one sub/vendor. Use for 'get the plumber back for the punch item' or 'put Jake on framing'. Exactly one of assignee_profile_id / assignee_company_id.",
+    input_schema: {
+      type: "object",
+      properties: {
+        schedule_item_id: { type: "string" },
+        assignee_profile_id: {
+          type: "string",
+          description:
+            "Staff profile UUID from list_staff (mutually exclusive with assignee_company_id).",
+        },
+        assignee_company_id: {
+          type: "string",
+          description:
+            "Sub/vendor company UUID from list_companies (mutually exclusive with assignee_profile_id).",
+        },
+      },
+      required: ["schedule_item_id"],
     },
   },
   {
@@ -356,7 +422,7 @@ const TOOLS: Anthropic.Messages.Tool[] = [
   {
     name: "propose_append_daily_log",
     description:
-      "Queue a daily-log note for a project. On apply, the note is appended to the project's existing daily log for that date, or a new internal log is created if none exists. Use one of these per affected project per turn, combining all of the user's site notes for that project into a single clean note.",
+      "Queue a daily-log note for a project. On apply, the note is appended to the project's existing daily log for that date, or a new internal log is created if none exists. Use one of these per affected project per turn, combining all of the user's site notes for that project into a single clean note. Record any subs/vendors mentioned as on site in subs_on_site (in addition to the note text) so the who-was-on-site report is complete.",
     input_schema: {
       type: "object",
       properties: {
@@ -366,8 +432,133 @@ const TOOLS: Anthropic.Messages.Tool[] = [
           type: "string",
           description: "YYYY-MM-DD. Omit to use today's date.",
         },
+        subs_on_site: {
+          type: "array",
+          description:
+            "Subs/vendors that were on site this day. company_id must come from list_companies.",
+          items: {
+            type: "object",
+            properties: {
+              company_id: { type: "string" },
+              notes: {
+                type: "string",
+                description: "Optional note about what this sub did (e.g. 'framing crew of 4').",
+              },
+            },
+            required: ["company_id"],
+          },
+        },
       },
       required: ["project_id", "note"],
+    },
+  },
+  {
+    name: "list_staff",
+    description:
+      "List internal staff members (id, full_name, email). Use this to resolve a person named in a request ('Jake', 'the PM') to a profile id before assigning a to-do or schedule item to them.",
+    input_schema: {
+      type: "object",
+      properties: {
+        search: {
+          type: "string",
+          description:
+            "Case-insensitive substring matched against name and email. Omit to return all staff.",
+        },
+      },
+    },
+  },
+  {
+    name: "list_bid_packages",
+    description:
+      "List bid packages in a project (id, number, title, status, due_date). Statuses: draft, sent, awarded, closed. Use to find a package before checking recipients or sending a reminder.",
+    input_schema: {
+      type: "object",
+      properties: {
+        project_id: { type: "string" },
+        status: {
+          type: "string",
+          enum: ["draft", "sent", "awarded", "closed"],
+        },
+      },
+      required: ["project_id"],
+    },
+  },
+  {
+    name: "get_bid_package",
+    description:
+      "Get a bid package with its recipients — one row per invited company with the company name and their status (invited, submitted, declined, awarded), plus when they last got the invite, viewed it, and submitted. Use this to see who hasn't responded before proposing a reminder.",
+    input_schema: {
+      type: "object",
+      properties: { bid_package_id: { type: "string" } },
+      required: ["bid_package_id"],
+    },
+  },
+  {
+    name: "propose_send_bid_reminder",
+    description:
+      "Queue a reminder re-send of a bid package invite to specific recipient companies. Only recipients still in 'invited' status (haven't submitted or declined) with a live invite link are reminded — others are skipped. Nothing is sent until the user approves. Get the package + recipients from get_bid_package first.",
+    input_schema: {
+      type: "object",
+      properties: {
+        bid_package_id: { type: "string" },
+        company_ids: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Company UUIDs (from get_bid_package recipients) to remind.",
+        },
+      },
+      required: ["bid_package_id", "company_ids"],
+    },
+  },
+  {
+    name: "get_schedule_health",
+    description:
+      "Get a project's schedule health: whether it's inside its 30-day buffer, how many days late, the projected Substantial Completion date, and current vs baseline duration. Returns a state of missing_milestones / missing_dates / no_baseline / tracked. Use to answer 'is this project on track / slipping?'.",
+    input_schema: {
+      type: "object",
+      properties: { project_id: { type: "string" } },
+      required: ["project_id"],
+    },
+  },
+  {
+    name: "list_schedule_delays",
+    description:
+      "List logged schedule delays for a project (which item moved, delay_days, reason_category weather|sub|material|owner_decision|permit|other, notes, when). Use to explain why a project is behind.",
+    input_schema: {
+      type: "object",
+      properties: { project_id: { type: "string" } },
+      required: ["project_id"],
+    },
+  },
+  {
+    name: "list_daily_logs",
+    description:
+      "List a project's daily logs (date, visibility internal|client, notes) most-recent first, optionally within a date range. Use to answer 'what happened on site last week?'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        project_id: { type: "string" },
+        from_date: {
+          type: "string",
+          description: "YYYY-MM-DD lower bound (inclusive). Optional.",
+        },
+        to_date: {
+          type: "string",
+          description: "YYYY-MM-DD upper bound (inclusive). Optional.",
+        },
+      },
+      required: ["project_id"],
+    },
+  },
+  {
+    name: "list_purchase_orders",
+    description:
+      "List purchase orders in a project (number, custom_number, title, status draft|released|approved|declined|void, work_complete flag, and the sub/vendor company name). Dollar amounts are NOT included — never state or estimate PO costs. Use to answer 'do we have a signed PO with this sub?' or 'which POs are still unapproved?'.",
+    input_schema: {
+      type: "object",
+      properties: { project_id: { type: "string" } },
+      required: ["project_id"],
     },
   },
   {
@@ -387,6 +578,36 @@ const TOOLS: Anthropic.Messages.Tool[] = [
 const OPEN_STATUSES = ["upcoming", "in_work", "inventory", "paused"] as const
 
 type ToolInput = Record<string, unknown>
+
+// Resolve an assignee's display name for the plan UI. Returns the name, null
+// when no assignee was given, or `false` when the id was given but no row
+// matched (so the caller can reject a fabricated id). Exactly one of the two
+// ids should be non-null — the caller enforces the XOR.
+async function resolveAssigneeName(
+  supabase: SupabaseTyped,
+  profileId: string | null,
+  companyId: string | null
+): Promise<string | null | false> {
+  if (profileId) {
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("full_name, email")
+      .eq("id", profileId)
+      .maybeSingle()
+    if (!prof) return false
+    return prof.full_name || prof.email || "Staff member"
+  }
+  if (companyId) {
+    const { data: co } = await supabase
+      .from("companies")
+      .select("name")
+      .eq("id", companyId)
+      .maybeSingle()
+    if (!co) return false
+    return co.name
+  }
+  return null
+}
 
 // Execute a tool call against Supabase (read tools) or append to the in-flight
 // plan (propose_* tools). Returns a JSON string that gets fed back to the
@@ -612,7 +833,17 @@ async function executeTool({
       const description = (input.description as string | undefined) ?? null
       const dueDate = (input.due_date as string | undefined) ?? null
       const parentId = (input.parent_id as string | undefined) ?? null
+      const assigneeProfileId =
+        (input.assignee_profile_id as string | undefined) ?? null
+      const assigneeCompanyId =
+        (input.assignee_company_id as string | undefined) ?? null
       if (!title) return JSON.stringify({ error: "title required" })
+      if (assigneeProfileId && assigneeCompanyId) {
+        return JSON.stringify({
+          error:
+            "assignee_profile_id and assignee_company_id are mutually exclusive",
+        })
+      }
       const { data: project, error: pErr } = await supabase
         .from("projects")
         .select("id, name, project_number")
@@ -639,6 +870,14 @@ async function executeTool({
           })
         parentTitle = parent.title
       }
+      const assigneeName = await resolveAssigneeName(
+        supabase,
+        assigneeProfileId,
+        assigneeCompanyId
+      )
+      if (assigneeName === false) {
+        return JSON.stringify({ error: "assignee not found" })
+      }
       state.mutations.push({
         kind: "create_todo",
         project_id: projectId,
@@ -646,10 +885,63 @@ async function executeTool({
         description: description?.trim() || null,
         due_date: dueDate || null,
         parent_id: parentId,
+        assignee_profile_id: assigneeProfileId,
+        assignee_company_id: assigneeCompanyId,
         context: {
           project_name: project.name,
           project_number: project.project_number,
           parent_title: parentTitle,
+          assignee_name: assigneeName,
+        },
+      })
+      return JSON.stringify({ queued: true })
+    }
+
+    case "propose_assign_schedule_item": {
+      const scheduleItemId = input.schedule_item_id as string
+      const assigneeProfileId =
+        (input.assignee_profile_id as string | undefined) ?? null
+      const assigneeCompanyId =
+        (input.assignee_company_id as string | undefined) ?? null
+      if (!assigneeProfileId && !assigneeCompanyId) {
+        return JSON.stringify({
+          error: "provide an assignee_profile_id or assignee_company_id",
+        })
+      }
+      if (assigneeProfileId && assigneeCompanyId) {
+        return JSON.stringify({
+          error:
+            "assignee_profile_id and assignee_company_id are mutually exclusive",
+        })
+      }
+      const { data: item, error } = await supabase
+        .from("schedule_items")
+        .select("id, title, projects:project_id(name, project_number)")
+        .eq("id", scheduleItemId)
+        .maybeSingle()
+      if (error) return JSON.stringify({ error: error.message })
+      if (!item) return JSON.stringify({ error: "schedule item not found" })
+      const assigneeName = await resolveAssigneeName(
+        supabase,
+        assigneeProfileId,
+        assigneeCompanyId
+      )
+      if (assigneeName === false || assigneeName === null) {
+        return JSON.stringify({ error: "assignee not found" })
+      }
+      const project = Array.isArray(item.projects)
+        ? item.projects[0]
+        : item.projects
+      state.mutations.push({
+        kind: "assign_schedule_item",
+        schedule_item_id: scheduleItemId,
+        assignee_profile_id: assigneeProfileId,
+        assignee_company_id: assigneeCompanyId,
+        context: {
+          project_name: project?.name ?? "",
+          project_number: project?.project_number ?? "",
+          item_title: item.title,
+          assignee_name: assigneeName,
         },
       })
       return JSON.stringify({ queued: true })
@@ -952,6 +1244,35 @@ async function executeTool({
         .maybeSingle()
       if (error) return JSON.stringify({ error: error.message })
       if (!project) return JSON.stringify({ error: "project not found" })
+      // Resolve any subs-on-site company ids to names for the review UI, and
+      // reject a fabricated id rather than letting apply fail on it.
+      const subsInput =
+        (input.subs_on_site as
+          | { company_id: string; notes?: string }[]
+          | undefined) ?? []
+      const subs: {
+        company_id: string
+        company_name: string
+        notes: string | null
+      }[] = []
+      for (const s of subsInput) {
+        if (!s?.company_id) continue
+        const { data: co } = await supabase
+          .from("companies")
+          .select("name")
+          .eq("id", s.company_id)
+          .maybeSingle()
+        if (!co) {
+          return JSON.stringify({
+            error: `on-site company not found: ${s.company_id}`,
+          })
+        }
+        subs.push({
+          company_id: s.company_id,
+          company_name: co.name,
+          notes: s.notes?.trim() || null,
+        })
+      }
       const { data: existing } = await supabase
         .from("daily_logs")
         .select("id")
@@ -963,6 +1284,7 @@ async function executeTool({
         project_id: projectId,
         log_date: logDate,
         note,
+        ...(subs.length > 0 ? { subs_on_site: subs } : {}),
         context: {
           project_name: project.name,
           project_number: project.project_number,
@@ -970,6 +1292,223 @@ async function executeTool({
         },
       })
       return JSON.stringify({ queued: true })
+    }
+
+    case "list_staff": {
+      const search = ((input.search as string | undefined) ?? "")
+        .trim()
+        .toLowerCase()
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, full_name, email")
+        .eq("role", "staff")
+        .order("full_name")
+      if (error) return JSON.stringify({ error: error.message })
+      const staff = (data ?? []).filter(
+        (p) =>
+          !search ||
+          (p.full_name ?? "").toLowerCase().includes(search) ||
+          (p.email ?? "").toLowerCase().includes(search)
+      )
+      return JSON.stringify({ staff })
+    }
+
+    case "list_bid_packages": {
+      const projectId = input.project_id as string
+      const status = input.status as
+        | "draft"
+        | "sent"
+        | "awarded"
+        | "closed"
+        | undefined
+      let q = supabase
+        .from("bid_packages")
+        .select("id, number, title, status, due_date")
+        .eq("project_id", projectId)
+        .order("number", { ascending: false })
+      if (status) q = q.eq("status", status)
+      const { data, error } = await q
+      if (error) return JSON.stringify({ error: error.message })
+      return JSON.stringify({ bid_packages: data ?? [] })
+    }
+
+    case "get_bid_package": {
+      const bidPackageId = input.bid_package_id as string
+      const { data: pkg, error: pErr } = await supabase
+        .from("bid_packages")
+        .select("id, project_id, number, title, status, due_date")
+        .eq("id", bidPackageId)
+        .maybeSingle()
+      if (pErr) return JSON.stringify({ error: pErr.message })
+      if (!pkg) return JSON.stringify({ error: "bid package not found" })
+      const { data: recipients, error: rErr } = await supabase
+        .from("bid_recipients")
+        .select(
+          "company_id, status, last_sent_at, viewed_at, submitted_at, companies:company_id(name)"
+        )
+        .eq("bid_package_id", bidPackageId)
+      if (rErr) return JSON.stringify({ error: rErr.message })
+      const recips = (recipients ?? []).map((r) => {
+        const co = Array.isArray(r.companies) ? r.companies[0] : r.companies
+        return {
+          company_id: r.company_id,
+          company_name: co?.name ?? "",
+          status: r.status,
+          last_sent_at: r.last_sent_at,
+          viewed_at: r.viewed_at,
+          submitted_at: r.submitted_at,
+        }
+      })
+      return JSON.stringify({ bid_package: pkg, recipients: recips })
+    }
+
+    case "propose_send_bid_reminder": {
+      const bidPackageId = input.bid_package_id as string
+      const companyIds = (input.company_ids as string[] | undefined) ?? []
+      if (!companyIds.length)
+        return JSON.stringify({ error: "provide at least one company_id" })
+      const { data: pkg, error: pErr } = await supabase
+        .from("bid_packages")
+        .select(
+          "id, number, title, status, projects:project_id(name, project_number)"
+        )
+        .eq("id", bidPackageId)
+        .maybeSingle()
+      if (pErr) return JSON.stringify({ error: pErr.message })
+      if (!pkg) return JSON.stringify({ error: "bid package not found" })
+      if (pkg.status === "closed")
+        return JSON.stringify({ error: "this bid package is closed" })
+      // Only invited-but-unresponded recipients with a live token can be
+      // reminded — mirror the guards in sendBidPackage's re-send path.
+      const { data: recipients, error: rErr } = await supabase
+        .from("bid_recipients")
+        .select("company_id, status, token, companies:company_id(name)")
+        .eq("bid_package_id", bidPackageId)
+        .in("company_id", companyIds)
+      if (rErr) return JSON.stringify({ error: rErr.message })
+      const remindable = (recipients ?? []).filter(
+        (r) => r.status === "invited" && !!r.token
+      )
+      if (!remindable.length) {
+        return JSON.stringify({
+          queued: false,
+          reason:
+            "none of those recipients can be reminded (already responded, not invited, or link revoked)",
+        })
+      }
+      const project = Array.isArray(pkg.projects)
+        ? pkg.projects[0]
+        : pkg.projects
+      const names = remindable.map((r) => {
+        const co = Array.isArray(r.companies) ? r.companies[0] : r.companies
+        return co?.name ?? ""
+      })
+      state.mutations.push({
+        kind: "send_bid_reminder",
+        bid_package_id: bidPackageId,
+        company_ids: remindable.map((r) => r.company_id),
+        context: {
+          project_name: project?.name ?? "",
+          project_number: project?.project_number ?? "",
+          package_number: pkg.number,
+          package_title: pkg.title,
+          recipient_names: names,
+        },
+      })
+      return JSON.stringify({ queued: true, reminding: names })
+    }
+
+    case "get_schedule_health": {
+      const projectId = input.project_id as string
+      const { data: project, error: pErr } = await supabase
+        .from("projects")
+        .select("id, name, baseline_set_at")
+        .eq("id", projectId)
+        .maybeSingle()
+      if (pErr) return JSON.stringify({ error: pErr.message })
+      if (!project) return JSON.stringify({ error: "project not found" })
+      const { data: items, error } = await supabase
+        .from("schedule_items")
+        .select(
+          "milestone, start_date, end_date, baseline_start_date, baseline_end_date, status"
+        )
+        .eq("project_id", projectId)
+        .not("milestone", "is", null)
+      if (error) return JSON.stringify({ error: error.message })
+      const health = computeScheduleHealth(
+        (items ?? []) as MilestoneItem[],
+        project.baseline_set_at,
+        today
+      )
+      return JSON.stringify({ project: project.name, health })
+    }
+
+    case "list_schedule_delays": {
+      const projectId = input.project_id as string
+      const { data, error } = await supabase
+        .from("schedule_delays")
+        .select(
+          "delay_days, reason_category, notes, logged_at, schedule_items!inner(title, project_id)"
+        )
+        .eq("schedule_items.project_id", projectId)
+        .order("logged_at", { ascending: false })
+      if (error) return JSON.stringify({ error: error.message })
+      const delays = (data ?? []).map((d) => {
+        const item = Array.isArray(d.schedule_items)
+          ? d.schedule_items[0]
+          : d.schedule_items
+        return {
+          item_title: item?.title ?? "",
+          delay_days: d.delay_days,
+          reason_category: d.reason_category,
+          notes: d.notes,
+          logged_at: d.logged_at,
+        }
+      })
+      return JSON.stringify({ delays })
+    }
+
+    case "list_daily_logs": {
+      const projectId = input.project_id as string
+      const fromDate = input.from_date as string | undefined
+      const toDate = input.to_date as string | undefined
+      let q = supabase
+        .from("daily_logs")
+        .select("log_date, visibility, notes")
+        .eq("project_id", projectId)
+        .order("log_date", { ascending: false })
+      if (fromDate) q = q.gte("log_date", fromDate)
+      if (toDate) q = q.lte("log_date", toDate)
+      const { data, error } = await q
+      if (error) return JSON.stringify({ error: error.message })
+      return JSON.stringify({ logs: data ?? [] })
+    }
+
+    case "list_purchase_orders": {
+      const projectId = input.project_id as string
+      // Deliberately no dollar columns (flat_total / line items) — PO costs
+      // are gated behind profiles.financial_access at the app layer, not RLS,
+      // so the agent must never surface them.
+      const { data, error } = await supabase
+        .from("purchase_orders")
+        .select(
+          "number, custom_number, title, status, work_complete, companies:company_id(name)"
+        )
+        .eq("project_id", projectId)
+        .order("number", { ascending: false })
+      if (error) return JSON.stringify({ error: error.message })
+      const pos = (data ?? []).map((p) => {
+        const co = Array.isArray(p.companies) ? p.companies[0] : p.companies
+        return {
+          number: p.number,
+          custom_number: p.custom_number,
+          title: p.title,
+          status: p.status,
+          work_complete: p.work_complete,
+          company_name: co?.name ?? "",
+        }
+      })
+      return JSON.stringify({ purchase_orders: pos })
     }
 
     case "ask_user": {
@@ -1034,12 +1573,32 @@ export async function runAgentTurn({
 
   const workingMessages: Anthropic.Messages.MessageParam[] = [...messages]
   let summary = ""
+  // Set when the turn is cut short so the UI can warn before applying.
+  let incomplete: "max_tokens" | "iteration_cap" | undefined
 
-  for (let i = 0; i < MAX_ITERATIONS; i++) {
+  // Build the system prompt once per turn. It's byte-stable across the loop's
+  // iterations (today + projectContext don't change mid-turn), so caching the
+  // tools + system prefix is a clean win: render order is tools → system, so
+  // one cache_control breakpoint on the system block caches the ~17-tool
+  // schema array AND the system prompt together. Every iteration then reads
+  // that prefix at ~0.1x input price instead of re-paying it in full.
+  const systemBlocks: Anthropic.Messages.TextBlockParam[] = [
+    {
+      type: "text",
+      text: buildSystemPrompt(today, projectContext),
+      cache_control: { type: "ephemeral" },
+    },
+  ]
+
+  let i = 0
+  for (; i < MAX_ITERATIONS; i++) {
     const response = await client.messages.create({
       model: MODEL,
-      max_tokens: 4096,
-      system: buildSystemPrompt(today, projectContext),
+      max_tokens: MAX_TOKENS,
+      // Adaptive thinking (Sonnet 5's default) — kept on because a
+      // tool-use loop needs the model to keep reaching for tools.
+      thinking: { type: "adaptive" },
+      system: systemBlocks,
       tools: TOOLS,
       messages: workingMessages,
     })
@@ -1059,7 +1618,9 @@ export async function runAgentTurn({
     )
 
     if (toolUseBlocks.length === 0) {
-      // No tool calls this turn — model is done. Return whatever we have.
+      // No tool calls this turn — model is done. If the response itself was
+      // truncated (max_tokens), the summary/plan may be missing its tail.
+      if (response.stop_reason === "max_tokens") incomplete = "max_tokens"
       break
     }
 
@@ -1086,6 +1647,14 @@ export async function runAgentTurn({
     if (state.question) break
 
     if (response.stop_reason === "end_turn") break
+    // A max_tokens stop WITH complete tool_use blocks is not fatal — the
+    // model can self-recover on the next iteration, so we don't flag it.
+  }
+
+  // Ran the full iteration budget without a natural stop — the plan may be
+  // partial. (max_tokens truncation, flagged above, takes precedence.)
+  if (i >= MAX_ITERATIONS && !state.question) {
+    incomplete = incomplete ?? "iteration_cap"
   }
 
   if (state.question) {
@@ -1095,7 +1664,15 @@ export async function runAgentTurn({
     }
   }
   return {
-    result: { type: "plan", summary, mutations: state.mutations },
+    result: {
+      type: "plan",
+      // Server-authoritative idempotency key for this plan. See
+      // ai_plan_applications — apply refuses to run the same plan twice.
+      plan_id: randomUUID(),
+      summary,
+      mutations: state.mutations,
+      ...(incomplete ? { incomplete } : {}),
+    },
     messages: workingMessages,
   }
 }
