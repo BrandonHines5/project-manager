@@ -2,14 +2,16 @@ import type { Enums } from "@/lib/db/types"
 
 // Shared vocabulary for the Hines Homes CRM's project_status. Kept in one place
 // so the sync action (app/actions/crm-sync.ts) and the UI agree on the exact
-// words, the badge tone, and how each CRM status maps back to PM's own
+// words, the badge tone, and how each CRM status maps onto PM's own
 // project_status enum.
 //
 // The CRM's `projects.project_status` is free-text; today it holds one of:
-//   In Work · Upcoming · Inventory · Paused · Warranty · Complete · Cancelled
-// We display it verbatim, but PM's internal logic (warranty page, portfolio
-// health, the sidebar's Open/Active/Warranty/Closed filter) still runs off the
-// `status` enum — so the sync maps CRM → enum with this table.
+//   Upcoming · In Work · Complete · Warranty · Inventory · Paused · Cancelled
+// Since migration 0069 the local `status` enum carries the SAME statuses
+// (snake_cased), so this mapping is 1:1 — each job's status mirrors the CRM
+// exactly. It only exists as a table so a brand-new CRM status we haven't
+// mapped yet leaves the enum untouched during a sync (while still being
+// stored + displayed verbatim via crm_status).
 
 export type BadgeTone =
   | "brand"
@@ -23,12 +25,12 @@ export type BadgeTone =
 // CRM status we haven't mapped) leaves the enum untouched during a sync, while
 // still being stored + displayed verbatim in crm_status.
 export const CRM_STATUS_TO_ENUM: Record<string, Enums<"project_status">> = {
-  "In Work": "active",
-  Upcoming: "pre_construction",
-  Inventory: "active",
-  Paused: "on_hold",
-  Warranty: "warranty",
+  Upcoming: "upcoming",
+  "In Work": "in_work",
   Complete: "complete",
+  Warranty: "warranty",
+  Inventory: "inventory",
+  Paused: "paused",
   Cancelled: "cancelled",
 }
 

@@ -342,13 +342,15 @@ function ProjectFormFields({
             />
           </Field>
           <Field label="Status">
-            <Select name="status" defaultValue="active">
-              <option value="lead">Lead</option>
-              <option value="pre_construction">Pre-construction</option>
-              <option value="active">Active</option>
-              <option value="on_hold">On hold</option>
+            {/* Same statuses, same order, as the CRM dashboard's PM Update
+                tab — each job's status mirrors the CRM. */}
+            <Select name="status" defaultValue="in_work">
+              <option value="upcoming">Upcoming</option>
+              <option value="in_work">In Work</option>
               <option value="complete">Complete</option>
               <option value="warranty">Warranty</option>
+              <option value="inventory">Inventory</option>
+              <option value="paused">Paused</option>
               <option value="cancelled">Cancelled</option>
             </Select>
           </Field>
