@@ -2357,73 +2357,91 @@ export async function setScheduleBaseline(input: {
 }
 
 /**
- * Creates any missing Job Start / Substantial Completion milestone rows for a
- * project (undated — staff drag them into place). Idempotent; safe to call
- * from project-creation paths and from the health banner's fallback button
- * for projects the 0069 backfill couldn't attribute.
+ * Ensures a project has its Job Start / Substantial Completion milestones.
+ * ADOPTS before creating: if an unflagged work item already carries one of
+ * those titles (case-insensitive — the Template ships with them), that item
+ * becomes the milestone with its real dates intact. Only when no titled item
+ * exists is a fresh undated row created. Idempotent; safe to call from
+ * project-creation paths and from the health banner's fallback button.
  */
 export async function ensureProjectMilestones(input: {
   project_id: string
-}): Promise<{ created: number }> {
+}): Promise<{ adopted: number; created: number }> {
   const profile = await requireStaff()
   const parsed = z.object({ project_id: z.string().uuid() }).parse(input)
   const supabase = await createSupabaseServerClient()
 
-  const { data: existing, error: exErr } = await supabase
+  const { data: workItems, error: exErr } = await supabase
     .from("schedule_items")
-    .select("milestone")
+    .select("id, title, milestone, position, created_at")
     .eq("project_id", parsed.project_id)
-    .not("milestone", "is", null)
+    .eq("kind", "work")
   if (exErr) throw new Error(exErr.message)
-  const have = new Set((existing ?? []).map((e) => e.milestone))
+  const items = workItems ?? []
+  const have = new Set(items.map((i) => i.milestone).filter(Boolean))
   if (have.has("job_start") && have.has("substantial_completion")) {
-    return { created: 0 }
+    return { adopted: 0, created: 0 }
   }
 
-  // Bracket the existing schedule so the new rows land at the visual edges.
-  const { data: posRows, error: posErr } = await supabase
-    .from("schedule_items")
-    .select("position")
-    .eq("project_id", parsed.project_id)
-    .order("position", { ascending: true })
-  if (posErr) throw new Error(posErr.message)
-  const positions = (posRows ?? []).map((r) => r.position)
-  const minPos = positions.length ? positions[0] : 0
-  const maxPos = positions.length ? positions[positions.length - 1] : 0
-
-  const rows: {
-    project_id: string
-    kind: "work"
+  const MILESTONES: {
+    kind: "job_start" | "substantial_completion"
     title: string
-    milestone: "job_start" | "substantial_completion"
-    position: number
-    created_by: string
-  }[] = []
-  if (!have.has("job_start")) {
-    rows.push({
+  }[] = [
+    { kind: "job_start", title: "Job Start" },
+    { kind: "substantial_completion", title: "Substantial Completion" },
+  ]
+
+  let adopted = 0
+  const missingAfterAdoption: (typeof MILESTONES)[number][] = []
+  for (const m of MILESTONES) {
+    if (have.has(m.kind)) continue
+    // Earliest-created title match wins — on template-built jobs that's the
+    // copied template item.
+    const match = items
+      .filter(
+        (i) =>
+          !i.milestone &&
+          i.title.trim().toLowerCase() === m.title.toLowerCase()
+      )
+      .sort(
+        (a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)
+      )[0]
+    if (!match) {
+      missingAfterAdoption.push(m)
+      continue
+    }
+    const { error: adoptErr } = await supabase
+      .from("schedule_items")
+      .update({ milestone: m.kind })
+      .eq("id", match.id)
+    // 23505 = a concurrent call flagged one first — that's a success state.
+    if (adoptErr && (adoptErr as { code?: string }).code !== "23505") {
+      throw new Error(adoptErr.message)
+    }
+    adopted++
+  }
+
+  let created = 0
+  if (missingAfterAdoption.length > 0) {
+    // Bracket the existing schedule so new rows land at the visual edges.
+    const positions = items.map((i) => i.position)
+    const minPos = positions.length ? Math.min(...positions) : 0
+    const maxPos = positions.length ? Math.max(...positions) : 0
+    const rows = missingAfterAdoption.map((m) => ({
       project_id: parsed.project_id,
-      kind: "work",
-      title: "Job Start",
-      milestone: "job_start",
-      position: minPos - 1,
+      kind: "work" as const,
+      title: m.title,
+      milestone: m.kind,
+      position: m.kind === "job_start" ? minPos - 1 : maxPos + 1,
       created_by: profile.id,
-    })
+    }))
+    const { error: insErr } = await supabase.from("schedule_items").insert(rows)
+    if (insErr && (insErr as { code?: string }).code !== "23505") {
+      throw new Error(insErr.message)
+    }
+    created = rows.length
   }
-  if (!have.has("substantial_completion")) {
-    rows.push({
-      project_id: parsed.project_id,
-      kind: "work",
-      title: "Substantial Completion",
-      milestone: "substantial_completion",
-      position: maxPos + 1,
-      created_by: profile.id,
-    })
-  }
-  const { error: insErr } = await supabase.from("schedule_items").insert(rows)
-  // 23505 = a concurrent call already created one — that's a success state.
-  if (insErr && (insErr as { code?: string }).code !== "23505") {
-    throw new Error(insErr.message)
-  }
+
   revalidatePath(`/projects/${parsed.project_id}/schedule`)
-  return { created: rows.length }
+  return { adopted, created }
 }

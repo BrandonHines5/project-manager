@@ -57,12 +57,18 @@ export function ScheduleHealthBanner({ data }: { data: ScheduleData }) {
   function createMilestones() {
     startTransition(async () => {
       try {
-        await ensureProjectMilestones({ project_id: data.project_id })
-        toast.success("Job Start and Substantial Completion added")
+        const res = await ensureProjectMilestones({
+          project_id: data.project_id,
+        })
+        toast.success(
+          res.adopted > 0
+            ? "Marked the existing Job Start / Substantial Completion items as milestones"
+            : "Job Start and Substantial Completion added"
+        )
         router.refresh()
       } catch (e) {
         toast.error(
-          e instanceof Error ? e.message : "Could not create milestones"
+          e instanceof Error ? e.message : "Could not set up milestones"
         )
       }
     })
@@ -72,13 +78,15 @@ export function ScheduleHealthBanner({ data }: { data: ScheduleData }) {
     return (
       <Setup>
         <span>
-          This project has no <b>Job Start</b> / <b>Substantial Completion</b>{" "}
-          milestones yet — they define the tracked construction duration.
+          This project&apos;s <b>Job Start</b> / <b>Substantial Completion</b>{" "}
+          milestones aren&apos;t set up yet — they define the tracked
+          construction duration. If work items with those names already exist,
+          they&apos;ll be used as-is.
         </span>
         {isStaff && (
           <Button size="sm" onClick={createMilestones} disabled={pending}>
             <Flag className="h-3.5 w-3.5" />
-            {pending ? "Creating…" : "Create milestones"}
+            {pending ? "Setting up…" : "Set up milestones"}
           </Button>
         )}
       </Setup>
