@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useTransition } from "react"
+import { toast } from "sonner"
 import {
   Plus,
   NotebookPen,
@@ -9,15 +10,23 @@ import {
   Image as ImageIcon,
   Users,
   Clock,
+  Sparkles,
+  Loader2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { EmptyState } from "@/components/ui/empty"
 import { formatDate } from "@/lib/utils"
-import type { Tables } from "@/lib/db/types"
+import type { Tables, Enums } from "@/lib/db/types"
 import type { UserRole } from "@/lib/auth"
 import { DailyLogDrawer } from "@/components/daily-logs/daily-log-drawer"
 import { LogCommentsToggle } from "@/components/daily-logs/log-comments-toggle"
+import { draftClientUpdate } from "@/app/actions/daily-logs"
+
+type DrawerInitial = {
+  notes?: string
+  visibility?: Enums<"daily_log_visibility">
+}
 
 export type DailyLogsData = {
   project_id: string
@@ -37,7 +46,7 @@ export type DailyLogsData = {
 export function DailyLogsClient({ data }: { data: DailyLogsData }) {
   const canEdit = data.role === "staff"
   const [drawerState, setDrawerState] = useState<
-    | { mode: "create" }
+    | { mode: "create"; initial?: DrawerInitial }
     | { mode: "edit"; logId: string }
     | null
   >(
@@ -48,6 +57,32 @@ export function DailyLogsClient({ data }: { data: DailyLogsData }) {
       ? { mode: "edit", logId: data.open_log_id }
       : null
   )
+  const [drafting, startDrafting] = useTransition()
+
+  // AI-draft a homeowner update from the last week of internal logs, then
+  // open the create drawer prefilled with it (preset to client-visible).
+  // Nothing is saved until the staffer reviews and saves in the drawer.
+  function draftClientUpdateNow() {
+    const to = new Date()
+    const from = new Date(to)
+    from.setDate(from.getDate() - 6)
+    const iso = (d: Date) => d.toLocaleDateString("en-CA")
+    startDrafting(async () => {
+      const res = await draftClientUpdate({
+        project_id: data.project_id,
+        from_date: iso(from),
+        to_date: iso(to),
+      })
+      if (!res.ok) {
+        toast.error(res.error)
+        return
+      }
+      setDrawerState({
+        mode: "create",
+        initial: { notes: res.draft, visibility: "client" },
+      })
+    })
+  }
 
   const editingLog =
     drawerState?.mode === "edit"
@@ -94,9 +129,30 @@ export function DailyLogsClient({ data }: { data: DailyLogsData }) {
           {labor && <Stat label="Labor hours" value={fmtHours(labor.total)} />}
         </div>
         {canEdit && (
-          <Button onClick={() => setDrawerState({ mode: "create" })}>
-            <Plus className="h-4 w-4" /> New job log
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              onClick={draftClientUpdateNow}
+              disabled={drafting}
+              title="Draft a client-visible update from the last week's internal logs"
+            >
+              {drafting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Sparkles className="h-4 w-4" />
+              )}
+              Draft client update
+            </Button>
+            <Button
+              onClick={() => setDrawerState({ mode: "create" })}
+              // Disabled while a draft resolves: opening a blank create
+              // drawer mid-draft would race the draft's own drawer open and
+              // silently drop the AI text.
+              disabled={drafting}
+            >
+              <Plus className="h-4 w-4" /> New job log
+            </Button>
+          </div>
         )}
       </div>
 
@@ -162,11 +218,25 @@ export function DailyLogsClient({ data }: { data: DailyLogsData }) {
 
       {drawerState && canEdit && (
         <DailyLogDrawer
+          // The drawer seeds its notes/visibility state on mount, so any
+          // change of what we're editing must remount it — otherwise a
+          // drawerState swap (e.g. an AI draft resolving after "New job log"
+          // was already open) updates props the drawer never re-reads.
+          key={
+            drawerState.mode === "edit"
+              ? `edit-${drawerState.logId}`
+              : drawerState.initial
+                ? "create-draft"
+                : "create-blank"
+          }
           open={true}
           onClose={() => setDrawerState(null)}
           data={data}
           mode={drawerState.mode}
           log={editingLog ?? undefined}
+          initial={
+            drawerState.mode === "create" ? drawerState.initial : undefined
+          }
         />
       )}
     </div>

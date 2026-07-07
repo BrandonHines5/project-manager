@@ -54,12 +54,17 @@ export function DailyLogDrawer({
   mode,
   log,
   data,
+  initial,
 }: {
   open: boolean
   onClose: () => void
   mode: "create" | "edit"
   log?: Tables<"daily_logs">
   data: DailyLogsData
+  // Seed values for a NEW log (create mode) — used by the AI "Draft client
+  // update" flow to prefill the drafted notes and preset client visibility.
+  // Ignored in edit mode (the existing log wins).
+  initial?: { notes?: string; visibility?: Enums<"daily_log_visibility"> }
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
@@ -67,9 +72,9 @@ export function DailyLogDrawer({
 
   const [logDate, setLogDate] = useState(log?.log_date ?? todayISO())
   const [visibility, setVisibility] = useState<Enums<"daily_log_visibility">>(
-    log?.visibility ?? "internal"
+    log?.visibility ?? initial?.visibility ?? "internal"
   )
-  const [notes, setNotes] = useState(log?.notes ?? "")
+  const [notes, setNotes] = useState(log?.notes ?? initial?.notes ?? "")
   // Labor hours — only relevant (and shown) on cost-plus jobs.
   const [hoursWorked, setHoursWorked] = useState(
     log?.hours_worked != null ? String(log.hours_worked) : ""

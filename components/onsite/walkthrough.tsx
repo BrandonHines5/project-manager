@@ -69,15 +69,22 @@ type Message = { role: "user" | "assistant"; content: string }
 // instead of a dead end: a failed turn can re-run with the same messages
 // (proposals only — safe to retry), a failed apply returns to the reviewed
 // plan (retrying blind could double-apply, so the user re-confirms).
+type PlanState = {
+  plan_id: string
+  summary: string
+  mutations: ProposedMutation[]
+  incomplete?: "max_tokens" | "iteration_cap"
+}
+
 type ErrorRetry =
   | { kind: "turn"; messages: Message[] }
-  | { kind: "plan"; summary: string; mutations: ProposedMutation[] }
+  | ({ kind: "plan" } & PlanState)
 
 type Phase =
   | { kind: "capture" }
   | { kind: "thinking" }
   | { kind: "question"; question: string }
-  | { kind: "plan"; summary: string; mutations: ProposedMutation[] }
+  | ({ kind: "plan" } & PlanState)
   | { kind: "applying" }
   | { kind: "applied"; results: AppliedMutation[]; draftKept: boolean }
   | { kind: "error"; message: string; retry: ErrorRetry | null }
@@ -514,8 +521,10 @@ export function Walkthrough({
     setConfirmArmed(false)
     setPhase({
       kind: "plan",
+      plan_id: result.plan_id,
       summary: result.summary,
       mutations: result.mutations,
+      incomplete: result.incomplete,
     })
   }
 
@@ -536,17 +545,23 @@ export function Walkthrough({
     setConfirmArmed(false)
   }
 
-  function applySelected(plan: { summary: string; mutations: ProposedMutation[] }) {
-    const { summary, mutations } = plan
+  function applySelected(plan: PlanState) {
+    const { plan_id, summary, mutations } = plan
     const selected = mutations.filter((_, i) => checked[i])
     if (selected.length === 0) return
     // On any failure, hand the reviewed plan back to the error state so the
-    // user can return to it — regenerating it costs another AI run.
-    const retry: ErrorRetry = { kind: "plan", summary, mutations }
+    // user can return to it — regenerating it costs another AI run. The
+    // plan_id is the idempotency key: a blind retry after a network error
+    // returns the first apply's results instead of re-texting subs.
+    const retry: ErrorRetry = { kind: "plan", ...plan }
     setPhase({ kind: "applying" })
     startTransition(async () => {
       try {
-        const response = await applyPlanAction({ mutations: selected })
+        const response = await applyPlanAction({
+          mutations: selected,
+          plan_id,
+          summary,
+        })
         if (!response.ok) {
           setPhase({ kind: "error", message: response.error, retry })
           return
@@ -878,6 +893,7 @@ export function Walkthrough({
             </div>
             <PlanCard
               mutations={phase.mutations}
+              incomplete={phase.incomplete}
               selection={{ checked, onToggle: toggleChecked }}
             />
             <PlanActions
@@ -885,9 +901,7 @@ export function Walkthrough({
               checked={checked}
               confirmArmed={confirmArmed}
               onArm={() => setConfirmArmed(true)}
-              onApply={() =>
-                applySelected({ summary: phase.summary, mutations: phase.mutations })
-              }
+              onApply={() => applySelected(phase)}
               onEditNotes={backToNotes}
               pending={pending}
             />
@@ -938,9 +952,9 @@ export function Walkthrough({
               {phase.retry?.kind === "plan" && (
                 <RetryPlanButton
                   retry={phase.retry}
-                  onBackToReview={(summary, mutations) => {
+                  onBackToReview={(plan) => {
                     setConfirmArmed(false)
-                    setPhase({ kind: "plan", summary, mutations })
+                    setPhase({ kind: "plan", ...plan })
                   }}
                 />
               )}
@@ -981,12 +995,13 @@ function RetryPlanButton({
   onBackToReview,
 }: {
   retry: Extract<ErrorRetry, { kind: "plan" }>
-  onBackToReview: (summary: string, mutations: ProposedMutation[]) => void
+  onBackToReview: (plan: PlanState) => void
 }) {
+  const { plan_id, summary, mutations, incomplete } = retry
   return (
     <Button
       type="button"
-      onClick={() => onBackToReview(retry.summary, retry.mutations)}
+      onClick={() => onBackToReview({ plan_id, summary, mutations, incomplete })}
     >
       Back to review
     </Button>

@@ -481,3 +481,138 @@ export async function postDailyLogComment(input: {
   revalidatePath(`/projects/${parsed.project_id}/daily-logs`)
   revalidatePath(`/projects/${parsed.project_id}/communications`)
 }
+
+const DraftClientUpdateInput = z
+  .object({
+    project_id: z.string().uuid(),
+    from_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    to_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  })
+  // Bound the window so a tampered request can't pull months of logs into
+  // one prompt. The UI sends 7 days; 60 leaves room for a monthly recap.
+  .refine(
+    (v) => {
+      const days =
+        (Date.parse(v.to_date) - Date.parse(v.from_date)) / 86_400_000
+      return days >= 0 && days <= 60
+    },
+    { message: "Date range must be between 0 and 60 days." }
+  )
+
+export type DraftClientUpdateResult =
+  | { ok: true; draft: string }
+  | { ok: false; error: string }
+
+/**
+ * Draft a homeowner-facing progress update from the project's INTERNAL daily
+ * logs over a date window, plus recently completed and upcoming schedule
+ * items. Returns the text for staff to review and edit in the daily-log
+ * drawer (preset to client-visible) — nothing is saved or published here; the
+ * existing saveDailyLog flow (and its client webhook) still gates that behind
+ * a human. Never throws: returns a typed error so the UI can show the reason.
+ */
+export async function draftClientUpdate(input: {
+  project_id: string
+  from_date: string
+  to_date: string
+}): Promise<DraftClientUpdateResult> {
+  await requireStaff()
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return {
+      ok: false,
+      error:
+        "ANTHROPIC_API_KEY is not configured on the server. Add it in Vercel project settings and redeploy.",
+    }
+  }
+  const parsed = DraftClientUpdateInput.safeParse(input)
+  if (!parsed.success) {
+    return { ok: false, error: "Invalid request." }
+  }
+  const { project_id, from_date, to_date } = parsed.data
+  const supabase = await createSupabaseServerClient()
+
+  const { data: project, error: pErr } = await supabase
+    .from("projects")
+    .select("id, name, address")
+    .eq("id", project_id)
+    .maybeSingle()
+  if (pErr) return { ok: false, error: pErr.message }
+  if (!project) return { ok: false, error: "Project not found or not permitted." }
+
+  // Internal logs in the window (oldest first, so the narrative flows
+  // forward). Client-visible logs are already homeowner-facing, so we don't
+  // re-summarize them.
+  const { data: logs, error: lErr } = await supabase
+    .from("daily_logs")
+    .select("log_date, notes, visibility")
+    .eq("project_id", project_id)
+    .eq("visibility", "internal")
+    .gte("log_date", from_date)
+    .lte("log_date", to_date)
+    .order("log_date", { ascending: true })
+    // Belt to the range refine's suspenders — keeps the prompt bounded even
+    // for a log-heavy project (a few logs/day tops in practice).
+    .limit(200)
+  if (lErr) return { ok: false, error: lErr.message }
+  const logFacts = (logs ?? [])
+    .filter((l) => l.notes && l.notes.trim())
+    .map((l) => ({ date: l.log_date, notes: l.notes as string }))
+
+  // Work items completed in the window, and those starting on/after the
+  // window end (look-ahead). Both bounded so the prompt stays small.
+  const { data: completed } = await supabase
+    .from("schedule_items")
+    .select("title, end_date")
+    .eq("project_id", project_id)
+    .eq("kind", "work")
+    .eq("status", "complete")
+    .gte("end_date", from_date)
+    .lte("end_date", to_date)
+    .order("end_date", { ascending: true })
+    .limit(20)
+
+  const { data: upcoming } = await supabase
+    .from("schedule_items")
+    .select("title, start_date")
+    .eq("project_id", project_id)
+    .eq("kind", "work")
+    .neq("status", "complete")
+    .gte("start_date", to_date)
+    .order("start_date", { ascending: true })
+    .limit(8)
+
+  if (
+    logFacts.length === 0 &&
+    (completed ?? []).length === 0 &&
+    (upcoming ?? []).length === 0
+  ) {
+    return {
+      ok: false,
+      error:
+        "No internal logs or schedule activity in that window to summarize. Pick a wider date range.",
+    }
+  }
+
+  try {
+    const { composeClientUpdate } = await import("@/lib/ai/client-update")
+    const draft = await composeClientUpdate({
+      project_name: project.name,
+      address: project.address,
+      logs: logFacts,
+      completed: (completed ?? []).map((c) => ({
+        title: c.title,
+        end_date: c.end_date,
+      })),
+      upcoming: (upcoming ?? []).map((u) => ({
+        title: u.title,
+        start_date: u.start_date,
+      })),
+    })
+    return { ok: true, draft }
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Failed to draft the update.",
+    }
+  }
+}
