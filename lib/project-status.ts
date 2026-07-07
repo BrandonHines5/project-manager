@@ -40,6 +40,16 @@ export const STATUS_FILTER_LABEL: Record<ProjectStatusFilter, string> = {
   cancelled: "Cancelled",
 }
 
+// Type guard for filter state that can also hold non-status values (the
+// sidebar and /projects chips both mix these with "label:<name>" strings).
+export function isProjectStatusFilter(f: string): f is ProjectStatusFilter {
+  return (
+    f === "open" ||
+    f === "all" ||
+    (ALL_STATUSES as ReadonlyArray<string>).includes(f)
+  )
+}
+
 export function matchesStatusFilter(
   status: Enums<"project_status">,
   filter: ProjectStatusFilter

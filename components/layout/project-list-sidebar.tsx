@@ -25,6 +25,7 @@ import {
   ALL_STATUSES,
   STATUS_FILTER_LABEL,
   aggregateRouteForSlug,
+  isProjectStatusFilter,
   matchesStatusFilter,
   type ProjectStatusFilter,
 } from "@/lib/project-status"
@@ -226,7 +227,8 @@ export function ProjectListSidebar({
         if (activeLabel) {
           if (!(p.labels ?? []).includes(activeLabel)) return false
         } else if (
-          !matchesStatusFilter(p.status, filter as ProjectStatusFilter)
+          !isProjectStatusFilter(filter) ||
+          !matchesStatusFilter(p.status, filter)
         ) {
           return false
         }
@@ -333,7 +335,8 @@ export function ProjectListSidebar({
   }
 
   const filterLabel =
-    activeLabel ?? STATUS_FILTER_LABEL[filter as ProjectStatusFilter] ?? "All"
+    activeLabel ??
+    (isProjectStatusFilter(filter) ? STATUS_FILTER_LABEL[filter] : "All")
 
   // Collapsed: a thin rail with just an expand handle, so the job page can
   // take up (nearly) the full screen. Desktop-only, like the full list.

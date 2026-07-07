@@ -9,6 +9,7 @@ import { crmStatusTone } from "@/lib/crm-status"
 import {
   ALL_STATUSES,
   STATUS_FILTER_LABEL,
+  isProjectStatusFilter,
   matchesStatusFilter,
   type ProjectStatusFilter,
 } from "@/lib/project-status"
@@ -30,10 +31,6 @@ const STATUS_FILTERS: ReadonlyArray<ProjectStatusFilter> = [
 // encoded as "label:<name>", so a single piece of state can drive both the
 // status chips and the tag chips. Same encoding the desktop sidebar uses.
 const LABEL_PREFIX = "label:"
-
-function isStatusFilter(f: string): f is ProjectStatusFilter {
-  return (STATUS_FILTERS as ReadonlyArray<string>).includes(f)
-}
 
 // The enum mirrors the CRM's statuses, so labels are the CRM's exact words
 // (and tones match crmStatusTone so synced and un-synced jobs look alike).
@@ -130,7 +127,10 @@ export function ProjectsTable({
     return rows.filter((r) => {
       if (activeLabel) {
         if (!(r.labels ?? []).includes(activeLabel)) return false
-      } else if (isStatusFilter(filter) && !matchesStatusFilter(r.status, filter)) {
+      } else if (
+        isProjectStatusFilter(filter) &&
+        !matchesStatusFilter(r.status, filter)
+      ) {
         return false
       }
       if (!q) return true
