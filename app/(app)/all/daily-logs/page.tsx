@@ -5,6 +5,8 @@ import { Badge } from "@/components/ui/badge"
 import { formatDate } from "@/lib/utils"
 import { resolveAllScope, scopeLabel } from "../scope"
 import { EmptyScope } from "../empty-scope"
+import { LogCommentsToggle } from "@/components/daily-logs/log-comments-toggle"
+import type { Tables } from "@/lib/db/types"
 
 export const metadata = { title: "Job Logs (all jobs) — Hines Homes" }
 
@@ -34,6 +36,25 @@ export default async function AggregateDailyLogsPage({
 
   const projectMap = new Map(scope.projects.map((p) => [p.id, p] as const))
   const rows = logsRes.data
+
+  // Comments for the logs on screen. The same staff↔client thread the
+  // per-project Job Logs page shows — RLS scopes which rows come back, so a
+  // client only ever sees comments on client-visible logs of their projects.
+  const logIds = rows.map((l) => l.id)
+  const commentsByLog = new Map<string, Tables<"daily_log_comments">[]>()
+  if (logIds.length) {
+    const { data: commentRows } = await supabase
+      .from("daily_log_comments")
+      .select("*")
+      .in("daily_log_id", logIds)
+      .order("created_at", { ascending: true })
+    for (const c of commentRows ?? []) {
+      const list = commentsByLog.get(c.daily_log_id) ?? []
+      list.push(c)
+      commentsByLog.set(c.daily_log_id, list)
+    }
+  }
+  const meName = profile.full_name ?? profile.email ?? "Me"
 
   return (
     <div>
@@ -83,6 +104,26 @@ export default async function AggregateDailyLogsPage({
                     {log.notes}
                   </p>
                 )}
+                <LogCommentsToggle
+                  dailyLogId={log.id}
+                  projectId={log.project_id}
+                  comments={(commentsByLog.get(log.id) ?? []).map((c) => ({
+                    id: c.id,
+                    author_name: c.author_name,
+                    author_role: null,
+                    body: c.body,
+                    created_at: c.created_at,
+                  }))}
+                  meName={meName}
+                  canPost={
+                    profile.role === "staff" || log.visibility === "client"
+                  }
+                  placeholder={
+                    profile.role === "client"
+                      ? "Question or note for the builder…"
+                      : "Reply to client / leave a note"
+                  }
+                />
               </li>
             )
           })}

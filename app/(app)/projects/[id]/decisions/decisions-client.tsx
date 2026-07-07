@@ -8,6 +8,7 @@ import {
   Palette,
   Search,
   X,
+  CalendarClock,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -106,6 +107,15 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
     }
     return m
   }, [data.comments])
+
+  // Titles for due-date-linked schedule items. Clients can't read the
+  // schedule, so their lookup misses and the tooltip falls back to a
+  // generic label.
+  const workItemTitleById = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const w of data.work_items) m.set(w.id, w.title)
+    return m
+  }, [data.work_items])
 
   const filtersActive =
     kindFilter !== "all" || statusFilter !== "all" || query.trim() !== ""
@@ -268,7 +278,17 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
                       <StatusBadge status={d.status} />
                     </td>
                     <td className="px-4 py-3 hidden md:table-cell text-xs">
-                      <DueCell due={d.due_date} status={d.status} />
+                      <DueCell
+                        due={d.due_date}
+                        status={d.status}
+                        linkedTo={
+                          d.due_anchor_schedule_item_id
+                            ? workItemTitleById.get(
+                                d.due_anchor_schedule_item_id
+                              ) ?? "the schedule"
+                            : null
+                        }
+                      />
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums">
                       <CostDelta value={d.cost_delta} />
@@ -366,16 +386,26 @@ export function CostDelta({ value }: { value: number | null }) {
 function DueCell({
   due,
   status,
+  linkedTo,
 }: {
   due: string | null
   status: Enums<"decision_status">
+  linkedTo?: string | null
 }) {
-  if (!due) return <span className="text-muted">—</span>
+  // Marker for a due date that follows a schedule item — it moves when the
+  // schedule does.
+  const linkIcon = linkedTo ? (
+    <span title={`Follows ${linkedTo}`}>
+      <CalendarClock className="inline h-3 w-3 ml-1 text-brand-500 align-[-2px]" />
+    </span>
+  ) : null
+  if (!due) return <span className="text-muted">—{linkIcon}</span>
   const isOpen = status === "draft" || status === "pending_client"
   const overdue = isOpen && due < new Date().toISOString().slice(0, 10)
   return (
     <span className={overdue ? "text-danger font-medium" : "text-foreground"}>
       {formatDate(due)}
+      {linkIcon}
     </span>
   )
 }

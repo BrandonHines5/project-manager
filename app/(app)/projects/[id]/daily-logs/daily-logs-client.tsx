@@ -9,7 +9,6 @@ import {
   Image as ImageIcon,
   Users,
   Clock,
-  MessageSquare,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -18,8 +17,7 @@ import { formatDate } from "@/lib/utils"
 import type { Tables } from "@/lib/db/types"
 import type { UserRole } from "@/lib/auth"
 import { DailyLogDrawer } from "@/components/daily-logs/daily-log-drawer"
-import { CommentsThread } from "@/components/comms/comments-thread"
-import { postDailyLogComment } from "@/app/actions/daily-logs"
+import { LogCommentsToggle } from "@/components/daily-logs/log-comments-toggle"
 
 export type DailyLogsData = {
   project_id: string
@@ -199,12 +197,6 @@ function DailyLogCard({
   const atts = data.attachments.filter((a) => a.daily_log_id === log.id)
   const comments = data.comments.filter((c) => c.daily_log_id === log.id)
   const isClient = log.visibility === "client"
-  // Clients comment here on the card (they never open the editor drawer);
-  // staff can too, or use the thread inside the drawer. Auto-expand when a
-  // notification deep-links a client to this log.
-  const [showComments, setShowComments] = useState(
-    data.open_log_id === log.id && data.role !== "staff"
-  )
 
   return (
     <li
@@ -304,46 +296,28 @@ function DailyLogCard({
 
       {/* Comments — the client's surface for this log (staff can also use
           the drawer thread). stopPropagation so interacting with the thread
-          doesn't open the staff editor. */}
-      <div className="mt-3" onClick={(e) => e.stopPropagation()}>
-        <button
-          type="button"
-          onClick={() => setShowComments((v) => !v)}
-          className="text-xs text-brand-600 hover:underline cursor-pointer inline-flex items-center gap-1"
-        >
-          <MessageSquare className="h-3 w-3" />
-          {comments.length > 0
-            ? `Comments (${comments.length})`
-            : "Add a comment"}
-        </button>
-        {showComments && (
-          <div className="mt-2">
-            <CommentsThread
-              comments={comments.map((c) => ({
-                id: c.id,
-                author_name: c.author_name,
-                author_role: null,
-                body: c.body,
-                created_at: c.created_at,
-              }))}
-              meName={data.me_name}
-              canPost={data.role === "staff" || log.visibility === "client"}
-              hideHeader
-              placeholder={
-                data.role === "client"
-                  ? "Question or note for the builder…"
-                  : "Reply to client / leave a note"
-              }
-              onPost={(body) =>
-                postDailyLogComment({
-                  daily_log_id: log.id,
-                  project_id: data.project_id,
-                  body,
-                })
-              }
-            />
-          </div>
-        )}
+          doesn't open the staff editor. Auto-expand when a notification
+          deep-links a client to this log. */}
+      <div onClick={(e) => e.stopPropagation()}>
+        <LogCommentsToggle
+          dailyLogId={log.id}
+          projectId={data.project_id}
+          comments={comments.map((c) => ({
+            id: c.id,
+            author_name: c.author_name,
+            author_role: null,
+            body: c.body,
+            created_at: c.created_at,
+          }))}
+          meName={data.me_name}
+          canPost={data.role === "staff" || log.visibility === "client"}
+          placeholder={
+            data.role === "client"
+              ? "Question or note for the builder…"
+              : "Reply to client / leave a note"
+          }
+          initialOpen={data.open_log_id === log.id && data.role !== "staff"}
+        />
       </div>
     </li>
   )

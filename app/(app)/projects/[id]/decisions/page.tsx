@@ -75,7 +75,11 @@ export default async function DecisionsPage({
       .order("position", { ascending: true }),
     supabase
       .from("decision_choices")
-      .select("*, decisions!inner(project_id)")
+      // Name the FK: decisions↔decision_choices has TWO relationships (the
+      // choices list via decision_id, the chosen one via selected_choice_id),
+      // so an unhinted embed 300s with PGRST201 and the choices come back
+      // empty. Same fix as notifyStaffOfApprovedDecision.
+      .select("*, decisions!decision_choices_decision_id_fkey!inner(project_id)")
       .eq("decisions.project_id", projectId)
       .order("position", { ascending: true }),
     // Work items in this project — follow-up to-dos can anchor their due date

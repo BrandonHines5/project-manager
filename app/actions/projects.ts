@@ -767,7 +767,12 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     // project, regardless of which decisions actually have any.
     supabase
       .from("decision_choices")
-      .select("*, decisions!inner(project_id)")
+      // FK-hinted: decisions↔decision_choices has two relationships
+      // (decision_id + selected_choice_id), so the bare embed is PGRST201-
+      // ambiguous — same class of fix as the followup-templates read below.
+      .select(
+        "*, decisions!decision_choices_decision_id_fkey!inner(project_id)"
+      )
       .eq("decisions.project_id", parsed.source_project_id)
       .order("position", { ascending: true }),
     supabase
@@ -1168,6 +1173,13 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
       const override = overrideByDecision.get(d.id)
       const allowanceAmount =
         override !== undefined ? override.allowance_amount ?? null : d.allowance_amount
+      // Due-date links remap through idMap like follow-up anchors do below —
+      // the schedule was cloned above, so the link can follow. If the anchor
+      // item was skipped by the template filter, drop the whole triple
+      // (all-or-nothing check constraint) and the shifted fixed date remains.
+      const newDueAnchor = d.due_anchor_schedule_item_id
+        ? idMap.get(d.due_anchor_schedule_item_id) ?? null
+        : null
       return {
         id: newId,
         project_id: newProject.id,
@@ -1189,6 +1201,9 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
         allowance_cost_code_id:
           allowanceAmount == null ? null : d.allowance_cost_code_id,
         due_date: shift(d.due_date),
+        due_anchor_schedule_item_id: newDueAnchor,
+        due_anchor: newDueAnchor ? d.due_anchor : null,
+        due_anchor_offset_days: newDueAnchor ? d.due_anchor_offset_days : null,
         template_tags: d.template_tags,
         status: "draft" as const,
         approved_at: null,
