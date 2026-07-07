@@ -4,7 +4,6 @@ import { ArrowLeft, ExternalLink } from "lucide-react"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireSession } from "@/lib/auth"
 import { Badge } from "@/components/ui/badge"
-import { ProjectTabs } from "./project-tabs"
 import { MembersButton } from "@/components/projects/members-dialog"
 import { DuplicateProjectButton } from "@/components/projects/duplicate-button"
 import { EditProjectButton } from "@/components/projects/edit-project-dialog"
@@ -83,9 +82,11 @@ export default async function ProjectDetailLayout({
     <div className="flex flex-col">
       <div className="bg-surface border-b border-border">
         <div className="max-w-7xl mx-auto px-4 md:px-6 pt-4 pb-3">
+          {/* Mobile-only: desktop has the jobs list sidebar for navigating
+              back, so the extra link would just add header height there. */}
           <Link
             href="/projects"
-            className="inline-flex items-center gap-1 text-xs text-muted hover:text-foreground mb-2"
+            className="inline-flex items-center gap-1 text-xs text-muted hover:text-foreground mb-2 lg:hidden"
           >
             <ArrowLeft className="h-3 w-3" /> All projects
           </Link>
@@ -240,7 +241,6 @@ export default async function ProjectDetailLayout({
             </div>
           </div>
         </div>
-        <ProjectTabs projectId={project.id} role={profile.role} />
       </div>
       <div className="flex-1">{children}</div>
     </div>
