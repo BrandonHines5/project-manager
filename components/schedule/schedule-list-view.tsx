@@ -19,7 +19,7 @@ import {
   X,
 } from "lucide-react"
 import { cn, formatDateRange, formatDate } from "@/lib/utils"
-import { AvatarStack } from "@/components/ui/avatar"
+import { AssigneeChips } from "./assignee-chips"
 import { EmptyState } from "@/components/ui/empty"
 import { Button } from "@/components/ui/button"
 import { StatusBadge } from "./status-badge"
@@ -702,32 +702,5 @@ function TodoRow({
       </div>
       <AssigneeChips names={assignees} size="xs" />
     </li>
-  )
-}
-
-// Avatar bubble(s) plus the assignees' full names (person, company, or
-// resolved role label). Names are hidden on phone widths where the row
-// doesn't have room for them.
-function AssigneeChips({
-  names,
-  size,
-}: {
-  names: string[]
-  size: "xs" | "sm"
-}) {
-  if (names.length === 0) return null
-  const joined = names.join(", ")
-  return (
-    <div className="flex items-center gap-1.5 min-w-0" title={joined}>
-      <AvatarStack names={names} size={size} />
-      <span
-        className={cn(
-          "hidden sm:inline text-muted truncate max-w-48 text-right",
-          size === "xs" ? "text-[11px]" : "text-xs"
-        )}
-      >
-        {joined}
-      </span>
-    </div>
   )
 }
