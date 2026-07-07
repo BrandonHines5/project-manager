@@ -21,7 +21,14 @@ import { cn } from "@/lib/utils"
 import { setProjectLabel } from "@/app/actions/projects"
 import { syncProjectsFromCrm } from "@/app/actions/crm-sync"
 import { crmStatusTone } from "@/lib/crm-status"
-import { OPEN_STATUSES, aggregateRouteForSlug } from "@/lib/project-status"
+import {
+  ALL_STATUSES,
+  STATUS_FILTER_LABEL,
+  aggregateRouteForSlug,
+  isProjectStatusFilter,
+  matchesStatusFilter,
+  type ProjectStatusFilter,
+} from "@/lib/project-status"
 import type { Enums } from "@/lib/db/types"
 
 // The label used to flag leftover test jobs. Surfaced as its own filter in the
@@ -41,24 +48,14 @@ export type SidebarProject = {
   labels: string[]
 }
 
-type StatusFilter = "open" | "active" | "warranty" | "closed" | "all"
 type Mode = "jobs" | "templates"
 
-const STATUS_FILTERS: ReadonlyArray<StatusFilter> = [
+// Open first (the default), then each CRM status by its exact word, then All.
+const STATUS_FILTERS: ReadonlyArray<ProjectStatusFilter> = [
   "open",
-  "active",
-  "warranty",
-  "closed",
+  ...ALL_STATUSES,
   "all",
 ]
-
-const STATUS_FILTER_LABEL: Record<StatusFilter, string> = {
-  open: "Open",
-  active: "Active",
-  warranty: "Warranty",
-  closed: "Closed",
-  all: "All",
-}
 
 // A label filter is encoded as "label:<name>" so it can share the single filter
 // dropdown with the status filters above.
@@ -121,7 +118,7 @@ export function ProjectListSidebar({
   const pathname = usePathname()
 
   const [query, setQuery] = useState("")
-  // Either a StatusFilter value ("open"…"all") or a "label:<name>" string.
+  // Either a ProjectStatusFilter value or a "label:<name>" string.
   const [filter, setFilter] = useState<string>("open")
   const [statusOpen, setStatusOpen] = useState(false)
   const [mode, setMode] = useState<Mode>("jobs")
@@ -229,14 +226,11 @@ export function ProjectListSidebar({
       if (mode === "jobs") {
         if (activeLabel) {
           if (!(p.labels ?? []).includes(activeLabel)) return false
-        } else {
-          // "Active" = a live build: In Work or Inventory (same pair the old
-          // enum collapsed into its single 'active' value).
-          if (filter === "open" && !OPEN_STATUSES.includes(p.status)) return false
-          if (filter === "active" && p.status !== "in_work" && p.status !== "inventory")
-            return false
-          if (filter === "warranty" && p.status !== "warranty") return false
-          if (filter === "closed" && OPEN_STATUSES.includes(p.status)) return false
+        } else if (
+          !isProjectStatusFilter(filter) ||
+          !matchesStatusFilter(p.status, filter)
+        ) {
+          return false
         }
       }
       if (!q) return true
@@ -341,7 +335,8 @@ export function ProjectListSidebar({
   }
 
   const filterLabel =
-    activeLabel ?? STATUS_FILTER_LABEL[filter as StatusFilter] ?? "All"
+    activeLabel ??
+    (isProjectStatusFilter(filter) ? STATUS_FILTER_LABEL[filter] : "All")
 
   // Collapsed: a thin rail with just an expand handle, so the job page can
   // take up (nearly) the full screen. Desktop-only, like the full list.
