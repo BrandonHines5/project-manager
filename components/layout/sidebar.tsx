@@ -134,6 +134,7 @@ export function SidebarNavList({
             href={item.href}
             onClick={onNavigate}
             title={collapsed ? item.label : undefined}
+            aria-label={collapsed ? item.label : undefined}
             className={cn(
               "flex items-center gap-3 mx-2 my-0.5 rounded-md px-3 py-2 text-sm transition-colors",
               collapsed && "justify-center px-0",

@@ -39,6 +39,8 @@ export default async function AggregateDecisionsPage({
   const supabase = await createSupabaseServerClient()
   const projectIds = scope.projects.map((p) => p.id)
 
+  // Newest first with a cap, mirroring the daily-logs page — the scope can
+  // now span every open job, so the fetch must not grow without bound.
   const decisionsRes = await supabase
     .from("decisions")
     .select(
@@ -46,6 +48,7 @@ export default async function AggregateDecisionsPage({
     )
     .in("project_id", projectIds)
     .order("created_at", { ascending: false })
+    .limit(200)
   if (decisionsRes.error) throw new Error(decisionsRes.error.message)
 
   const projectMap = new Map(scope.projects.map((p) => [p.id, p] as const))
@@ -56,6 +59,7 @@ export default async function AggregateDecisionsPage({
       <div className="mb-4 text-sm text-muted">
         {rows.length} decision{rows.length === 1 ? "" : "s"} across{" "}
         {scopeLabel(scope)}
+        {rows.length === 200 && " (showing latest 200)"}
       </div>
       {rows.length === 0 ? (
         <div className="text-sm text-muted py-12 text-center border border-dashed border-border-strong rounded-lg">

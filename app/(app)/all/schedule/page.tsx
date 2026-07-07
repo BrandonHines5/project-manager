@@ -41,16 +41,23 @@ export default async function AggregateSchedulePage({
 
   // We can't order by COALESCE(start_date, due_date) via PostgREST cleanly,
   // and ordering by start_date first pushes all to-dos (start_date NULL)
-  // to the end regardless of when they're due. Fetch unordered and sort
-  // in-memory by whichever date is meaningful for the row's kind.
+  // to the end regardless of when they're due. Fetch and sort in-memory by
+  // whichever date is meaningful for the row's kind. The scope can now span
+  // every open job, so cap the fetch (deterministically, newest rows first —
+  // the only orderable column both kinds share) instead of growing without
+  // bound; the cap is generous enough that real portfolios stay under it.
+  const ITEM_CAP = 2000
   const itemsRes = await supabase
     .from("schedule_items")
     .select(
       "id, project_id, kind, title, status, start_date, end_date, due_date"
     )
     .in("project_id", projectIds)
+    .order("created_at", { ascending: false })
+    .limit(ITEM_CAP)
   if (itemsRes.error) throw new Error(itemsRes.error.message)
   const items = itemsRes.data
+  const truncated = items.length === ITEM_CAP
 
   const projectMap = new Map(scope.projects.map((p) => [p.id, p] as const))
   const rows = [...items].sort((a, b) => {
@@ -69,6 +76,8 @@ export default async function AggregateSchedulePage({
       <div className="mb-4 text-sm text-muted">
         {rows.length} item{rows.length === 1 ? "" : "s"} ({workCount} work,{" "}
         {todoCount} to-do) across {scopeLabel(scope)}
+        {truncated &&
+          ` (showing the ${ITEM_CAP} most recently added — select fewer jobs to see everything)`}
       </div>
       {rows.length === 0 ? (
         <div className="text-sm text-muted py-12 text-center border border-dashed border-border-strong rounded-lg">
