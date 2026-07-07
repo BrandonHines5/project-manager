@@ -11,7 +11,7 @@ import {
   Circle,
 } from "lucide-react"
 import { cn, formatDate } from "@/lib/utils"
-import { AvatarStack } from "@/components/ui/avatar"
+import { AssigneeChips } from "./assignee-chips"
 import { EmptyState } from "@/components/ui/empty"
 import { Button } from "@/components/ui/button"
 import { Select } from "@/components/ui/input"
@@ -347,18 +347,16 @@ function TodoRow({
           )}
         </div>
       </div>
-      {assignees.length > 0 && (
-        <div
-          className={cn(inheritedAssignees && "opacity-60")}
-          title={
-            inheritedAssignees
-              ? `Inherited from parent: ${parent?.title ?? ""}`
-              : undefined
-          }
-        >
-          <AvatarStack names={assignees} size="xs" />
-        </div>
-      )}
+      <AssigneeChips
+        names={assignees}
+        size="xs"
+        className={cn(inheritedAssignees && "opacity-60")}
+        title={
+          inheritedAssignees
+            ? `Inherited from parent: ${parent?.title ?? ""} — ${assignees.join(", ")}`
+            : undefined
+        }
+      />
     </li>
   )
 }
