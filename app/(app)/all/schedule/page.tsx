@@ -4,10 +4,10 @@ import { requireSession } from "@/lib/auth"
 import { Badge } from "@/components/ui/badge"
 import { formatDate } from "@/lib/utils"
 import type { Enums } from "@/lib/db/types"
-import { parseProjectIds } from "../parse-ids"
-import { EmptySelection } from "../empty-selection"
+import { resolveAllScope, scopeLabel } from "../scope"
+import { EmptyScope } from "../empty-scope"
 
-export const metadata = { title: "Schedule (all) — Hines Homes" }
+export const metadata = { title: "Schedule (all jobs) — Hines Homes" }
 
 const STATUS_TONE: Record<
   Enums<"schedule_item_status">,
@@ -33,34 +33,33 @@ export default async function AggregateSchedulePage({
 }) {
   await requireSession()
   const params = await searchParams
-  const ids = parseProjectIds(params.ids)
-  if (ids.length === 0) return <EmptySelection entity="schedule items" />
+  const scope = await resolveAllScope(params.ids)
+  if (scope.projects.length === 0) return <EmptyScope explicit={scope.explicit} />
 
   const supabase = await createSupabaseServerClient()
+  const projectIds = scope.projects.map((p) => p.id)
 
-  // RLS still applies — projects the user can't see drop out automatically.
-  const [projectsRes, itemsRes] = await Promise.all([
-    supabase
-      .from("projects")
-      .select("id, name, project_number")
-      .in("id", ids),
-    // We can't order by COALESCE(start_date, due_date) via PostgREST cleanly,
-    // and ordering by start_date first pushes all to-dos (start_date NULL)
-    // to the end regardless of when they're due. Fetch unordered and sort
-    // in-memory by whichever date is meaningful for the row's kind.
-    supabase
-      .from("schedule_items")
-      .select(
-        "id, project_id, kind, title, status, start_date, end_date, due_date"
-      )
-      .in("project_id", ids),
-  ])
-  if (projectsRes.error) throw new Error(projectsRes.error.message)
+  // We can't order by COALESCE(start_date, due_date) via PostgREST cleanly,
+  // and ordering by start_date first pushes all to-dos (start_date NULL)
+  // to the end regardless of when they're due. Fetch and sort in-memory by
+  // whichever date is meaningful for the row's kind. The scope can now span
+  // every open job, so cap the fetch (deterministically, newest rows first —
+  // the only orderable column both kinds share) instead of growing without
+  // bound; the cap is generous enough that real portfolios stay under it.
+  const ITEM_CAP = 2000
+  const itemsRes = await supabase
+    .from("schedule_items")
+    .select(
+      "id, project_id, kind, title, status, start_date, end_date, due_date"
+    )
+    .in("project_id", projectIds)
+    .order("created_at", { ascending: false })
+    .limit(ITEM_CAP)
   if (itemsRes.error) throw new Error(itemsRes.error.message)
-  const projects = projectsRes.data
   const items = itemsRes.data
+  const truncated = items.length === ITEM_CAP
 
-  const projectMap = new Map(projects.map((p) => [p.id, p] as const))
+  const projectMap = new Map(scope.projects.map((p) => [p.id, p] as const))
   const rows = [...items].sort((a, b) => {
     const aDate = a.kind === "work" ? a.start_date : a.due_date
     const bDate = b.kind === "work" ? b.start_date : b.due_date
@@ -76,12 +75,13 @@ export default async function AggregateSchedulePage({
     <div>
       <div className="mb-4 text-sm text-muted">
         {rows.length} item{rows.length === 1 ? "" : "s"} ({workCount} work,{" "}
-        {todoCount} to-do) across {ids.length} project
-        {ids.length === 1 ? "" : "s"}
+        {todoCount} to-do) across {scopeLabel(scope)}
+        {truncated &&
+          ` (showing the ${ITEM_CAP} most recently added — select fewer jobs to see everything)`}
       </div>
       {rows.length === 0 ? (
         <div className="text-sm text-muted py-12 text-center border border-dashed border-border-strong rounded-lg">
-          No schedule items in the selected projects.
+          No schedule items in these jobs.
         </div>
       ) : (
         <div className="bg-surface border border-border rounded-lg overflow-hidden">

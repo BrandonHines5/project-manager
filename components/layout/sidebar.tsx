@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
@@ -16,6 +17,8 @@ import {
   Gavel,
   FileCheck2,
   FileBadge,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { UserRole } from "@/lib/auth"
@@ -101,13 +104,16 @@ export function SidebarBrand({
 }
 
 // Shared nav list. `onNavigate` is optional — the mobile drawer uses it to
-// close itself when the user taps an item.
+// close itself when the user taps an item. `collapsed` renders icon-only
+// entries for the desktop rail; the drawer never collapses.
 export function SidebarNavList({
   role,
   onNavigate,
+  collapsed = false,
 }: {
   role: UserRole
   onNavigate?: () => void
+  collapsed?: boolean
 }) {
   const path = usePathname()
   const items = navItemsFor(role)
@@ -127,15 +133,18 @@ export function SidebarNavList({
             key={item.href}
             href={item.href}
             onClick={onNavigate}
+            title={collapsed ? item.label : undefined}
+            aria-label={collapsed ? item.label : undefined}
             className={cn(
               "flex items-center gap-3 mx-2 my-0.5 rounded-md px-3 py-2 text-sm transition-colors",
+              collapsed && "justify-center px-0",
               active
                 ? "bg-white/10 text-white"
                 : "text-white/70 hover:bg-white/5 hover:text-white"
             )}
           >
-            <Icon className="h-4 w-4" />
-            <span>{item.label}</span>
+            <Icon className="h-4 w-4 shrink-0" />
+            {!collapsed && <span>{item.label}</span>}
           </Link>
         )
       })}
@@ -143,13 +152,84 @@ export function SidebarNavList({
   )
 }
 
+const COLLAPSE_KEY = "hh.navCollapsed.v1"
+
 export function Sidebar({ role, brand }: { role: UserRole; brand?: Brand }) {
+  // Collapsed = icon-only rail so page content gets (nearly) the full width.
+  // SSR renders expanded; the stored preference applies after hydration —
+  // same pattern as the jobs-list selection.
+  const [collapsed, setCollapsed] = useState(false)
+
+  /* eslint-disable react-hooks/set-state-in-effect --
+     One-time hydration of a persisted UI preference on mount, keeping the
+     SSR markup deterministic. */
+  useEffect(() => {
+    try {
+      setCollapsed(localStorage.getItem(COLLAPSE_KEY) === "1")
+    } catch {
+      // localStorage unavailable — stay expanded.
+    }
+  }, [])
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  function toggle() {
+    setCollapsed((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem(COLLAPSE_KEY, next ? "1" : "0")
+      } catch {
+        // Ignore quota / disabled storage.
+      }
+      return next
+    })
+  }
+
+  const b = brand ?? HINES_HOMES
   return (
-    <aside className="hidden md:flex md:flex-col w-56 shrink-0 border-r border-border bg-sidebar text-sidebar-foreground">
-      <SidebarBrand brand={brand} />
-      <SidebarNavList role={role} />
-      <div className="p-4 text-[11px] text-white/40 border-t border-white/10">
-        v0.1 · BrandonHines5
+    <aside
+      className={cn(
+        "hidden md:flex md:flex-col shrink-0 border-r border-border bg-sidebar text-sidebar-foreground",
+        collapsed ? "w-14" : "w-56"
+      )}
+    >
+      {collapsed ? (
+        <Link
+          href="/projects"
+          title={b.name}
+          className="h-14 flex items-center justify-center border-b border-white/10"
+        >
+          <div className="h-8 w-8 rounded-md bg-brand-500 text-white flex items-center justify-center">
+            {/* Static SVG mark from /public — next/image adds no benefit for SVGs. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={b.mark} alt={b.name} className="h-6 w-6" />
+          </div>
+        </Link>
+      ) : (
+        <SidebarBrand brand={brand} />
+      )}
+      <SidebarNavList role={role} collapsed={collapsed} />
+      <div
+        className={cn(
+          "border-t border-white/10 flex items-center",
+          collapsed ? "justify-center p-2" : "justify-between p-2 pl-4"
+        )}
+      >
+        {!collapsed && (
+          <span className="text-[11px] text-white/40">v0.1 · BrandonHines5</span>
+        )}
+        <button
+          type="button"
+          onClick={toggle}
+          title={collapsed ? "Expand menu" : "Collapse menu"}
+          aria-label={collapsed ? "Expand menu" : "Collapse menu"}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md text-white/60 hover:bg-white/10 hover:text-white cursor-pointer"
+        >
+          {collapsed ? (
+            <PanelLeftOpen className="h-4 w-4" />
+          ) : (
+            <PanelLeftClose className="h-4 w-4" />
+          )}
+        </button>
       </div>
     </aside>
   )

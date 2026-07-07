@@ -1,6 +1,7 @@
 import { requireSession } from "@/lib/auth"
 import { Sidebar } from "@/components/layout/sidebar"
 import { Topbar } from "@/components/layout/topbar"
+import { SectionTabs } from "@/components/layout/section-tabs"
 import { ProjectContextShell } from "@/components/layout/project-context-shell"
 import { ProjectListSidebar } from "@/components/layout/project-list-sidebar"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
@@ -65,6 +66,7 @@ export default async function AppLayout({
           unreadCount={unreadCount ?? 0}
           brand={brand}
         />
+        <SectionTabs role={profile.role} />
         <ProjectContextShell
           sidebar={
             <ProjectListSidebar

@@ -3,10 +3,10 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireSession } from "@/lib/auth"
 import { Badge } from "@/components/ui/badge"
 import { formatDate } from "@/lib/utils"
-import { parseProjectIds } from "../parse-ids"
-import { EmptySelection } from "../empty-selection"
+import { resolveAllScope, scopeLabel } from "../scope"
+import { EmptyScope } from "../empty-scope"
 
-export const metadata = { title: "Job Logs (all) — Hines Homes" }
+export const metadata = { title: "Job Logs (all jobs) — Hines Homes" }
 
 export default async function AggregateDailyLogsPage({
   searchParams,
@@ -15,41 +15,36 @@ export default async function AggregateDailyLogsPage({
 }) {
   const profile = await requireSession()
   const params = await searchParams
-  const ids = parseProjectIds(params.ids)
-  if (ids.length === 0) return <EmptySelection entity="job logs" />
+  const scope = await resolveAllScope(params.ids)
+  if (scope.projects.length === 0) return <EmptyScope explicit={scope.explicit} />
 
   const supabase = await createSupabaseServerClient()
+  const projectIds = scope.projects.map((p) => p.id)
+
   // RLS handles per-row visibility: clients only see logs where
   // visibility='client' AND they're a project member. Staff see everything.
-  const [projectsRes, logsRes] = await Promise.all([
-    supabase
-      .from("projects")
-      .select("id, name, project_number")
-      .in("id", ids),
-    supabase
-      .from("daily_logs")
-      .select("id, project_id, log_date, notes, visibility, created_at")
-      .in("project_id", ids)
-      .order("log_date", { ascending: false })
-      .order("created_at", { ascending: false })
-      .limit(200),
-  ])
-  if (projectsRes.error) throw new Error(projectsRes.error.message)
+  const logsRes = await supabase
+    .from("daily_logs")
+    .select("id, project_id, log_date, notes, visibility, created_at")
+    .in("project_id", projectIds)
+    .order("log_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(200)
   if (logsRes.error) throw new Error(logsRes.error.message)
 
-  const projectMap = new Map(projectsRes.data.map((p) => [p.id, p] as const))
+  const projectMap = new Map(scope.projects.map((p) => [p.id, p] as const))
   const rows = logsRes.data
 
   return (
     <div>
       <div className="mb-4 text-sm text-muted">
-        {rows.length} log{rows.length === 1 ? "" : "s"} across {ids.length} project
-        {ids.length === 1 ? "" : "s"}
+        {rows.length} log{rows.length === 1 ? "" : "s"} across{" "}
+        {scopeLabel(scope)}
         {rows.length === 200 && " (showing latest 200)"}
       </div>
       {rows.length === 0 ? (
         <div className="text-sm text-muted py-12 text-center border border-dashed border-border-strong rounded-lg">
-          No job logs in the selected projects.
+          No job logs in these jobs.
         </div>
       ) : (
         <ul className="space-y-3">

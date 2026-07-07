@@ -11,6 +11,10 @@ import type { ReactNode } from "react"
  */
 const PROJECT_CONTEXT_PREFIXES = ["/projects", "/all"]
 
+// The Projects index IS the project list — repeating it in a sidebar would
+// show every job twice. The new-job form doesn't need it either.
+const SIDEBAR_HIDDEN_EXACT = ["/projects", "/projects/new"]
+
 export function ProjectContextShell({
   sidebar,
   children,
@@ -19,9 +23,10 @@ export function ProjectContextShell({
   children: ReactNode
 }) {
   const pathname = usePathname()
-  const showSidebar = PROJECT_CONTEXT_PREFIXES.some(
-    (p) => pathname === p || pathname.startsWith(`${p}/`)
-  )
+  const showSidebar =
+    PROJECT_CONTEXT_PREFIXES.some(
+      (p) => pathname === p || pathname.startsWith(`${p}/`)
+    ) && !SIDEBAR_HIDDEN_EXACT.includes(pathname)
   if (!showSidebar) {
     return <div className="flex-1 min-w-0">{children}</div>
   }

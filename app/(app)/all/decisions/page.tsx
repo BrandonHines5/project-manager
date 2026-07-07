@@ -4,10 +4,10 @@ import { requireSession } from "@/lib/auth"
 import { Badge } from "@/components/ui/badge"
 import { formatDate } from "@/lib/utils"
 import type { Enums } from "@/lib/db/types"
-import { parseProjectIds } from "../parse-ids"
-import { EmptySelection } from "../empty-selection"
+import { resolveAllScope, scopeLabel } from "../scope"
+import { EmptyScope } from "../empty-scope"
 
-export const metadata = { title: "Decisions (all) — Hines Homes" }
+export const metadata = { title: "Decisions (all jobs) — Hines Homes" }
 
 const STATUS_TONE: Record<
   Enums<"decision_status">,
@@ -33,38 +33,37 @@ export default async function AggregateDecisionsPage({
 }) {
   await requireSession()
   const params = await searchParams
-  const ids = parseProjectIds(params.ids)
-  if (ids.length === 0) return <EmptySelection entity="decisions" />
+  const scope = await resolveAllScope(params.ids)
+  if (scope.projects.length === 0) return <EmptyScope explicit={scope.explicit} />
 
   const supabase = await createSupabaseServerClient()
-  const [projectsRes, decisionsRes] = await Promise.all([
-    supabase
-      .from("projects")
-      .select("id, name, project_number")
-      .in("id", ids),
-    supabase
-      .from("decisions")
-      .select(
-        "id, project_id, number, kind, title, status, due_date, approved_at, created_at"
-      )
-      .in("project_id", ids)
-      .order("created_at", { ascending: false }),
-  ])
-  if (projectsRes.error) throw new Error(projectsRes.error.message)
+  const projectIds = scope.projects.map((p) => p.id)
+
+  // Newest first with a cap, mirroring the daily-logs page — the scope can
+  // now span every open job, so the fetch must not grow without bound.
+  const decisionsRes = await supabase
+    .from("decisions")
+    .select(
+      "id, project_id, number, kind, title, status, due_date, approved_at, created_at"
+    )
+    .in("project_id", projectIds)
+    .order("created_at", { ascending: false })
+    .limit(200)
   if (decisionsRes.error) throw new Error(decisionsRes.error.message)
 
-  const projectMap = new Map(projectsRes.data.map((p) => [p.id, p] as const))
+  const projectMap = new Map(scope.projects.map((p) => [p.id, p] as const))
   const rows = decisionsRes.data
 
   return (
     <div>
       <div className="mb-4 text-sm text-muted">
-        {rows.length} decision{rows.length === 1 ? "" : "s"} across {ids.length}{" "}
-        project{ids.length === 1 ? "" : "s"}
+        {rows.length} decision{rows.length === 1 ? "" : "s"} across{" "}
+        {scopeLabel(scope)}
+        {rows.length === 200 && " (showing latest 200)"}
       </div>
       {rows.length === 0 ? (
         <div className="text-sm text-muted py-12 text-center border border-dashed border-border-strong rounded-lg">
-          No decisions in the selected projects.
+          No decisions in these jobs.
         </div>
       ) : (
         <div className="bg-surface border border-border rounded-lg overflow-hidden">

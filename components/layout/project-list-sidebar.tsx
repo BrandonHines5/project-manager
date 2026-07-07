@@ -9,9 +9,9 @@ import {
   Search,
   Filter as FilterIcon,
   ChevronDown,
-  Calendar,
-  ClipboardList,
-  ScrollText,
+  LayoutGrid,
+  PanelLeftClose,
+  PanelLeftOpen,
   Tag,
   RefreshCw,
   X,
@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils"
 import { setProjectLabel } from "@/app/actions/projects"
 import { syncProjectsFromCrm } from "@/app/actions/crm-sync"
 import { crmStatusTone } from "@/lib/crm-status"
+import { OPEN_STATUSES, aggregateRouteForSlug } from "@/lib/project-status"
 import type { Enums } from "@/lib/db/types"
 
 // The label used to flag leftover test jobs. Surfaced as its own filter in the
@@ -70,13 +71,6 @@ function isTemplate(p: SidebarProject) {
   return p.project_number.toUpperCase().startsWith("TEMPLATE")
 }
 
-const OPEN_STATUSES: ReadonlyArray<Enums<"project_status">> = [
-  "lead",
-  "pre_construction",
-  "active",
-  "on_hold",
-]
-
 const STATUS_LABEL: Record<Enums<"project_status">, string> = {
   lead: "Lead",
   pre_construction: "Pre",
@@ -101,6 +95,7 @@ const STATUS_TONE: Record<
 }
 
 const STORAGE_KEY = "hh.projectSelection.v1"
+const COLLAPSE_KEY = "hh.jobsListCollapsed.v1"
 
 /**
  * Persistent project picker that sits between the main nav and page content
@@ -134,16 +129,21 @@ export function ProjectListSidebar({
   // stays deterministic (avoids hydration mismatch).
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
   const [hydrated, setHydrated] = useState(false)
+  // Collapsed = a thin rail so a job can take up (nearly) the whole screen.
+  // SSR renders expanded; the stored preference applies after hydration.
+  const [collapsed, setCollapsed] = useState(false)
 
   // Derive both the current project and the current sub-route from the
   // pathname so clicking a different project keeps the user on the same tab
   // (i.e. /projects/A/daily-logs → /projects/B/daily-logs). On /all/* there's
-  // no "current project" — every list item is unhighlighted.
+  // no "current project", but the section still carries (/all/daily-logs →
+  // /projects/X/daily-logs).
   const { currentProjectId, currentSubRoute } = useMemo(() => {
     const m = pathname.match(/^\/projects\/([^/]+)(?:\/([^/]+))?/)
+    const all = pathname.match(/^\/all\/([^/]+)/)
     return {
       currentProjectId: m?.[1] ?? null,
-      currentSubRoute: m?.[2] ?? "schedule",
+      currentSubRoute: m?.[2] ?? all?.[1] ?? "schedule",
     }
   }, [pathname])
 
@@ -168,8 +168,25 @@ export function ProjectListSidebar({
     } catch {
       // localStorage unavailable or corrupted — start empty.
     }
+    try {
+      setCollapsed(localStorage.getItem(COLLAPSE_KEY) === "1")
+    } catch {
+      // Ignore — stay expanded.
+    }
   }, [projects])
   /* eslint-enable react-hooks/set-state-in-effect */
+
+  function toggleCollapsed() {
+    setCollapsed((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem(COLLAPSE_KEY, next ? "1" : "0")
+      } catch {
+        // Ignore quota / disabled storage.
+      }
+      return next
+    })
+  }
 
   useEffect(() => {
     if (!hydrated) return
@@ -253,9 +270,11 @@ export function ProjectListSidebar({
     setSelected(new Set())
   }
 
-  function navigateToAggregate(section: "schedule" | "daily-logs" | "decisions") {
+  // Jump to the all-jobs view scoped to the checked jobs, keeping the user's
+  // current section (schedule stays schedule, job logs stay job logs, …).
+  function viewSelectedTogether() {
     const ids = Array.from(selected).join(",")
-    router.push(`/all/${section}?ids=${ids}`)
+    router.push(`${aggregateRouteForSlug(currentSubRoute)}?ids=${ids}`)
   }
 
   // Add or remove the "Test" label across the current multi-select. The server
@@ -315,23 +334,55 @@ export function ProjectListSidebar({
   const filterLabel =
     activeLabel ?? STATUS_FILTER_LABEL[filter as StatusFilter] ?? "All"
 
+  // Collapsed: a thin rail with just an expand handle, so the job page can
+  // take up (nearly) the full screen. Desktop-only, like the full list.
+  if (collapsed) {
+    return (
+      <aside className="hidden lg:flex flex-col items-center w-10 shrink-0 border-r border-border bg-surface pt-2 gap-3">
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          title="Show jobs list"
+          aria-label="Show jobs list"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted hover:bg-background hover:text-foreground cursor-pointer"
+        >
+          <PanelLeftOpen className="h-4 w-4" />
+        </button>
+        <span className="text-[11px] font-medium uppercase tracking-wider text-muted [writing-mode:vertical-rl]">
+          Jobs ({filtered.length})
+        </span>
+      </aside>
+    )
+  }
+
   return (
     <aside className="hidden lg:flex lg:flex-col w-[300px] shrink-0 border-r border-border bg-surface">
       {/* Workspace header */}
-      <div className="px-4 pt-4 pb-3 border-b border-border flex items-center justify-between gap-2">
+      <div className="pl-4 pr-2 pt-3 pb-2 border-b border-border flex items-center justify-between gap-2">
         <div className="text-sm font-semibold">Hines Homes</div>
-        {canSync && (
+        <div className="flex items-center gap-1">
+          {canSync && (
+            <button
+              type="button"
+              onClick={runSync}
+              disabled={syncPending}
+              title="Pull the latest statuses and job names from the CRM"
+              className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted hover:text-foreground hover:bg-background disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <RefreshCw className={cn("h-3 w-3", syncPending && "animate-spin")} />
+              {syncPending ? "Syncing…" : "Sync from CRM"}
+            </button>
+          )}
           <button
             type="button"
-            onClick={runSync}
-            disabled={syncPending}
-            title="Pull the latest statuses and job names from the CRM"
-            className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted hover:text-foreground hover:bg-background disabled:cursor-not-allowed disabled:opacity-60"
+            onClick={toggleCollapsed}
+            title="Hide jobs list"
+            aria-label="Hide jobs list"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted hover:bg-background hover:text-foreground cursor-pointer"
           >
-            <RefreshCw className={cn("h-3 w-3", syncPending && "animate-spin")} />
-            {syncPending ? "Syncing…" : "Sync from CRM"}
+            <PanelLeftClose className="h-4 w-4" />
           </button>
-        )}
+        </div>
       </div>
 
       {/* Tabs + + Job */}
@@ -545,7 +596,7 @@ export function ProjectListSidebar({
           pending={tagPending}
           onClear={clearSelection}
           onTag={tagSelected}
-          onNavigate={navigateToAggregate}
+          onViewTogether={viewSelectedTogether}
         />
       )}
     </aside>
@@ -557,13 +608,13 @@ function SelectionFooter({
   pending,
   onClear,
   onTag,
-  onNavigate,
+  onViewTogether,
 }: {
   count: number
   pending: boolean
   onClear: () => void
   onTag: (value: boolean) => void
-  onNavigate: (section: "schedule" | "daily-logs" | "decisions") => void
+  onViewTogether: () => void
 }) {
   return (
     <div className="border-t border-border bg-surface shadow-lg">
@@ -579,6 +630,19 @@ function SelectionFooter({
         >
           <X className="h-3 w-3" />
           Clear
+        </button>
+      </div>
+      {/* One combined view for the checked jobs; the tabs across the top
+          switch sections once there. */}
+      <div className="px-3 pb-2">
+        <button
+          type="button"
+          onClick={onViewTogether}
+          className="w-full inline-flex items-center justify-center gap-1.5 rounded-md bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium px-2.5 py-1.5 cursor-pointer"
+          title="See these jobs side by side in the all-jobs view"
+        >
+          <LayoutGrid className="h-3.5 w-3.5" />
+          View {count === 1 ? "job" : `${count} jobs`} together
         </button>
       </div>
       {/* Bulk-toggle the Test label on the current selection. */}
@@ -607,44 +671,6 @@ function SelectionFooter({
           Untag
         </button>
       </div>
-      <div className="grid grid-cols-3 border-t border-border">
-        <FooterButton
-          icon={<Calendar className="h-3.5 w-3.5" />}
-          label="Schedule"
-          onClick={() => onNavigate("schedule")}
-        />
-        <FooterButton
-          icon={<ScrollText className="h-3.5 w-3.5" />}
-          label="Job Logs"
-          onClick={() => onNavigate("daily-logs")}
-        />
-        <FooterButton
-          icon={<ClipboardList className="h-3.5 w-3.5" />}
-          label="Decisions"
-          onClick={() => onNavigate("decisions")}
-        />
-      </div>
     </div>
-  )
-}
-
-function FooterButton({
-  icon,
-  label,
-  onClick,
-}: {
-  icon: React.ReactNode
-  label: string
-  onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium border-l border-border first:border-l-0 hover:bg-background/60"
-    >
-      {icon}
-      {label}
-    </button>
   )
 }
