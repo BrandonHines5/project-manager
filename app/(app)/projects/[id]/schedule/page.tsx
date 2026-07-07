@@ -37,6 +37,7 @@ export default async function SchedulePage({
     { data: roles },
     { data: roleMembers },
     { data: comments },
+    { data: allProjects },
   ] = await Promise.all([
     supabase
       .from("schedule_items")
@@ -89,6 +90,10 @@ export default async function SchedulePage({
       .select("*, schedule_items!inner(project_id)")
       .eq("schedule_items.project_id", projectId)
       .order("created_at", { ascending: true }),
+    supabase
+      .from("projects")
+      .select("id, name, project_number")
+      .order("project_number", { ascending: true }),
   ])
 
   const strip = <T extends { schedule_items?: unknown }>(rows: T[] | null) =>
@@ -127,6 +132,7 @@ export default async function SchedulePage({
     companies: companies ?? [],
     roles: roles ?? [],
     roleMembers: roleMembers ?? [],
+    projects: allProjects ?? [],
     comments: strip(comments) as ScheduleData["comments"],
     role: profile.role,
     me_name: profile.full_name ?? profile.email ?? "Me",

@@ -30,6 +30,7 @@ import {
   checklistFor,
   childItemsOf,
   delaysFor,
+  resolveRoleLabel,
 } from "./helpers"
 import { setItemStatus } from "@/app/actions/schedule"
 import { computeCriticalPath } from "@/lib/schedule/scheduling"
@@ -341,6 +342,16 @@ export function ScheduleListView({
               b.full_name || b.email || ""
             )
           )}
+        roles={data.roles.map((r) => ({
+          id: r.id,
+          label: resolveRoleLabel(r.id, data),
+        }))}
+        projects={data.projects
+          .filter((p) => p.id !== projectId)
+          .map((p) => ({
+            id: p.id,
+            label: `${p.project_number != null ? `${p.project_number} — ` : ""}${p.name ?? "Untitled"}`,
+          }))}
         onClear={clearSelection}
       />
     </div>

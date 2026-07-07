@@ -10,6 +10,7 @@ import {
   recomputeAnchoredDueDate,
 } from "@/lib/schedule/scheduling"
 import type { RecurrenceRule } from "@/lib/schedule/recurrence"
+import { rollRecurringTodo } from "@/lib/schedule/roll-recurrence"
 import type { TablesUpdate } from "@/lib/db/types"
 import { sendEmail, appUrl } from "@/lib/email"
 import { sendQuoSms, normalizeE164 } from "@/lib/quo"
@@ -1215,7 +1216,13 @@ export async function setItemStatus({
     .update({ status })
     .eq("id", id)
   if (error) throw new Error(error.message)
+  // Recurring to-do: completing one occurrence spawns the next.
+  let nextOccurrenceId: string | null = null
+  if (status === "complete") {
+    nextOccurrenceId = await rollRecurringTodo(supabase, id)
+  }
   revalidatePath(`/projects/${project_id}/schedule`)
+  return { next_occurrence_created: nextOccurrenceId != null }
 }
 
 // Lightweight single-field edits for the to-do spreadsheet view. Unlike
@@ -1287,6 +1294,9 @@ export async function updateScheduleItemFields(
     .eq("id", id)
     .eq("project_id", project_id)
   if (error) throw new Error(error.message)
+  if (fields.status === "complete") {
+    await rollRecurringTodo(supabase, id)
+  }
   revalidatePath(`/projects/${project_id}/schedule`)
 }
 
@@ -2025,6 +2035,18 @@ export async function bulkSetScheduleStatus(input: {
       .filter((id) => !updated.has(id))
       .map((id) => ({ id, reason: "not found in project (or RLS denied)" })),
   ]
+  // Recurring to-dos in the batch each spawn their next occurrence.
+  if (parsed.status === "complete" && updated.size > 0) {
+    const { data: recurring } = await supabase
+      .from("schedule_items")
+      .select("id")
+      .in("id", Array.from(updated))
+      .eq("kind", "todo")
+      .not("recurrence_rule", "is", null)
+    for (const r of recurring ?? []) {
+      await rollRecurringTodo(supabase, r.id)
+    }
+  }
   revalidatePath(`/projects/${parsed.project_id}/schedule`)
   return { ok: updated.size, skipped }
 }
@@ -2338,6 +2360,373 @@ export async function bulkUnassignProfileFromScheduleItems(input: {
   }
   revalidatePath(`/projects/${parsed.project_id}/schedule`)
   return { ok: removed.size, skipped }
+}
+
+// Role variants of bulk assign/unassign. Same shape as the profile pair; the
+// role resolves to a person/company through the project's role map for
+// display, notifications and trade visibility (migration 0054).
+
+const BulkRoleAssignInput = BulkIdsInput.extend({
+  role_id: z.string().uuid(),
+})
+
+export async function bulkAssignRoleToScheduleItems(input: {
+  project_id: string
+  ids: string[]
+  role_id: string
+}): Promise<BulkScheduleResult> {
+  await requireStaff()
+  const parsed = BulkRoleAssignInput.parse(input)
+  const supabase = await createSupabaseServerClient()
+
+  const { data: items, error: itemsErr } = await supabase
+    .from("schedule_items")
+    .select("id")
+    .in("id", parsed.ids)
+    .eq("project_id", parsed.project_id)
+  if (itemsErr) throw new Error(itemsErr.message)
+  const validIds = new Set((items ?? []).map((i) => i.id))
+  const skipped: { id: string; reason: string }[] = []
+  for (const id of parsed.ids) {
+    if (!validIds.has(id)) {
+      skipped.push({ id, reason: "not found in project (or RLS denied)" })
+    }
+  }
+  if (validIds.size === 0) return { ok: 0, skipped }
+
+  const { data: existing, error: exErr } = await supabase
+    .from("schedule_assignments")
+    .select("schedule_item_id")
+    .in("schedule_item_id", Array.from(validIds))
+    .eq("role_id", parsed.role_id)
+  if (exErr) throw new Error(exErr.message)
+  const alreadyAssigned = new Set(
+    (existing ?? []).map((r) => r.schedule_item_id)
+  )
+
+  const toInsert = Array.from(validIds).filter(
+    (id) => !alreadyAssigned.has(id)
+  )
+  for (const id of alreadyAssigned) {
+    skipped.push({ id, reason: "already assigned" })
+  }
+
+  let inserted = 0
+  if (toInsert.length > 0) {
+    const rows = toInsert.map((id) => ({
+      schedule_item_id: id,
+      profile_id: null,
+      company_id: null,
+      role_id: parsed.role_id,
+    }))
+    const { data, error } = await supabase
+      .from("schedule_assignments")
+      .insert(rows)
+      .select("schedule_item_id")
+    if (error) throw new Error(error.message)
+    inserted = (data ?? []).length
+    const insertedSet = new Set((data ?? []).map((r) => r.schedule_item_id))
+    for (const id of toInsert) {
+      if (!insertedSet.has(id)) {
+        skipped.push({ id, reason: "insert blocked (RLS)" })
+      }
+    }
+  }
+  revalidatePath(`/projects/${parsed.project_id}/schedule`)
+  return { ok: inserted, skipped }
+}
+
+export async function bulkUnassignRoleFromScheduleItems(input: {
+  project_id: string
+  ids: string[]
+  role_id: string
+}): Promise<BulkScheduleResult> {
+  await requireStaff()
+  const parsed = BulkRoleAssignInput.parse(input)
+  const supabase = await createSupabaseServerClient()
+
+  const { data: items, error: itemsErr } = await supabase
+    .from("schedule_items")
+    .select("id")
+    .in("id", parsed.ids)
+    .eq("project_id", parsed.project_id)
+  if (itemsErr) throw new Error(itemsErr.message)
+  const validIds = new Set((items ?? []).map((i) => i.id))
+  const skipped: { id: string; reason: string }[] = []
+  for (const id of parsed.ids) {
+    if (!validIds.has(id)) {
+      skipped.push({ id, reason: "not found in project (or RLS denied)" })
+    }
+  }
+  if (validIds.size === 0) return { ok: 0, skipped }
+
+  const { data: deleted, error } = await supabase
+    .from("schedule_assignments")
+    .delete()
+    .eq("role_id", parsed.role_id)
+    .in("schedule_item_id", Array.from(validIds))
+    .select("schedule_item_id")
+  if (error) throw new Error(error.message)
+  const removed = new Set((deleted ?? []).map((r) => r.schedule_item_id))
+  for (const id of validIds) {
+    if (!removed.has(id)) {
+      skipped.push({ id, reason: "not assigned" })
+    }
+  }
+  revalidatePath(`/projects/${parsed.project_id}/schedule`)
+  return { ok: removed.size, skipped }
+}
+
+// ============================================================================
+// Bulk copy selected schedule items to another job
+// ============================================================================
+//
+// Copies the selected work items AND to-dos into a target project:
+//  - Parent/child nesting survives when both ends of the pair are selected
+//    (a child whose parent wasn't selected copies as a standalone item, its
+//    anchor dropped but its computed due date kept).
+//  - Predecessor edges copy only when both endpoints are in the selection.
+//  - Dates copy verbatim; statuses reset to not_started; checklists copy with
+//    is_done reset; assignments copy verbatim (roles re-resolve through the
+//    target project's role map, matching copyTodoToTargets).
+//  - Milestone rows are skipped — the target job already has its own
+//    protected Job Start / Substantial Completion markers.
+//  - If the target project is baselined, copied work items get their dates
+//    stamped as baseline, matching the post-baseline create path.
+
+const BulkCopyInput = BulkIdsInput.extend({
+  target_project_id: z.string().uuid(),
+})
+
+export async function bulkCopyScheduleItems(input: {
+  project_id: string
+  ids: string[]
+  target_project_id: string
+}): Promise<BulkScheduleResult> {
+  const profile = await requireStaff()
+  const parsed = BulkCopyInput.parse(input)
+  if (parsed.target_project_id === parsed.project_id) {
+    throw new Error("Pick a different job to copy into.")
+  }
+  const supabase = await createSupabaseServerClient()
+
+  // Confirm the target project is visible to this staff member (clear error
+  // instead of an opaque RLS insert failure).
+  const { data: target, error: targetErr } = await supabase
+    .from("projects")
+    .select("id, baseline_set_at")
+    .eq("id", parsed.target_project_id)
+    .maybeSingle()
+  if (targetErr) throw new Error(targetErr.message)
+  if (!target) throw new Error("Target job not found.")
+
+  const { data: items, error: itemsErr } = await supabase
+    .from("schedule_items")
+    .select(
+      "id, kind, title, description, start_date, end_date, due_date, duration_days, priority, recurrence_rule, parent_id, parent_anchor, parent_offset_days, position, exclude_from_critical_path, template_tags, milestone"
+    )
+    .in("id", parsed.ids)
+    .eq("project_id", parsed.project_id)
+  if (itemsErr) throw new Error(itemsErr.message)
+
+  const skipped: { id: string; reason: string }[] = []
+  const seen = new Set((items ?? []).map((i) => i.id))
+  for (const id of parsed.ids) {
+    if (!seen.has(id)) {
+      skipped.push({ id, reason: "not found in project (or RLS denied)" })
+    }
+  }
+
+  const copyable = (items ?? []).filter((i) => {
+    if (i.milestone) {
+      skipped.push({
+        id: i.id,
+        reason: "milestone — the target job has its own",
+      })
+      return false
+    }
+    return true
+  })
+  if (copyable.length === 0) return { ok: 0, skipped }
+
+  const [{ data: checklist }, { data: assignments }, { data: predecessors }] =
+    await Promise.all([
+      supabase
+        .from("todo_checklist_items")
+        .select(
+          "schedule_item_id, label, position, assignee_profile_id, assignee_company_id, assignee_role_id"
+        )
+        .in(
+          "schedule_item_id",
+          copyable.map((i) => i.id)
+        )
+        .order("position", { ascending: true }),
+      supabase
+        .from("schedule_assignments")
+        .select("schedule_item_id, profile_id, company_id, role_id")
+        .in(
+          "schedule_item_id",
+          copyable.map((i) => i.id)
+        ),
+      supabase
+        .from("schedule_predecessors")
+        .select("item_id, predecessor_id, dep_type, lag_days")
+        .in(
+          "item_id",
+          copyable.map((i) => i.id)
+        ),
+    ])
+
+  // Pre-assign ids so relationships remap without relying on insert-return
+  // order (same pattern as duplicateProject).
+  const idMap = new Map<string, string>()
+  for (const i of copyable) idMap.set(i.id, crypto.randomUUID())
+
+  const targetBaselined = !!target.baseline_set_at
+  const rows = copyable.map((i) => {
+    const parentCopied = i.parent_id ? idMap.has(i.parent_id) : false
+    return {
+      id: idMap.get(i.id)!,
+      project_id: parsed.target_project_id,
+      // Children keep their nesting only when the parent came along; the
+      // parent linkage lands in pass 2 (the parent row must exist first).
+      parent_id: null as string | null,
+      kind: i.kind,
+      title: i.title,
+      description: i.description,
+      start_date: i.start_date,
+      end_date: i.end_date,
+      due_date: i.due_date,
+      duration_days: i.duration_days,
+      status: "not_started" as const,
+      priority: i.priority,
+      recurrence_rule: i.recurrence_rule,
+      parent_anchor: null as "start" | "end" | null,
+      parent_offset_days: null as number | null,
+      position: i.position,
+      exclude_from_critical_path: i.exclude_from_critical_path,
+      template_tags: i.template_tags,
+      // Post-baseline convention: new work items enter at baseline.
+      baseline_start_date:
+        targetBaselined && i.kind === "work" ? i.start_date : null,
+      baseline_end_date:
+        targetBaselined && i.kind === "work" ? i.end_date : null,
+      created_by: profile.id,
+      _parentCopied: parentCopied,
+      _sourceParent: i.parent_id,
+      _sourceAnchor: i.parent_anchor,
+      _sourceOffset: i.parent_offset_days,
+    }
+  })
+
+  const { error: insErr } = await supabase.from("schedule_items").insert(
+    rows.map(
+      ({ _parentCopied, _sourceParent, _sourceAnchor, _sourceOffset, ...r }) => {
+        void _parentCopied
+        void _sourceParent
+        void _sourceAnchor
+        void _sourceOffset
+        return r
+      }
+    )
+  )
+  if (insErr) throw new Error(insErr.message)
+
+  // Pass 2: re-link children whose parents were copied too, restoring the
+  // anchor triple (the anchor recomputes due dates off the copied parent,
+  // whose dates match the source, so due_date stays consistent).
+  for (const r of rows) {
+    if (!r._parentCopied || !r._sourceParent) continue
+    const { error: linkErr } = await supabase
+      .from("schedule_items")
+      .update({
+        parent_id: idMap.get(r._sourceParent)!,
+        parent_anchor: r._sourceAnchor,
+        parent_offset_days: r._sourceOffset,
+      })
+      .eq("id", r.id)
+    if (linkErr) {
+      console.warn("[bulkCopyScheduleItems] parent link failed:", linkErr.message)
+    }
+  }
+
+  if (checklist?.length) {
+    const clRows = checklist
+      .filter((c) => idMap.has(c.schedule_item_id))
+      .map((c) => ({
+        schedule_item_id: idMap.get(c.schedule_item_id)!,
+        label: c.label,
+        is_done: false,
+        position: c.position,
+        assignee_profile_id: c.assignee_profile_id,
+        assignee_company_id: c.assignee_company_id,
+        assignee_role_id: c.assignee_role_id,
+      }))
+    if (clRows.length) {
+      const { error: clErr } = await supabase
+        .from("todo_checklist_items")
+        .insert(clRows)
+      if (clErr) {
+        console.warn(
+          "[bulkCopyScheduleItems] checklist copy failed:",
+          clErr.message
+        )
+      }
+    }
+  }
+
+  if (assignments?.length) {
+    const asRows = assignments
+      .filter(
+        (a) =>
+          idMap.has(a.schedule_item_id) &&
+          (a.profile_id || a.company_id || a.role_id)
+      )
+      .map((a) => ({
+        schedule_item_id: idMap.get(a.schedule_item_id)!,
+        profile_id: a.profile_id,
+        company_id: a.company_id,
+        role_id: a.role_id,
+      }))
+    if (asRows.length) {
+      const { error: asErr } = await supabase
+        .from("schedule_assignments")
+        .insert(asRows)
+      if (asErr) {
+        console.warn(
+          "[bulkCopyScheduleItems] assignment copy failed:",
+          asErr.message
+        )
+      }
+    }
+  }
+
+  // Predecessor edges where BOTH endpoints were copied.
+  if (predecessors?.length) {
+    const edgeRows = predecessors
+      .filter((p) => idMap.has(p.item_id) && idMap.has(p.predecessor_id))
+      .map((p) => ({
+        item_id: idMap.get(p.item_id)!,
+        predecessor_id: idMap.get(p.predecessor_id)!,
+        dep_type: p.dep_type,
+        lag_days: p.lag_days,
+      }))
+    if (edgeRows.length) {
+      const { error: edgeErr } = await supabase
+        .from("schedule_predecessors")
+        .insert(edgeRows)
+      if (edgeErr) {
+        console.warn(
+          "[bulkCopyScheduleItems] predecessor copy failed:",
+          edgeErr.message
+        )
+      }
+    }
+  }
+
+  revalidatePath(`/projects/${parsed.project_id}/schedule`)
+  revalidatePath(`/projects/${parsed.target_project_id}/schedule`)
+  return { ok: copyable.length, skipped }
 }
 
 // ============================================================================

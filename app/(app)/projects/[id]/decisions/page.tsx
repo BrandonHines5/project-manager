@@ -38,6 +38,10 @@ export default async function DecisionsPage({
     { data: choices },
     { data: workItems },
     { data: projects },
+    { data: assignments },
+    { data: roles },
+    { data: roleMembers },
+    { data: disclaimerRow },
   ] = await Promise.all([
     supabase
       .from("decisions")
@@ -96,6 +100,29 @@ export default async function DecisionsPage({
       .from("projects")
       .select("id, name, project_number")
       .order("project_number", { ascending: true }),
+    // People / companies / roles each decision is assigned to (0075). Clients
+    // get an empty array (no client policy); trades see rows targeting them.
+    supabase
+      .from("decision_assignments")
+      .select("*, decisions!inner(project_id)")
+      .eq("decisions.project_id", projectId),
+    // Role catalog + this project's role → assignee map so assignments to a
+    // role render as "Role (Person)".
+    supabase
+      .from("roles")
+      .select("id, name, kind")
+      .order("position", { ascending: true })
+      .order("name", { ascending: true }),
+    supabase
+      .from("project_role_members")
+      .select("role_id, profile_id, company_id")
+      .eq("project_id", projectId),
+    // Org-wide disclaimer footer shown to clients on every decision (0077).
+    supabase
+      .from("app_settings")
+      .select("value")
+      .eq("key", "decision_disclaimer")
+      .maybeSingle(),
   ])
 
   const strip = <T extends { decisions?: unknown }>(rows: T[] | null) =>
@@ -131,6 +158,10 @@ export default async function DecisionsPage({
     choices: strip(choices) as DecisionsData["choices"],
     work_items: workItems ?? [],
     projects: projects ?? [],
+    assignments: strip(assignments) as DecisionsData["assignments"],
+    roles: roles ?? [],
+    roleMembers: roleMembers ?? [],
+    disclaimer: disclaimerRow?.value ?? null,
     signed_urls: signedUrls,
   }
 

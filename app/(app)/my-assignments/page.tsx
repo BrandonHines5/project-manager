@@ -1,5 +1,11 @@
 import Link from "next/link"
-import { CalendarDays, AlertTriangle, CheckCircle2, Circle } from "lucide-react"
+import {
+  CalendarDays,
+  AlertTriangle,
+  CheckCircle2,
+  Circle,
+  Palette,
+} from "lucide-react"
 import { requireSession } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { Badge } from "@/components/ui/badge"
@@ -179,6 +185,102 @@ export default async function MyAssignmentsPage() {
     }
   }
 
+  // Selections assigned to me / my company / my roles (decision_assignments,
+  // 0075). Same two-pass shape as the schedule: direct assignments first,
+  // then role assignments resolved through project_role_members. RLS already
+  // hides drafts (and everything unassigned) from trades; the explicit
+  // status filter keeps staff views consistent with what subs see.
+  type SelectionRow = {
+    id: string
+    project_id: string
+    project_number: string
+    project_name: string
+    title: string
+    status: Enums<"decision_status">
+    due_date: string | null
+  }
+  type SelectionJoin = {
+    id: string
+    project_id: string
+    kind: Enums<"decision_kind">
+    title: string
+    status: Enums<"decision_status">
+    due_date: string | null
+    projects: { id: string; name: string; project_number: string }
+  }
+  const selectionRows: SelectionRow[] = []
+  const seenSelections = new Set<string>()
+  const pushSelection = (d: SelectionJoin | null | undefined) => {
+    if (!d || d.kind !== "selection" || d.status === "draft") return
+    if (seenSelections.has(d.id)) return
+    seenSelections.add(d.id)
+    selectionRows.push({
+      id: d.id,
+      project_id: d.project_id,
+      project_number: d.projects.project_number,
+      project_name: d.projects.name,
+      title: d.title,
+      status: d.status,
+      due_date: d.due_date,
+    })
+  }
+
+  const { data: decisionAssignments, error: daErr } = await supabase
+    .from("decision_assignments")
+    .select(
+      `decision_id, profile_id, company_id,
+       decisions!inner (
+         id, project_id, kind, title, status, due_date,
+         projects!inner ( id, name, project_number )
+       )`
+    )
+    .or(
+      profile.company_id
+        ? `profile_id.eq.${profile.id},company_id.eq.${profile.company_id}`
+        : `profile_id.eq.${profile.id}`
+    )
+  if (daErr) throw new Error(daErr.message)
+  for (const a of decisionAssignments ?? []) {
+    pushSelection(a.decisions as unknown as SelectionJoin)
+  }
+
+  if (myRoleMemberships && myRoleMemberships.length > 0) {
+    const myRoleKeys = new Set(
+      myRoleMemberships.map((m) => `${m.project_id}|${m.role_id}`)
+    )
+    const myRoleIds = [...new Set(myRoleMemberships.map((m) => m.role_id))]
+    const myProjectIds = [
+      ...new Set(myRoleMemberships.map((m) => m.project_id)),
+    ]
+    const { data: roleDecisionAssignments, error: rdaErr } = await supabase
+      .from("decision_assignments")
+      .select(
+        `decision_id, role_id,
+         decisions!inner (
+           id, project_id, kind, title, status, due_date,
+           projects!inner ( id, name, project_number )
+         )`
+      )
+      .in("role_id", myRoleIds)
+      .in("decisions.project_id", myProjectIds)
+    if (rdaErr) throw new Error(rdaErr.message)
+    for (const a of roleDecisionAssignments ?? []) {
+      const d = a.decisions as unknown as SelectionJoin
+      if (!d || !myRoleKeys.has(`${d.project_id}|${a.role_id}`)) continue
+      pushSelection(d)
+    }
+  }
+
+  selectionRows.sort((a, b) => {
+    const aDone = a.status !== "pending_client"
+    const bDone = b.status !== "pending_client"
+    if (aDone !== bDone) return aDone ? 1 : -1
+    if (a.due_date == null && b.due_date == null) return 0
+    if (a.due_date == null) return 1
+    if (b.due_date == null) return -1
+    return a.due_date.localeCompare(b.due_date)
+  })
+
   // Sort: incomplete first, then by earliest of (start_date, due_date)
   rows.sort((a, b) => {
     const aDone = a.status === "complete"
@@ -270,7 +372,7 @@ export default async function MyAssignmentsPage() {
                         <Badge tone={STATUS_TONE[r.status]}>
                           {STATUS_LABEL[r.status]}
                         </Badge>
-                        {r.priority && (
+                        {r.priority === "high" && (
                           <Badge tone={PRIORITY_TONE[r.priority]}>
                             {r.priority} priority
                           </Badge>
@@ -298,6 +400,69 @@ export default async function MyAssignmentsPage() {
           </ul>
         </Card>
       )}
+
+      {selectionRows.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-lg font-semibold mb-1">Selections</h2>
+          <p className="text-sm text-muted mb-3">
+            Selections you&apos;re assigned on — open one to see the choices
+            and photos.
+          </p>
+          <Card>
+            <ul className="divide-y divide-border">
+              {selectionRows.map((s) => (
+                <li key={s.id} className="px-4 py-3">
+                  <Link
+                    href={`/projects/${s.project_id}/decisions?open=${s.id}`}
+                    className="flex items-start gap-3 group"
+                  >
+                    <div className="mt-0.5">
+                      <Palette className="h-4 w-4 text-muted" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-medium text-foreground group-hover:text-brand-600">
+                          {s.title}
+                        </span>
+                        <Badge tone={DECISION_STATUS_TONE[s.status]}>
+                          {DECISION_STATUS_LABEL[s.status]}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center gap-3 mt-1 text-xs text-muted">
+                        <span className="font-mono">{s.project_number}</span>
+                        <span className="truncate">{s.project_name}</span>
+                        {s.due_date && (
+                          <span className="inline-flex items-center gap-1">
+                            <CalendarDays className="h-3 w-3" />
+                            Due {formatDate(s.due_date)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        </div>
+      )}
     </div>
   )
+}
+
+const DECISION_STATUS_TONE: Record<
+  Enums<"decision_status">,
+  "muted" | "warning" | "success" | "danger"
+> = {
+  draft: "muted",
+  pending_client: "warning",
+  approved: "success",
+  rejected: "danger",
+}
+
+const DECISION_STATUS_LABEL: Record<Enums<"decision_status">, string> = {
+  draft: "Draft",
+  pending_client: "Awaiting client",
+  approved: "Approved",
+  rejected: "Declined",
 }

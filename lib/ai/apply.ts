@@ -3,6 +3,7 @@ import type { Database, TablesUpdate } from "@/lib/db/types"
 import { sendQuoSms, normalizeE164 } from "@/lib/quo"
 import { sendEmail, appUrl } from "@/lib/email"
 import { formatDate } from "@/lib/utils"
+import { rollRecurringTodo } from "@/lib/schedule/roll-recurrence"
 import type { ProposedMutation, AppliedMutation } from "./types"
 
 // Best-effort in-app notification for a staff (profile) assignee, mirroring
@@ -151,6 +152,11 @@ async function applyOne(
         if (error) throw new Error(error.message)
         if (!data) {
           throw new Error("schedule item not found or not permitted")
+        }
+        // Recurring to-do completed via the agent: spawn its next occurrence,
+        // same as every other completion path.
+        if (mutation.status === "complete") {
+          await rollRecurringTodo(supabase, mutation.schedule_item_id)
         }
         return { mutation, ok: true }
       }

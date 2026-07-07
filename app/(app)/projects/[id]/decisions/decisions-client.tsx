@@ -1,6 +1,8 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useTransition } from "react"
+import { useRouter } from "next/navigation"
+import { toast } from "sonner"
 import {
   Plus,
   FilePen,
@@ -9,6 +11,9 @@ import {
   Search,
   X,
   CalendarClock,
+  Download,
+  Copy,
+  Pencil,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -18,6 +23,11 @@ import { formatCurrency, formatDate, cn } from "@/lib/utils"
 import type { Tables, Enums } from "@/lib/db/types"
 import type { UserRole } from "@/lib/auth"
 import { DecisionDrawer } from "@/components/decisions/decision-drawer"
+import {
+  bulkCopyDecisions,
+  saveDecisionDisclaimer,
+} from "@/app/actions/decisions"
+import { makeXlsx, type XlsxCell } from "@/lib/export/xlsx"
 
 export type DecisionsData = {
   project_id: string
@@ -43,6 +53,17 @@ export type DecisionsData = {
   >[]
   // Projects the caller can see — copy destinations.
   projects: Pick<Tables<"projects">, "id" | "name" | "project_number">[]
+  // People / companies / roles each decision is assigned to (0075). Empty for
+  // clients (no RLS policy); trades see only rows targeting them.
+  assignments: Tables<"decision_assignments">[]
+  roles: Pick<Tables<"roles">, "id" | "name" | "kind">[]
+  roleMembers: Pick<
+    Tables<"project_role_members">,
+    "role_id" | "profile_id" | "company_id"
+  >[]
+  // Org-wide disclaimer footer shown to clients at the bottom of every
+  // decision (app_settings key 'decision_disclaimer').
+  disclaimer: string | null
   signed_urls: Record<string, string>
 }
 
@@ -62,8 +83,21 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
   const [kindFilter, setKindFilter] = useState<KindFilter>("all")
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all")
   const [query, setQuery] = useState("")
+  // Multi-select for the bulk "copy to job" bar (staff only).
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(
+    () => new Set()
+  )
 
   const canEdit = data.role === "staff"
+
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
   const editingDecision =
     drawerState?.mode === "edit"
       ? data.decisions.find((d) => d.id === drawerState.decisionId)
@@ -134,6 +168,16 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
         </div>
         {canEdit && (
           <div className="flex items-center gap-2">
+            {data.decisions.length > 0 && (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => exportDecisionsXlsx(data)}
+                title="Download every change order and selection (with choices and line items) as a spreadsheet"
+              >
+                <Download className="h-3.5 w-3.5" /> Export
+              </Button>
+            )}
             <Button
               size="sm"
               variant="secondary"
@@ -154,6 +198,8 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
           </div>
         )}
       </div>
+
+      {canEdit && <DisclaimerEditor initial={data.disclaimer} />}
 
       {data.decisions.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 mb-3">
@@ -236,6 +282,11 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
           <table className="w-full text-sm">
             <thead className="bg-background/60 text-xs uppercase text-muted">
               <tr>
+                {canEdit && (
+                  <th className="px-3 py-2.5 w-8">
+                    <span className="sr-only">Select</span>
+                  </th>
+                )}
                 <th className="text-left font-medium px-4 py-2.5 w-16">#</th>
                 <th className="text-left font-medium px-4 py-2.5 w-32">Type</th>
                 <th className="text-left font-medium px-4 py-2.5">Title</th>
@@ -260,6 +311,20 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
                       setDrawerState({ mode: "edit", decisionId: d.id })
                     }
                   >
+                    {canEdit && (
+                      <td
+                        className="px-3 py-3"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(d.id)}
+                          onChange={() => toggleSelected(d.id)}
+                          aria-label={`Select #${d.number} ${d.title}`}
+                          className="h-4 w-4 cursor-pointer"
+                        />
+                      </td>
+                    )}
                     <td className="px-4 py-3 font-mono text-xs text-muted tabular-nums">
                       #{d.number}
                     </td>
@@ -304,6 +369,15 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
         </div>
       )}
 
+      {canEdit && (
+        <BulkCopyBar
+          projectId={data.project_id}
+          selectedIds={Array.from(selectedIds)}
+          projects={data.projects.filter((p) => p.id !== data.project_id)}
+          onClear={() => setSelectedIds(new Set())}
+        />
+      )}
+
       {drawerState && (
         <DecisionDrawer
           open={true}
@@ -318,6 +392,325 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
       )}
     </div>
   )
+}
+
+/**
+ * Floating bar shown while decisions are checked — mirrors the schedule's
+ * BulkActionsBar but with a single action: copy the selection to another job
+ * (each copy lands as a fresh draft with a new number; approvals/choices
+ * reset, cross-project schedule links dropped).
+ */
+function BulkCopyBar({
+  projectId,
+  selectedIds,
+  projects,
+  onClear,
+}: {
+  projectId: string
+  selectedIds: string[]
+  projects: Pick<Tables<"projects">, "id" | "name" | "project_number">[]
+  onClear: () => void
+}) {
+  const router = useRouter()
+  const [pending, startTransition] = useTransition()
+  const [targetProjectId, setTargetProjectId] = useState<string>(
+    projects[0]?.id ?? ""
+  )
+  if (selectedIds.length === 0) return null
+
+  function runCopy() {
+    if (!targetProjectId) {
+      toast.error("Pick a job to copy into.")
+      return
+    }
+    const target = projects.find((p) => p.id === targetProjectId)
+    const targetLabel = target
+      ? `${target.project_number != null ? `${target.project_number} — ` : ""}${target.name ?? "Untitled"}`
+      : "the job"
+    startTransition(async () => {
+      try {
+        const r = await bulkCopyDecisions({
+          project_id: projectId,
+          ids: selectedIds,
+          target_project_id: targetProjectId,
+        })
+        if (r.ok === 0 && r.skipped.length > 0) {
+          toast.error(`Nothing copied: ${r.skipped[0].reason}`)
+          return
+        }
+        if (r.skipped.length > 0) {
+          toast.warning(
+            `${r.ok} copied to ${targetLabel}, ${r.skipped.length} skipped (${r.skipped[0].reason})`
+          )
+        } else {
+          toast.success(`${r.ok} copied to ${targetLabel} (as drafts)`)
+        }
+        onClear()
+        router.refresh()
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Copy failed")
+      }
+    })
+  }
+
+  return (
+    <div className="fixed bottom-4 left-1/2 z-40 -translate-x-1/2 w-[min(560px,calc(100vw-1rem))]">
+      <div className="bg-foreground text-surface rounded-lg shadow-2xl border border-foreground/30 px-3 py-2 flex flex-wrap items-center gap-2">
+        <span className="text-sm font-medium">
+          {selectedIds.length} selected
+        </span>
+        <button
+          type="button"
+          onClick={onClear}
+          aria-label="Clear selection"
+          className="text-surface/60 hover:text-surface p-1 cursor-pointer"
+        >
+          <X className="h-4 w-4" />
+        </button>
+        <div className="h-5 w-px bg-surface/20 mx-1" />
+        <Copy className="h-3.5 w-3.5 text-surface/80" />
+        <Select
+          value={targetProjectId}
+          onChange={(e) => setTargetProjectId(e.target.value)}
+          className="h-7 w-56 bg-surface text-foreground"
+          aria-label="Job to copy into"
+        >
+          {projects.length === 0 ? (
+            <option value="">(no other jobs)</option>
+          ) : (
+            projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.project_number != null ? `${p.project_number} — ` : ""}
+                {p.name ?? "Untitled"}
+              </option>
+            ))
+          )}
+        </Select>
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={runCopy}
+          disabled={pending || projects.length === 0}
+        >
+          {pending ? "Copying…" : "Copy to job"}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Staff editor for the org-wide disclaimer appended to every change order and
+ * selection the client views (rendered at the bottom of the decision drawer's
+ * client view). Collapsed by default; the text is global, not per-project.
+ */
+function DisclaimerEditor({ initial }: { initial: string | null }) {
+  const [saved, setSaved] = useState(initial ?? "")
+  const [draft, setDraft] = useState(initial ?? "")
+  const [editing, setEditing] = useState(false)
+  const [pending, startTransition] = useTransition()
+
+  function save() {
+    startTransition(async () => {
+      const r = await saveDecisionDisclaimer({ text: draft })
+      if (!r.ok) {
+        toast.error(r.error)
+        return
+      }
+      setSaved(draft.trim())
+      setEditing(false)
+      toast.success(
+        draft.trim() ? "Disclaimer saved" : "Disclaimer cleared"
+      )
+    })
+  }
+
+  return (
+    <div className="mb-4 rounded-lg border border-border bg-surface px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-xs font-medium uppercase tracking-wide text-muted">
+            Client disclaimer
+          </div>
+          {!editing && (
+            <p className="mt-1 text-xs text-muted whitespace-pre-wrap">
+              {saved ||
+                "No disclaimer set. Text added here appears at the bottom of every change order and selection when the client views it (all jobs)."}
+            </p>
+          )}
+        </div>
+        {!editing && (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => {
+              setDraft(saved)
+              setEditing(true)
+            }}
+          >
+            <Pencil className="h-3 w-3" /> {saved ? "Edit" : "Add"}
+          </Button>
+        )}
+      </div>
+      {editing && (
+        <div className="mt-2">
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={3}
+            maxLength={4000}
+            placeholder="e.g. Prices are valid through the due date shown. Approved change orders and selections are added to the contract total…"
+            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/40"
+          />
+          <div className="mt-2 flex items-center gap-2">
+            <Button size="sm" onClick={save} disabled={pending}>
+              {pending ? "Saving…" : "Save"}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setEditing(false)}
+              disabled={pending}
+            >
+              Cancel
+            </Button>
+            <span className="text-[11px] text-muted ml-auto">
+              Shown to clients on every change order & selection, across all
+              jobs.
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Builds and downloads a three-sheet .xlsx with everything about this
+ * project's change orders and selections: the decisions themselves, every
+ * selection choice, and every cost line item. Runs entirely client-side from
+ * the data the page already loaded (staff-only — cost items are RLS-empty for
+ * anyone else, and the button only renders for staff).
+ */
+function exportDecisionsXlsx(data: DecisionsData) {
+  const profileName = (id: string | null) =>
+    id
+      ? (data.profiles.find((p) => p.id === id)?.full_name ?? "Unknown")
+      : ""
+  const costCodeLabel = (id: string | null) => {
+    if (!id) return ""
+    const c = data.cost_codes.find((x) => x.id === id)
+    return c ? `${c.code} ${c.name}` : ""
+  }
+  const kindLabel = (k: Enums<"decision_kind">) =>
+    k === "change_order" ? "Change order" : "Selection"
+  const num = (v: unknown): number | null =>
+    v == null || v === "" || !Number.isFinite(Number(v)) ? null : Number(v)
+
+  const byId = new Map(data.decisions.map((d) => [d.id, d]))
+  const choiceTitle = (choiceId: string | null) =>
+    choiceId
+      ? (data.choices.find((c) => c.id === choiceId)?.title ?? "")
+      : ""
+
+  const decisionsRows: XlsxCell[][] = [
+    [
+      "Number",
+      "Type",
+      "Title",
+      "Status",
+      "Due date",
+      "Cost delta",
+      "Markup %",
+      "Delay (days)",
+      "Delay cost/day",
+      "Allowance",
+      "Selected choice",
+      "Approved at",
+      "Approved by",
+      "Created at",
+      "Description",
+    ],
+    ...data.decisions.map((d): XlsxCell[] => [
+      d.number,
+      kindLabel(d.kind),
+      d.title,
+      d.status,
+      d.due_date,
+      num(d.cost_delta),
+      num(d.markup_percent),
+      num(d.delay_days),
+      num(d.delay_cost_per_day),
+      num(d.allowance_amount),
+      choiceTitle(d.selected_choice_id),
+      d.approved_at ? formatDate(d.approved_at) : null,
+      profileName(d.approved_by_client_id),
+      formatDate(d.created_at),
+      d.description,
+    ]),
+  ]
+
+  const choicesRows: XlsxCell[][] = [
+    ["Decision #", "Decision", "Choice", "Description", "Price", "Selected"],
+    ...data.choices.map((c): XlsxCell[] => {
+      const d = byId.get(c.decision_id)
+      return [
+        d?.number ?? null,
+        d?.title ?? "",
+        c.title,
+        c.description,
+        num(c.price_delta),
+        d?.selected_choice_id === c.id ? "yes" : "",
+      ]
+    }),
+  ]
+
+  const lineItemsRows: XlsxCell[][] = [
+    [
+      "Decision #",
+      "Decision",
+      "Choice",
+      "Cost code",
+      "Description",
+      "Qty",
+      "Unit",
+      "Unit cost",
+      "Line total",
+      "Catalog code",
+    ],
+    ...data.cost_items.map((ci): XlsxCell[] => {
+      const d = byId.get(ci.decision_id)
+      const qty = num(ci.quantity) ?? 0
+      const unitCost = num(ci.unit_cost) ?? 0
+      return [
+        d?.number ?? null,
+        d?.title ?? "",
+        choiceTitle(ci.choice_id),
+        costCodeLabel(ci.cost_code_id),
+        ci.description,
+        qty,
+        ci.unit,
+        unitCost,
+        Math.round(qty * unitCost * 100) / 100,
+        ci.catalog_item_code,
+      ]
+    }),
+  ]
+
+  const bytes = makeXlsx([
+    { name: "Decisions", rows: decisionsRows },
+    { name: "Choices", rows: choicesRows },
+    { name: "Line items", rows: lineItemsRows },
+  ])
+  const blob = new Blob([bytes as BlobPart], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = `decisions-${new Date().toISOString().slice(0, 10)}.xlsx`
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 function Stat({

@@ -9,6 +9,7 @@ import {
   recomputeAnchoredDueDate,
 } from "@/lib/schedule/scheduling"
 import { todayISO } from "@/lib/utils"
+import { rollRecurringTodo } from "@/lib/schedule/roll-recurrence"
 
 const IsoDate = z
   .string()
@@ -118,6 +119,15 @@ export async function answerCompletion(
     .eq("id", data.schedule_item_id)
     .eq("project_id", data.project_id)
   if (updErr) return { ok: false, error: updErr.message }
+
+  // Recurring to-do completed: spawn its next occurrence. The update above
+  // may have rewritten due_date to the completion date, so anchor the roll to
+  // the ORIGINAL due date to keep the series cadence.
+  if (isTodo && newStatus === "complete") {
+    await rollRecurringTodo(supabase, data.schedule_item_id, {
+      anchorDueOverride: item.due_date,
+    })
+  }
 
   // Only work items drive the predecessor cascade — to-dos aren't part of
   // the dependency graph.

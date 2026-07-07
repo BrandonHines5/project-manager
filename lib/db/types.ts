@@ -58,6 +58,35 @@ export type Database = {
           },
         ]
       }
+      app_settings: {
+        Row: {
+          key: string
+          updated_at: string
+          updated_by: string | null
+          value: string | null
+        }
+        Insert: {
+          key: string
+          updated_at?: string
+          updated_by?: string | null
+          value?: string | null
+        }
+        Update: {
+          key?: string
+          updated_at?: string
+          updated_by?: string | null
+          value?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "app_settings_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bid_comments: {
         Row: {
           author_name: string
@@ -771,6 +800,62 @@ export type Database = {
           },
         ]
       }
+      decision_assignments: {
+        Row: {
+          company_id: string | null
+          created_at: string
+          decision_id: string
+          id: string
+          profile_id: string | null
+          role_id: string | null
+        }
+        Insert: {
+          company_id?: string | null
+          created_at?: string
+          decision_id: string
+          id?: string
+          profile_id?: string | null
+          role_id?: string | null
+        }
+        Update: {
+          company_id?: string | null
+          created_at?: string
+          decision_id?: string
+          id?: string
+          profile_id?: string | null
+          role_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "decision_assignments_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "decision_assignments_decision_id_fkey"
+            columns: ["decision_id"]
+            isOneToOne: false
+            referencedRelation: "decisions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "decision_assignments_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "decision_assignments_role_id_fkey"
+            columns: ["role_id"]
+            isOneToOne: false
+            referencedRelation: "roles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       decision_attachments: {
         Row: {
           caption: string | null
@@ -910,6 +995,8 @@ export type Database = {
       }
       decision_cost_items: {
         Row: {
+          catalog_item_code: string | null
+          catalog_item_id: string | null
           choice_id: string | null
           cost_code_id: string | null
           created_at: string
@@ -922,6 +1009,8 @@ export type Database = {
           unit_cost: number
         }
         Insert: {
+          catalog_item_code?: string | null
+          catalog_item_id?: string | null
           choice_id?: string | null
           cost_code_id?: string | null
           created_at?: string
@@ -934,6 +1023,8 @@ export type Database = {
           unit_cost?: number
         }
         Update: {
+          catalog_item_code?: string | null
+          catalog_item_id?: string | null
           choice_id?: string | null
           cost_code_id?: string | null
           created_at?: string
@@ -1779,6 +1870,56 @@ export type Database = {
           {
             foreignKeyName: "project_files_uploaded_by_fkey"
             columns: ["uploaded_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      project_history: {
+        Row: {
+          action: string
+          actor_id: string | null
+          actor_name: string | null
+          changes: Json | null
+          created_at: string
+          entity_id: string | null
+          entity_label: string | null
+          entity_type: string
+          id: string
+          project_id: string
+          txid: number
+        }
+        Insert: {
+          action: string
+          actor_id?: string | null
+          actor_name?: string | null
+          changes?: Json | null
+          created_at?: string
+          entity_id?: string | null
+          entity_label?: string | null
+          entity_type: string
+          id?: string
+          project_id: string
+          txid?: number
+        }
+        Update: {
+          action?: string
+          actor_id?: string | null
+          actor_name?: string | null
+          changes?: Json | null
+          created_at?: string
+          entity_id?: string | null
+          entity_label?: string | null
+          entity_type?: string
+          id?: string
+          project_id?: string
+          txid?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_history_actor_id_fkey"
+            columns: ["actor_id"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
@@ -2915,6 +3056,7 @@ export type Database = {
         Args: { p_item: string; p_role: string }
         Returns: boolean
       }
+      trade_sees_decision: { Args: { p_decision: string }; Returns: boolean }
       trade_sees_item_via_role: { Args: { p_item: string }; Returns: boolean }
       validate_media_tags: { Args: { p_tags: string[] }; Returns: undefined }
     }
