@@ -56,6 +56,22 @@ const Predecessor = z.object({
   lag_days: z.coerce.number().int().default(0),
 })
 
+// Why a date move happened. Required (and logged to schedule_delays) whenever
+// a work item's dates change after the project baseline is locked; free-form
+// moves need no reason while the schedule is still being drafted.
+const MoveReason = z.object({
+  reason_category: z.enum([
+    "weather",
+    "sub",
+    "material",
+    "owner_decision",
+    "permit",
+    "other",
+  ]),
+  notes: optStr,
+})
+export type MoveReasonT = z.infer<typeof MoveReason>
+
 const ScheduleItemInput = z
   .object({
     id: optStr,
@@ -89,6 +105,9 @@ const ScheduleItemInput = z
     assignments: z.array(Assignment).default([]),
     checklist: z.array(ChecklistItem).default([]),
     predecessors: z.array(Predecessor).default([]),
+    // Only consulted when the save moves a work item's dates on a baselined
+    // project — the dialog collects it via the move-reason popup.
+    move_reason: MoveReason.nullish(),
   })
   // Don't fail on unknown extra fields.
   .passthrough()
@@ -105,6 +124,59 @@ function daysBetween(a: string, b: string) {
   )
 }
 
+const BASELINE_COMPLETE_MSG =
+  "Lock the schedule baseline before marking work items complete — use “Set baseline” at the top of the schedule. (To-dos can be completed anytime.)"
+const MOVE_REASON_MSG =
+  "This schedule is baselined — date changes on work items need a reason. Retry the move and pick one in the popup."
+
+async function getBaselineSetAt(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  projectId: string
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("projects")
+    .select("baseline_set_at")
+    .eq("id", projectId)
+    .maybeSingle()
+  if (error) throw new Error(error.message)
+  return data?.baseline_set_at ?? null
+}
+
+// How many days a move shifted an item, for the schedule_delays log. The end
+// date is what "delay" means to the job, so it wins; a pure start move falls
+// back to the start shift. Negative = pulled earlier.
+function dateShiftDays(
+  oldStart: string | null,
+  oldEnd: string | null,
+  newStart: string | null,
+  newEnd: string | null
+): number {
+  const diff = (a: string, b: string) =>
+    Math.round((Date.parse(b) - Date.parse(a)) / 86400000)
+  if (oldEnd && newEnd && oldEnd !== newEnd) return diff(oldEnd, newEnd)
+  if (oldStart && newStart && oldStart !== newStart) return diff(oldStart, newStart)
+  return 0
+}
+
+// Best-effort: the move itself already succeeded, so a failed reason insert
+// logs loudly instead of surfacing a confusing error for an applied change.
+async function logMoveReasons(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  rows: {
+    schedule_item_id: string
+    delay_days: number
+    reason_category: MoveReasonT["reason_category"]
+    notes: string | null
+    logged_by: string
+  }[]
+) {
+  if (rows.length === 0) return
+  const { error } = await supabase.from("schedule_delays").insert(rows)
+  if (error) {
+    console.warn("[schedule] move-reason delay log failed:", error.message)
+  }
+}
+
 export async function saveScheduleItem(input: ScheduleItemInputT) {
   const profile = await requireStaff()
   const result = ScheduleItemInput.safeParse(input)
@@ -116,6 +188,47 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
   }
   const parsed = result.data
   const supabase = await createSupabaseServerClient()
+
+  // Baseline state drives two business rules below: work items can't be
+  // completed before the baseline is locked, and post-baseline date moves
+  // must carry a reason. One cheap row read either way.
+  const baselineSetAt = await getBaselineSetAt(supabase, parsed.project_id)
+
+  // On edit, gates compare against the STORED row — the payload's kind/status
+  // can't be trusted to describe what's already in the DB.
+  const editId = nz(parsed.id)
+  let oldRow: {
+    kind: "work" | "todo"
+    status: string
+    start_date: string | null
+    end_date: string | null
+    milestone: string | null
+  } | null = null
+  if (editId) {
+    const { data: existing, error: exErr } = await supabase
+      .from("schedule_items")
+      .select("kind, status, start_date, end_date, milestone, project_id")
+      .eq("id", editId)
+      .maybeSingle()
+    if (exErr) throw new Error(exErr.message)
+    if (!existing || existing.project_id !== parsed.project_id) {
+      throw new Error("Schedule item not found in this project.")
+    }
+    oldRow = existing
+  }
+
+  // Completion gate: the first work item can only be completed once the
+  // baseline is set. Only the transition into `complete` is gated so
+  // unrelated edits to an already-complete item still save pre-baseline.
+  const gateKind = oldRow?.kind ?? parsed.kind
+  if (
+    parsed.status === "complete" &&
+    gateKind === "work" &&
+    !baselineSetAt &&
+    (oldRow ? oldRow.status !== "complete" : true)
+  ) {
+    throw new Error(BASELINE_COMPLETE_MSG)
+  }
 
   // Enforce assignment XOR: exactly one of profile_id / company_id / role_id
   // per row. Rows where none is set are dropped silently (user added a row
@@ -180,6 +293,16 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     else if (endD && !startD) startD = endD
   }
   const duration = startD && endD ? daysBetween(startD, endD) : null
+
+  // Move-reason gate: once the baseline is locked, changing a work item's
+  // dates requires a reason (logged to schedule_delays after the save).
+  const workDatesChanged =
+    oldRow !== null &&
+    oldRow.kind === "work" &&
+    (oldRow.start_date !== startD || oldRow.end_date !== endD)
+  if (workDatesChanged && baselineSetAt && !parsed.move_reason) {
+    throw new Error(MOVE_REASON_MSG)
+  }
 
   // Resolve anchor fields. Only valid for todos with a parent — strip them
   // otherwise so we never violate the DB check constraint. When anchored,
@@ -265,10 +388,35 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
       .update(baseRow)
       .eq("id", id)
     if (error) throw new Error(error.message)
+    if (workDatesChanged && baselineSetAt && parsed.move_reason) {
+      await logMoveReasons(supabase, [
+        {
+          schedule_item_id: id,
+          delay_days: dateShiftDays(
+            oldRow!.start_date,
+            oldRow!.end_date,
+            startD,
+            endD
+          ),
+          reason_category: parsed.move_reason.reason_category,
+          notes: nz(parsed.move_reason.notes),
+          logged_by: profile.id,
+        },
+      ])
+    }
   } else {
     const { data, error } = await supabase
       .from("schedule_items")
-      .insert({ ...baseRow, created_by: profile.id })
+      .insert({
+        ...baseRow,
+        created_by: profile.id,
+        // Work items born after the baseline lock get their initial dates as
+        // baseline, so added scope shows up in the variance report instead of
+        // reading as unplanned free work.
+        ...(parsed.kind === "work" && baselineSetAt && startD && endD
+          ? { baseline_start_date: startD, baseline_end_date: endD }
+          : {}),
+      })
       .select("id")
       .single()
     if (error) throw new Error(error.message)
@@ -816,6 +964,21 @@ export async function deleteScheduleItem(input: {
   const parsed = ReassignInput.parse(input)
   const supabase = await createSupabaseServerClient()
 
+  // Job Start / Substantial Completion can be moved and completed but never
+  // deleted. A DB trigger backstops this; checking here gives a clear error
+  // before any predecessor reassignments are applied.
+  const { data: target, error: targetErr } = await supabase
+    .from("schedule_items")
+    .select("milestone, title")
+    .eq("id", parsed.id)
+    .maybeSingle()
+  if (targetErr) throw new Error(targetErr.message)
+  if (target?.milestone) {
+    throw new Error(
+      `"${target.title}" is a protected schedule milestone and can't be deleted.`
+    )
+  }
+
   // Apply reassignments before the delete so we can validate the new
   // predecessor exists and doesn't introduce a cycle. Each reassignment
   // first removes the existing edge that pointed at the doomed item, then
@@ -927,6 +1090,7 @@ const MoveInput = z.object({
   project_id: z.string(),
   start_date: z.string().min(1),
   end_date: z.string().min(1),
+  move_reason: MoveReason.nullish(),
 })
 
 export async function moveScheduleItem(input: {
@@ -934,15 +1098,52 @@ export async function moveScheduleItem(input: {
   project_id: string
   start_date: string
   end_date: string
+  move_reason?: MoveReasonT | null
 }) {
-  await requireStaff()
+  const profile = await requireStaff()
   const parsed = MoveInput.parse(input)
   const supabase = await createSupabaseServerClient()
+
+  const { data: item, error: itemErr } = await supabase
+    .from("schedule_items")
+    .select("kind, start_date, end_date, project_id")
+    .eq("id", parsed.id)
+    .maybeSingle()
+  if (itemErr) throw new Error(itemErr.message)
+  if (!item || item.project_id !== parsed.project_id) {
+    throw new Error("Schedule item not found in this project.")
+  }
+  const changed =
+    item.start_date !== parsed.start_date || item.end_date !== parsed.end_date
+  let baselineSetAt: string | null = null
+  if (item.kind === "work" && changed) {
+    baselineSetAt = await getBaselineSetAt(supabase, parsed.project_id)
+    if (baselineSetAt && !parsed.move_reason) {
+      throw new Error(MOVE_REASON_MSG)
+    }
+  }
+
   const { error } = await supabase
     .from("schedule_items")
     .update({ start_date: parsed.start_date, end_date: parsed.end_date })
     .eq("id", parsed.id)
   if (error) throw new Error(error.message)
+  if (item.kind === "work" && changed && baselineSetAt && parsed.move_reason) {
+    await logMoveReasons(supabase, [
+      {
+        schedule_item_id: parsed.id,
+        delay_days: dateShiftDays(
+          item.start_date,
+          item.end_date,
+          parsed.start_date,
+          parsed.end_date
+        ),
+        reason_category: parsed.move_reason.reason_category,
+        notes: nz(parsed.move_reason.notes),
+        logged_by: profile.id,
+      },
+    ])
+  }
   const movedIds = await applyCascade(parsed.project_id, parsed.id)
   await applyAnchoredChildrenCascade(movedIds)
   revalidatePath(`/projects/${parsed.project_id}/schedule`)
@@ -959,6 +1160,22 @@ export async function setItemStatus({
 }) {
   await requireStaff()
   const supabase = await createSupabaseServerClient()
+  if (status === "complete") {
+    const { data: item, error: itemErr } = await supabase
+      .from("schedule_items")
+      .select("kind, status, project_id")
+      .eq("id", id)
+      .maybeSingle()
+    if (itemErr) throw new Error(itemErr.message)
+    if (
+      item &&
+      item.kind === "work" &&
+      item.status !== "complete" &&
+      !(await getBaselineSetAt(supabase, item.project_id))
+    ) {
+      throw new Error(BASELINE_COMPLETE_MSG)
+    }
+  }
   const { error } = await supabase
     .from("schedule_items")
     .update({ status })
@@ -1011,6 +1228,25 @@ export async function updateScheduleItemFields(
   if (Object.keys(update).length === 0) return
 
   const supabase = await createSupabaseServerClient()
+  // This path serves the to-do grid, but gate anyway in case a work item id
+  // is ever routed through it.
+  if (fields.status === "complete") {
+    const { data: item, error: itemErr } = await supabase
+      .from("schedule_items")
+      .select("kind, status")
+      .eq("id", id)
+      .eq("project_id", project_id)
+      .maybeSingle()
+    if (itemErr) throw new Error(itemErr.message)
+    if (
+      item &&
+      item.kind === "work" &&
+      item.status !== "complete" &&
+      !(await getBaselineSetAt(supabase, project_id))
+    ) {
+      throw new Error(BASELINE_COMPLETE_MSG)
+    }
+  }
   const { error } = await supabase
     .from("schedule_items")
     .update(update)
@@ -1686,6 +1922,7 @@ const BulkShiftInput = BulkIdsInput.extend({
   // ±N days. Cap at ±365 so a fat-finger doesn't push the schedule into
   // year-2099 territory.
   days: z.coerce.number().int().min(-365).max(365),
+  move_reason: MoveReason.nullish(),
 })
 
 export type BulkScheduleResult = {
@@ -1701,19 +1938,53 @@ export async function bulkSetScheduleStatus(input: {
   await requireStaff()
   const parsed = BulkStatusInput.parse(input)
   const supabase = await createSupabaseServerClient()
+
+  // Pre-baseline, work items can't be completed — drop them from the batch
+  // with an explanatory skip instead of failing the whole selection (to-dos
+  // in the same selection still complete fine).
+  let idsToUpdate = parsed.ids
+  const preSkipped: { id: string; reason: string }[] = []
+  if (
+    parsed.status === "complete" &&
+    !(await getBaselineSetAt(supabase, parsed.project_id))
+  ) {
+    const { data: kinds, error: kErr } = await supabase
+      .from("schedule_items")
+      .select("id, kind")
+      .in("id", parsed.ids)
+      .eq("project_id", parsed.project_id)
+    if (kErr) throw new Error(kErr.message)
+    const workIds = new Set(
+      (kinds ?? []).filter((k) => k.kind === "work").map((k) => k.id)
+    )
+    idsToUpdate = parsed.ids.filter((id) => !workIds.has(id))
+    for (const id of workIds) {
+      preSkipped.push({
+        id,
+        reason: "baseline not set — lock it before completing work items",
+      })
+    }
+    if (idsToUpdate.length === 0) {
+      return { ok: 0, skipped: preSkipped }
+    }
+  }
+
   // Single batched UPDATE — RLS will silently drop rows the user can't write,
   // so we compare returned-vs-requested to detect that case.
   const { data, error } = await supabase
     .from("schedule_items")
     .update({ status: parsed.status })
-    .in("id", parsed.ids)
+    .in("id", idsToUpdate)
     .eq("project_id", parsed.project_id)
     .select("id")
   if (error) throw new Error(error.message)
   const updated = new Set((data ?? []).map((r) => r.id))
-  const skipped = parsed.ids
-    .filter((id) => !updated.has(id))
-    .map((id) => ({ id, reason: "not found in project (or RLS denied)" }))
+  const skipped = [
+    ...preSkipped,
+    ...idsToUpdate
+      .filter((id) => !updated.has(id))
+      .map((id) => ({ id, reason: "not found in project (or RLS denied)" })),
+  ]
   revalidatePath(`/projects/${parsed.project_id}/schedule`)
   return { ok: updated.size, skipped }
 }
@@ -1722,8 +1993,9 @@ export async function bulkShiftScheduleDates(input: {
   project_id: string
   ids: string[]
   days: number
+  move_reason?: MoveReasonT | null
 }): Promise<BulkScheduleResult> {
-  await requireStaff()
+  const profile = await requireStaff()
   const parsed = BulkShiftInput.parse(input)
   if (parsed.days === 0) {
     return { ok: 0, skipped: parsed.ids.map((id) => ({ id, reason: "zero days" })) }
@@ -1731,10 +2003,29 @@ export async function bulkShiftScheduleDates(input: {
   const supabase = await createSupabaseServerClient()
   const { data: items, error: selErr } = await supabase
     .from("schedule_items")
-    .select("id, start_date, end_date, due_date")
+    .select("id, kind, start_date, end_date, due_date")
     .in("id", parsed.ids)
     .eq("project_id", parsed.project_id)
   if (selErr) throw new Error(selErr.message)
+
+  // Post-baseline, shifting dated work items requires a reason. Bail before
+  // touching anything so the shift stays all-or-nothing on this rule.
+  const datedWork = (items ?? []).filter(
+    (i) => i.kind === "work" && (i.start_date || i.end_date)
+  )
+  let baselineSetAt: string | null = null
+  if (datedWork.length > 0) {
+    baselineSetAt = await getBaselineSetAt(supabase, parsed.project_id)
+    if (baselineSetAt && !parsed.move_reason) {
+      return {
+        ok: 0,
+        skipped: parsed.ids.map((id) => ({
+          id,
+          reason: "baseline is set — pick a reason for the date shift",
+        })),
+      }
+    }
+  }
 
   const skipped: { id: string; reason: string }[] = []
   const movedIds: string[] = []
@@ -1768,6 +2059,24 @@ export async function bulkShiftScheduleDates(input: {
     movedIds.push(item.id)
   }
 
+  // One schedule_delays row per shifted work item, all under the reason the
+  // user picked — the whole selection moved for the same cause.
+  if (baselineSetAt && parsed.move_reason) {
+    const movedSet = new Set(movedIds)
+    await logMoveReasons(
+      supabase,
+      datedWork
+        .filter((w) => movedSet.has(w.id))
+        .map((w) => ({
+          schedule_item_id: w.id,
+          delay_days: parsed.days,
+          reason_category: parsed.move_reason!.reason_category,
+          notes: nz(parsed.move_reason!.notes),
+          logged_by: profile.id,
+        }))
+    )
+  }
+
   // Batched cascade: load the project graph once, walk every seed
   // against the same in-memory copy, write each affected row exactly
   // once. The previous per-seed loop reloaded the full graph for every
@@ -1796,16 +2105,35 @@ export async function bulkDeleteScheduleItems(input: {
   const parsed = BulkIdsInput.parse(input)
   const supabase = await createSupabaseServerClient()
 
+  // Milestones never delete — drop them from the batch with a skip note so
+  // the rest of the selection isn't blocked by the DB trigger's exception.
+  const { data: markerRows, error: mErr } = await supabase
+    .from("schedule_items")
+    .select("id, milestone")
+    .in("id", parsed.ids)
+    .eq("project_id", parsed.project_id)
+    .not("milestone", "is", null)
+  if (mErr) throw new Error(mErr.message)
+  const milestoneIds = new Set((markerRows ?? []).map((r) => r.id))
+  const deletableIds = parsed.ids.filter((id) => !milestoneIds.has(id))
+  const milestoneSkipped = Array.from(milestoneIds).map((id) => ({
+    id,
+    reason: "protected milestone — can't be deleted",
+  }))
+  if (deletableIds.length === 0) {
+    return { ok: 0, skipped: milestoneSkipped }
+  }
+
   // Defensive: refuse if any selected item is a predecessor of an item that
   // ISN'T also being deleted. Otherwise the FK cascade silently drops the
   // dependency and the surviving successor's schedule shifts unexpectedly.
   // For an explicit reassignment flow, the single-item deleteScheduleItem
   // already exists — point staff there.
-  const idSet = new Set(parsed.ids)
+  const idSet = new Set(deletableIds)
   const { data: preds, error: pErr } = await supabase
     .from("schedule_predecessors")
     .select("item_id, predecessor_id")
-    .in("predecessor_id", parsed.ids)
+    .in("predecessor_id", deletableIds)
   if (pErr) throw new Error(pErr.message)
   const externalDependencies = (preds ?? []).filter(
     (p) => !idSet.has(p.item_id)
@@ -1826,14 +2154,17 @@ export async function bulkDeleteScheduleItems(input: {
   const { data, error } = await supabase
     .from("schedule_items")
     .delete()
-    .in("id", parsed.ids)
+    .in("id", deletableIds)
     .eq("project_id", parsed.project_id)
     .select("id")
   if (error) throw new Error(error.message)
   const deleted = new Set((data ?? []).map((r) => r.id))
-  const skipped = parsed.ids
-    .filter((id) => !deleted.has(id))
-    .map((id) => ({ id, reason: "not found in project (or RLS denied)" }))
+  const skipped = [
+    ...milestoneSkipped,
+    ...deletableIds
+      .filter((id) => !deleted.has(id))
+      .map((id) => ({ id, reason: "not found in project (or RLS denied)" })),
+  ]
   revalidatePath(`/projects/${parsed.project_id}/schedule`)
   return { ok: deleted.size, skipped }
 }
@@ -1967,4 +2298,132 @@ export async function bulkUnassignProfileFromScheduleItems(input: {
   }
   revalidatePath(`/projects/${parsed.project_id}/schedule`)
   return { ok: removed.size, skipped }
+}
+
+// ============================================================================
+// Schedule baseline + protected milestones
+// ============================================================================
+
+export type SetBaselineResult = { ok: true } | { ok: false; error: string }
+
+/**
+ * Locks the current plan as the baseline: copies every work item's start/end
+ * into baseline_start_date/baseline_end_date (via the atomic
+ * set_schedule_baseline RPC) and stamps projects.baseline_set_at. Running it
+ * again re-baselines — the health banner asks for explicit confirmation
+ * before doing that, since variance resets to zero.
+ *
+ * Typed result (not throw): Next.js masks thrown messages in production and
+ * these failures are user-actionable ("give the milestones dates first").
+ */
+export async function setScheduleBaseline(input: {
+  project_id: string
+}): Promise<SetBaselineResult> {
+  await requireStaff()
+  const parsed = z.object({ project_id: z.string().uuid() }).parse(input)
+  const supabase = await createSupabaseServerClient()
+
+  const { data: markers, error: mErr } = await supabase
+    .from("schedule_items")
+    .select("milestone, start_date, end_date")
+    .eq("project_id", parsed.project_id)
+    .not("milestone", "is", null)
+  if (mErr) return { ok: false, error: mErr.message }
+  const jobStart = (markers ?? []).find((m) => m.milestone === "job_start")
+  const subComplete = (markers ?? []).find(
+    (m) => m.milestone === "substantial_completion"
+  )
+  if (!jobStart || !subComplete) {
+    return {
+      ok: false,
+      error:
+        "This project is missing its Job Start / Substantial Completion milestones — create them first.",
+    }
+  }
+  if (!jobStart.start_date || !subComplete.end_date) {
+    return {
+      ok: false,
+      error:
+        "Give Job Start and Substantial Completion dates before locking the baseline.",
+    }
+  }
+
+  const { error: rpcErr } = await supabase.rpc("set_schedule_baseline", {
+    p_project: parsed.project_id,
+  })
+  if (rpcErr) return { ok: false, error: rpcErr.message }
+  revalidatePath(`/projects/${parsed.project_id}/schedule`)
+  return { ok: true }
+}
+
+/**
+ * Creates any missing Job Start / Substantial Completion milestone rows for a
+ * project (undated — staff drag them into place). Idempotent; safe to call
+ * from project-creation paths and from the health banner's fallback button
+ * for projects the 0069 backfill couldn't attribute.
+ */
+export async function ensureProjectMilestones(input: {
+  project_id: string
+}): Promise<{ created: number }> {
+  const profile = await requireStaff()
+  const parsed = z.object({ project_id: z.string().uuid() }).parse(input)
+  const supabase = await createSupabaseServerClient()
+
+  const { data: existing, error: exErr } = await supabase
+    .from("schedule_items")
+    .select("milestone")
+    .eq("project_id", parsed.project_id)
+    .not("milestone", "is", null)
+  if (exErr) throw new Error(exErr.message)
+  const have = new Set((existing ?? []).map((e) => e.milestone))
+  if (have.has("job_start") && have.has("substantial_completion")) {
+    return { created: 0 }
+  }
+
+  // Bracket the existing schedule so the new rows land at the visual edges.
+  const { data: posRows, error: posErr } = await supabase
+    .from("schedule_items")
+    .select("position")
+    .eq("project_id", parsed.project_id)
+    .order("position", { ascending: true })
+  if (posErr) throw new Error(posErr.message)
+  const positions = (posRows ?? []).map((r) => r.position)
+  const minPos = positions.length ? positions[0] : 0
+  const maxPos = positions.length ? positions[positions.length - 1] : 0
+
+  const rows: {
+    project_id: string
+    kind: "work"
+    title: string
+    milestone: "job_start" | "substantial_completion"
+    position: number
+    created_by: string
+  }[] = []
+  if (!have.has("job_start")) {
+    rows.push({
+      project_id: parsed.project_id,
+      kind: "work",
+      title: "Job Start",
+      milestone: "job_start",
+      position: minPos - 1,
+      created_by: profile.id,
+    })
+  }
+  if (!have.has("substantial_completion")) {
+    rows.push({
+      project_id: parsed.project_id,
+      kind: "work",
+      title: "Substantial Completion",
+      milestone: "substantial_completion",
+      position: maxPos + 1,
+      created_by: profile.id,
+    })
+  }
+  const { error: insErr } = await supabase.from("schedule_items").insert(rows)
+  // 23505 = a concurrent call already created one — that's a success state.
+  if (insErr && (insErr as { code?: string }).code !== "23505") {
+    throw new Error(insErr.message)
+  }
+  revalidatePath(`/projects/${parsed.project_id}/schedule`)
+  return { created: rows.length }
 }

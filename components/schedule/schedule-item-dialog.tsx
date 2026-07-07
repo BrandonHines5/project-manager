@@ -11,6 +11,7 @@ import {
   GripVertical,
   MessageSquare,
   Copy,
+  Flag,
 } from "lucide-react"
 import {
   Dialog,
@@ -27,6 +28,7 @@ import { Badge } from "@/components/ui/badge"
 import {
   cn,
   formatDate,
+  formatDateRange,
   addBusinessDays,
   addDays,
   nextBusinessDay,
@@ -40,10 +42,12 @@ import {
   logDelay,
   sendQuoTextToSub,
   postScheduleItemComment,
+  type MoveReasonT,
   type ScheduleItemInputT,
   type SchedulePredecessorDependent,
 } from "@/app/actions/schedule"
 import { CommentsThread } from "@/components/comms/comments-thread"
+import { MoveReasonDialog } from "./move-reason-dialog"
 import { DeleteWithDependentsDialog } from "./delete-with-dependents-dialog"
 import { CopyTodoDialog } from "./copy-todo-dialog"
 import {
@@ -221,6 +225,14 @@ export function ScheduleItemDialog({
   })
   const [showDelay, setShowDelay] = useState(false)
   const [showCopy, setShowCopy] = useState(false)
+  // A save that moved a baselined work item's dates parks here until the
+  // user picks a reason in the popup (andCopy preserves "Save & copy" intent).
+  const [pendingReasonSave, setPendingReasonSave] = useState<{
+    payload: ScheduleItemInputT
+    andCopy: boolean
+  } | null>(null)
+  const baselineSet = !!data.baseline_set_at
+  const isMilestone = !!item?.milestone
   const [dependents, setDependents] = useState<
     SchedulePredecessorDependent[] | null
   >(null)
@@ -257,6 +269,20 @@ export function ScheduleItemDialog({
       toast.error("End date must be on or after start date")
       return null
     }
+    // Work items can't be completed until the baseline is locked (to-dos
+    // can). Mirrors the server-side gate so the user gets a clear message
+    // instead of a masked production error.
+    if (
+      kind === "work" &&
+      status === "complete" &&
+      !baselineSet &&
+      (mode === "create" || item?.status !== "complete")
+    ) {
+      toast.error(
+        "Set the schedule baseline before marking work items complete — use “Set baseline” at the top of the page."
+      )
+      return null
+    }
     const anchored = kind === "todo" && !!parentId && anchorEnabled
     return {
       id: item?.id,
@@ -289,19 +315,59 @@ export function ScheduleItemDialog({
     }
   }
 
-  async function handleSave() {
-    const payload = buildPayload()
-    if (!payload) return
+  // Mirrors the server's lone-date completion (a work item with only one
+  // date gets it mirrored to the other side) so the "did the dates move?"
+  // check compares what will actually be stored.
+  function effectiveDates(p: ScheduleItemInputT): {
+    start: string | null
+    end: string | null
+  } {
+    let s = p.start_date && p.start_date !== "" ? p.start_date : null
+    let e = p.end_date && p.end_date !== "" ? p.end_date : null
+    if (p.kind === "work") {
+      if (s && !e) e = s
+      else if (e && !s) s = e
+    }
+    return { start: s, end: e }
+  }
+
+  // Post-baseline date changes on a work item must carry a reason — park the
+  // payload and open the popup instead of saving straight away.
+  function needsMoveReason(payload: ScheduleItemInputT): boolean {
+    if (mode !== "edit" || !item || item.kind !== "work" || !baselineSet) {
+      return false
+    }
+    const { start, end } = effectiveDates(payload)
+    return item.start_date !== start || item.end_date !== end
+  }
+
+  function doSave(payload: ScheduleItemInputT, andCopy: boolean) {
     startTransition(async () => {
       try {
         await saveScheduleItem(payload)
-        toast.success(mode === "edit" ? "Saved" : "Created")
-        router.refresh()
-        onClose()
+        setPendingReasonSave(null)
+        if (andCopy) {
+          router.refresh()
+          setShowCopy(true)
+        } else {
+          toast.success(mode === "edit" ? "Saved" : "Created")
+          router.refresh()
+          onClose()
+        }
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Save failed")
       }
     })
+  }
+
+  async function handleSave() {
+    const payload = buildPayload()
+    if (!payload) return
+    if (needsMoveReason(payload)) {
+      setPendingReasonSave({ payload, andCopy: false })
+      return
+    }
+    doSave(payload, false)
   }
 
   // Save first, then open the copy dialog — without this, the copy would
@@ -311,19 +377,21 @@ export function ScheduleItemDialog({
   function handleSaveAndCopy() {
     const payload = buildPayload()
     if (!payload) return
-    startTransition(async () => {
-      try {
-        await saveScheduleItem(payload)
-        router.refresh()
-        setShowCopy(true)
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Save failed")
-      }
-    })
+    if (needsMoveReason(payload)) {
+      setPendingReasonSave({ payload, andCopy: true })
+      return
+    }
+    doSave(payload, true)
   }
 
   async function handleDelete() {
     if (!item) return
+    if (item.milestone) {
+      toast.error(
+        `"${item.title}" is a protected milestone and can't be deleted.`
+      )
+      return
+    }
     // For work items, check whether any other items depend on this one as a
     // predecessor. If so, force the reassign-or-remove dialog before
     // touching the row.
@@ -366,7 +434,13 @@ export function ScheduleItemDialog({
     : []
 
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+    // While the move-reason popup is up, Esc/overlay events shouldn't also
+    // dismiss this drawer (both dialogs listen on document) — the user would
+    // lose their edits along with the popup.
+    <Dialog
+      open={open}
+      onOpenChange={(v) => !v && !pendingReasonSave && onClose()}
+    >
       <DialogContent side="right">
         <DialogHeader>
           <div>
@@ -378,10 +452,20 @@ export function ScheduleItemDialog({
                 : "New to-do"}
             </DialogTitle>
             <DialogDescription>
-              {kind === "work"
+              {isMilestone
+                ? "Protected milestone — it defines the tracked job duration and can't be deleted."
+                : kind === "work"
                 ? "Primary on-site work with start/end dates."
                 : "A task that may roll up under a work item."}
             </DialogDescription>
+            {isMilestone && (
+              <span className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-brand-50 border border-brand-500/40 text-brand-600 px-2 py-0.5 text-[11px] font-medium">
+                <Flag className="h-3 w-3" />
+                {item?.milestone === "job_start"
+                  ? "Job Start milestone"
+                  : "Substantial Completion milestone"}
+              </span>
+            )}
           </div>
         </DialogHeader>
         <DialogBody className="space-y-6">
@@ -751,7 +835,7 @@ export function ScheduleItemDialog({
           )}
         </DialogBody>
         <DialogFooter>
-          {mode === "edit" && item && (
+          {mode === "edit" && item && !isMilestone && (
             <Button
               type="button"
               variant="ghost"
@@ -787,6 +871,26 @@ export function ScheduleItemDialog({
           onClose={() => setShowCopy(false)}
           sourceItemId={item.id}
           currentProjectId={data.project_id}
+        />
+      )}
+      {pendingReasonSave && item && (
+        <MoveReasonDialog
+          open={true}
+          pending={pending}
+          description={`${item.title}: ${formatDateRange(
+            item.start_date,
+            item.end_date
+          )} → ${formatDateRange(
+            effectiveDates(pendingReasonSave.payload).start,
+            effectiveDates(pendingReasonSave.payload).end
+          )}`}
+          onConfirm={(reason: MoveReasonT) =>
+            doSave(
+              { ...pendingReasonSave.payload, move_reason: reason },
+              pendingReasonSave.andCopy
+            )
+          }
+          onCancel={() => setPendingReasonSave(null)}
         />
       )}
       {dependents && item && (

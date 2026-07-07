@@ -10,10 +10,14 @@ import { GanttView } from "@/components/schedule/gantt-view"
 import { TodosView } from "@/components/schedule/todos-view"
 import { TodosSheet } from "@/components/schedule/todos-sheet"
 import { ScheduleItemDialog } from "@/components/schedule/schedule-item-dialog"
+import { ScheduleHealthBanner } from "@/components/schedule/health-banner"
 
 export type ScheduleData = {
   project_id: string
   project_address: string | null
+  // projects.baseline_set_at — null until staff lock the plan. Gates the
+  // move-reason popup and the "work items can't complete yet" rule.
+  baseline_set_at: string | null
   items: Tables<"schedule_items">[]
   assignments: Tables<"schedule_assignments">[]
   predecessors: Tables<"schedule_predecessors">[]
@@ -64,6 +68,7 @@ export function ScheduleClient({ data }: { data: ScheduleData }) {
 
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-6 py-5">
+      <ScheduleHealthBanner data={data} />
       <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
         <div className="flex items-center gap-4 text-sm">
           <StatChip label="Work items" value={stats.work} />

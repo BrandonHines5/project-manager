@@ -1886,6 +1886,8 @@ export type Database = {
         Row: {
           address: string | null
           attributes: Json
+          baseline_set_at: string | null
+          baseline_set_by: string | null
           client_company_id: string | null
           client_email: string | null
           client_email_2: string | null
@@ -1919,6 +1921,8 @@ export type Database = {
         Insert: {
           address?: string | null
           attributes?: Json
+          baseline_set_at?: string | null
+          baseline_set_by?: string | null
           client_company_id?: string | null
           client_email?: string | null
           client_email_2?: string | null
@@ -1952,6 +1956,8 @@ export type Database = {
         Update: {
           address?: string | null
           attributes?: Json
+          baseline_set_at?: string | null
+          baseline_set_by?: string | null
           client_company_id?: string | null
           client_email?: string | null
           client_email_2?: string | null
@@ -2461,6 +2467,7 @@ export type Database = {
           exclude_from_critical_path: boolean
           id: string
           kind: Database["public"]["Enums"]["schedule_item_kind"]
+          milestone: Database["public"]["Enums"]["schedule_milestone"] | null
           parent_anchor:
             | Database["public"]["Enums"]["schedule_parent_anchor"]
             | null
@@ -2494,6 +2501,7 @@ export type Database = {
           exclude_from_critical_path?: boolean
           id?: string
           kind: Database["public"]["Enums"]["schedule_item_kind"]
+          milestone?: Database["public"]["Enums"]["schedule_milestone"] | null
           parent_anchor?:
             | Database["public"]["Enums"]["schedule_parent_anchor"]
             | null
@@ -2527,6 +2535,7 @@ export type Database = {
           exclude_from_critical_path?: boolean
           id?: string
           kind?: Database["public"]["Enums"]["schedule_item_kind"]
+          milestone?: Database["public"]["Enums"]["schedule_milestone"] | null
           parent_anchor?:
             | Database["public"]["Enums"]["schedule_parent_anchor"]
             | null
@@ -2818,6 +2827,10 @@ export type Database = {
         Args: { p_add: boolean; p_ids: string[]; p_label: string }
         Returns: number
       }
+      set_schedule_baseline: {
+        Args: { p_project: string }
+        Returns: undefined
+      }
       trade_sees_assignment_via_role: {
         Args: { p_item: string; p_role: string }
         Returns: boolean
@@ -2872,6 +2885,7 @@ export type Database = {
         | "in_progress"
         | "complete"
         | "delayed"
+      schedule_milestone: "job_start" | "substantial_completion"
       schedule_parent_anchor: "start" | "end"
       todo_priority: "low" | "medium" | "high"
       user_role: "staff" | "trade" | "client"
@@ -3060,6 +3074,7 @@ export const Constants = {
         "complete",
         "delayed",
       ],
+      schedule_milestone: ["job_start", "substantial_completion"],
       schedule_parent_anchor: ["start", "end"],
       todo_priority: ["low", "medium", "high"],
       user_role: ["staff", "trade", "client"],
