@@ -105,6 +105,14 @@ const DecisionInput = z
     allowance_cost_code_id: optStr,
     status: z.enum(["draft", "pending_client", "approved", "rejected"]).default("draft"),
     due_date: optStr,
+    // Optional link tying due_date to a schedule item (start/end ± offset).
+    // All three travel together or none of them do (normalized below, and
+    // enforced by the decisions_due_anchor_triple_chk constraint). When
+    // linked, due_date is computed server-side from the item's current dates
+    // and a DB trigger keeps it fresh as the item moves.
+    due_anchor_schedule_item_id: optStr,
+    due_anchor: z.enum(["start", "end"]).nullish(),
+    due_anchor_offset_days: z.coerce.number().int().nullish(),
     // Smart-template conditions (e.g. ["walkout"]). Optional so callers
     // that don't send the field leave the stored value untouched.
     template_tags: z.array(z.string()).optional(),
@@ -309,6 +317,36 @@ export async function saveDecision(input: DecisionInputT) {
         : null
   }
 
+  // Resolve the due-date link. When the anchor triple is present, the due
+  // date is derived from the schedule item's current start/end — the fixed
+  // date the browser sent (if any) is ignored so the stored due_date can
+  // never drift from the recipe. The item is re-read under the caller's RLS
+  // session and must belong to this project.
+  const dueAnchorId = nz(parsed.due_anchor_schedule_item_id)
+  const dueLinked =
+    !!dueAnchorId && !!parsed.due_anchor && parsed.due_anchor_offset_days != null
+  const dueAnchor = dueLinked ? parsed.due_anchor! : null
+  const dueAnchorOffset = dueLinked
+    ? Math.trunc(parsed.due_anchor_offset_days!)
+    : null
+  let finalDueDate = nz(parsed.due_date)
+  if (dueLinked) {
+    const { data: anchorItem, error: anchorErr } = await supabase
+      .from("schedule_items")
+      .select("id, project_id, start_date, end_date")
+      .eq("id", dueAnchorId)
+      .maybeSingle()
+    if (anchorErr) throw new Error(anchorErr.message)
+    if (!anchorItem || anchorItem.project_id !== parsed.project_id) {
+      throw new Error(
+        "The schedule item linked to the due date wasn't found in this project."
+      )
+    }
+    const basis =
+      dueAnchor === "start" ? anchorItem.start_date : anchorItem.end_date
+    finalDueDate = basis ? addDays(basis, dueAnchorOffset!) : null
+  }
+
   // Only touch template_tags when the caller sent them — undefined means
   // "not editing tags in this save".
   const normalizedTags =
@@ -332,7 +370,10 @@ export async function saveDecision(input: DecisionInputT) {
       allowance_amount: allowanceAmount,
       allowance_cost_code_id: allowanceCostCodeId,
       status: parsed.status,
-      due_date: nz(parsed.due_date),
+      due_date: finalDueDate,
+      due_anchor_schedule_item_id: dueLinked ? dueAnchorId : null,
+      due_anchor: dueAnchor,
+      due_anchor_offset_days: dueAnchorOffset,
     }
     if (normalizedTags !== undefined) updateRow.template_tags = normalizedTags
     if (newlyApproved) updateRow.approved_at = new Date().toISOString()
@@ -370,7 +411,10 @@ export async function saveDecision(input: DecisionInputT) {
           allowance_amount: allowanceAmount,
           allowance_cost_code_id: allowanceCostCodeId,
           status: parsed.status,
-          due_date: nz(parsed.due_date),
+          due_date: finalDueDate,
+          due_anchor_schedule_item_id: dueLinked ? dueAnchorId : null,
+          due_anchor: dueAnchor,
+          due_anchor_offset_days: dueAnchorOffset,
           template_tags: normalizedTags ?? [],
           number,
           created_by: profile.id,
@@ -1500,6 +1544,14 @@ export async function copyDecision({
         allowance_cost_code_id: src.allowance_cost_code_id,
         status: "draft",
         due_date: src.due_date,
+        // The due-date link only survives a same-project copy — across
+        // projects it would point at the source project's schedule. The
+        // copied fixed due_date stays either way.
+        due_anchor_schedule_item_id: sameProject
+          ? src.due_anchor_schedule_item_id
+          : null,
+        due_anchor: sameProject ? src.due_anchor : null,
+        due_anchor_offset_days: sameProject ? src.due_anchor_offset_days : null,
         template_tags: src.template_tags,
         number,
         created_by: profile.id,

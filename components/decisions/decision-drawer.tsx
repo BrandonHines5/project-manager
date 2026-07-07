@@ -137,6 +137,33 @@ export function DecisionDrawer({
     formatTags(decision?.template_tags)
   )
   const [dueDate, setDueDate] = useState<string>(decision?.due_date ?? "")
+  // Due-date link: instead of a fixed date, the due date can follow a
+  // schedule item (start/end ± offset). Server recomputes due_date from the
+  // item on save, and a DB trigger keeps it fresh as the item moves.
+  const [dueAnchorItemId, setDueAnchorItemId] = useState<string | null>(
+    decision?.due_anchor_schedule_item_id ?? null
+  )
+  const [dueAnchor, setDueAnchor] = useState<"start" | "end">(
+    decision?.due_anchor ?? "end"
+  )
+  const [dueAnchorOffset, setDueAnchorOffset] = useState<number>(
+    decision?.due_anchor_offset_days ?? 0
+  )
+  const dueLinked = !!dueAnchorItemId
+  const dueAnchorItem =
+    data.work_items.find((w) => w.id === dueAnchorItemId) ?? null
+  // Client-side preview of the linked recipe; the server's computation on
+  // save is authoritative.
+  const linkedDueBasis = dueAnchorItem
+    ? dueAnchor === "start"
+      ? dueAnchorItem.start_date
+      : dueAnchorItem.end_date
+    : null
+  const effectiveDueDate = dueLinked
+    ? linkedDueBasis
+      ? addDays(linkedDueBasis, dueAnchorOffset)
+      : null
+    : dueDate || null
   const [costDelta, setCostDelta] = useState<string>(() => {
     if (decision?.cost_delta == null) return ""
     // On change orders the stored cost_delta INCLUDES the delay cost
@@ -424,7 +451,12 @@ export function DecisionDrawer({
           ? allowanceCostCodeId
           : null,
       status: overrideStatus ?? status,
-      due_date: dueDate || null,
+      // When linked, the server derives due_date from the schedule item —
+      // send the recipe, not a date.
+      due_date: dueLinked ? null : dueDate || null,
+      due_anchor_schedule_item_id: dueLinked ? dueAnchorItemId : null,
+      due_anchor: dueLinked ? dueAnchor : null,
+      due_anchor_offset_days: dueLinked ? dueAnchorOffset : null,
       template_tags: parseTagsInput(templateTagsText),
       followups: followups
         .filter((f) => f.title.trim() !== "")
@@ -629,9 +661,12 @@ export function DecisionDrawer({
               )}
               <KindChip kind={kind} />
               <StatusBadge status={status} />
-              {dueDate && (
+              {effectiveDueDate && (
                 <span className="text-xs text-muted">
-                  Due {formatDate(dueDate)}
+                  Due {formatDate(effectiveDueDate)}
+                  {dueLinked && (
+                    <CalendarClock className="inline h-3 w-3 ml-1 text-brand-500 align-[-2px]" />
+                  )}
                 </span>
               )}
             </div>
@@ -683,23 +718,113 @@ export function DecisionDrawer({
               placeholder={kind === "change_order" ? "Move powder room wall" : "Master bath floor tile"}
             />
           </Field>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Field
-              label="Due date"
-              hint={
-                canEdit
-                  ? "Optional. Shown to the owner so they know when to respond."
-                  : "Builder is asking for a response by this date."
-              }
-            >
-              <Input
-                type="date"
-                value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
-                disabled={!canEdit}
-              />
-            </Field>
-          </div>
+          {canEdit ? (
+            <div>
+              <Label>Due date</Label>
+              <p className="text-xs text-muted mt-0.5">
+                Optional. Shown to the owner so they know when to respond.
+                Link it to a schedule item to have it move automatically when
+                the schedule shifts.
+              </p>
+              <div className="mt-2 flex flex-wrap items-end gap-2">
+                <Select
+                  value={dueLinked ? "linked" : "fixed"}
+                  onChange={(e) => {
+                    if (e.target.value === "linked") {
+                      setDueAnchorItemId(data.work_items[0]?.id ?? null)
+                      setDueAnchor("end")
+                      // Reset the offset too — otherwise a value left over
+                      // from a prior link/edit silently rides into the new
+                      // recipe alongside the freshly reset item + anchor.
+                      setDueAnchorOffset(0)
+                    } else {
+                      setDueAnchorItemId(null)
+                    }
+                  }}
+                  className="w-auto text-xs"
+                  disabled={data.work_items.length === 0 && !dueLinked}
+                  title={
+                    data.work_items.length === 0
+                      ? "No work items in this project to link to"
+                      : undefined
+                  }
+                >
+                  <option value="fixed">Fixed date</option>
+                  <option value="linked">Link to a schedule item</option>
+                </Select>
+                {dueLinked ? (
+                  <>
+                    <Field label="Schedule item" className="min-w-[150px]">
+                      <Select
+                        value={dueAnchorItemId ?? ""}
+                        onChange={(e) =>
+                          setDueAnchorItemId(e.target.value || null)
+                        }
+                      >
+                        {data.work_items.map((w) => (
+                          <option key={w.id} value={w.id}>
+                            {w.title}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                    <Field label="Anchor">
+                      <Select
+                        value={dueAnchor}
+                        onChange={(e) =>
+                          setDueAnchor(e.target.value as "start" | "end")
+                        }
+                        className="w-auto"
+                      >
+                        <option value="start">Start</option>
+                        <option value="end">End</option>
+                      </Select>
+                    </Field>
+                    <Field label="Offset (days)" hint="− before / + after">
+                      <Input
+                        type="number"
+                        step={1}
+                        value={dueAnchorOffset}
+                        onChange={(e) =>
+                          setDueAnchorOffset(
+                            Math.trunc(Number(e.target.value) || 0)
+                          )
+                        }
+                        className="w-24 text-right tabular-nums"
+                      />
+                    </Field>
+                    <FollowupAnchorPreview
+                      item={dueAnchorItem}
+                      anchor={dueAnchor}
+                      offsetDays={dueAnchorOffset}
+                      label="Due"
+                    />
+                  </>
+                ) : (
+                  <Field label="Date">
+                    <Input
+                      type="date"
+                      value={dueDate}
+                      onChange={(e) => setDueDate(e.target.value)}
+                    />
+                  </Field>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Field
+                label="Due date"
+                hint={
+                  decision?.due_anchor_schedule_item_id
+                    ? "Builder is asking for a response by this date. It follows the construction schedule and may move if the schedule shifts."
+                    : "Builder is asking for a response by this date."
+                }
+              >
+                <Input type="date" value={dueDate} disabled />
+              </Field>
+            </div>
+          )}
           {canEdit && kind === "selection" && (
             <AllowanceEditor
               amount={allowanceAmount}
