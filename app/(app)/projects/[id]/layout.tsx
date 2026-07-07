@@ -12,11 +12,12 @@ import { brandForProjectType } from "@/lib/brand"
 import { crmStatusTone } from "@/lib/crm-status"
 import type { Enums } from "@/lib/db/types"
 
+// The enum mirrors the CRM's statuses, so labels are the CRM's exact words.
 const STATUS_LABEL: Record<Enums<"project_status">, string> = {
-  lead: "Lead",
-  pre_construction: "Pre-construction",
-  active: "Active",
-  on_hold: "On hold",
+  upcoming: "Upcoming",
+  in_work: "In Work",
+  inventory: "Inventory",
+  paused: "Paused",
   complete: "Complete",
   warranty: "Warranty",
   cancelled: "Cancelled",
@@ -28,10 +29,10 @@ const STATUS_TONE: Record<
   Enums<"project_status">,
   "brand" | "muted" | "warning" | "success" | "danger" | "info"
 > = {
-  lead: "muted",
-  pre_construction: "info",
-  active: "brand",
-  on_hold: "warning",
+  upcoming: "info",
+  in_work: "brand",
+  inventory: "info",
+  paused: "warning",
   complete: "success",
   warranty: "info",
   cancelled: "danger",

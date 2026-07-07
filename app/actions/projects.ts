@@ -25,15 +25,15 @@ const ProjectInput = z.object({
   address: z.string().max(500).optional().or(z.literal("")),
   status: z
     .enum([
-      "lead",
-      "pre_construction",
-      "active",
-      "on_hold",
+      "upcoming",
+      "in_work",
       "complete",
       "warranty",
+      "inventory",
+      "paused",
       "cancelled",
     ])
-    .default("active"),
+    .default("in_work"),
   // Drives client-facing branding (residential → Hines Homes, commercial →
   // MJV Building Group). Optional; empty string maps to "unset".
   project_type: z
@@ -430,12 +430,12 @@ const ProjectEditInput = z
     name: z.string().min(1, "Name is required").max(200),
     address: optEditStr,
     status: z.enum([
-      "lead",
-      "pre_construction",
-      "active",
-      "on_hold",
+      "upcoming",
+      "in_work",
       "complete",
       "warranty",
+      "inventory",
+      "paused",
       "cancelled",
     ]),
     contract_price: z.coerce
@@ -622,12 +622,12 @@ const DuplicateProjectInput = z
     override_address: z.string().nullish(),
     override_status: z
       .enum([
-        "lead",
-        "pre_construction",
-        "active",
-        "on_hold",
+        "upcoming",
+        "in_work",
         "complete",
         "warranty",
+        "inventory",
+        "paused",
         "cancelled",
       ])
       .optional(),

@@ -40,10 +40,10 @@ function isStatusFilter(f: string): f is StatusFilter {
 }
 
 const OPEN_STATUSES: ReadonlyArray<Enums<"project_status">> = [
-  "lead",
-  "pre_construction",
-  "active",
-  "on_hold",
+  "upcoming",
+  "in_work",
+  "inventory",
+  "paused",
 ]
 
 function matchesFilter(
@@ -56,7 +56,9 @@ function matchesFilter(
     case "open":
       return OPEN_STATUSES.includes(status)
     case "active":
-      return status === "active"
+      // A live build: In Work or Inventory (same pair the old enum collapsed
+      // into its single 'active' value).
+      return status === "in_work" || status === "inventory"
     case "warranty":
       return status === "warranty"
     case "closed":
@@ -64,24 +66,26 @@ function matchesFilter(
   }
 }
 
+// The enum mirrors the CRM's statuses, so labels are the CRM's exact words
+// (and tones match crmStatusTone so synced and un-synced jobs look alike).
 const STATUS_TONE: Record<
   Enums<"project_status">,
   "brand" | "muted" | "warning" | "success" | "danger" | "info"
 > = {
-  lead: "muted",
-  pre_construction: "info",
-  active: "brand",
-  on_hold: "warning",
+  upcoming: "info",
+  in_work: "brand",
+  inventory: "info",
+  paused: "warning",
   complete: "success",
   warranty: "info",
   cancelled: "danger",
 }
 
 const STATUS_LABEL: Record<Enums<"project_status">, string> = {
-  lead: "Lead",
-  pre_construction: "Pre-construction",
-  active: "Active",
-  on_hold: "On hold",
+  upcoming: "Upcoming",
+  in_work: "In Work",
+  inventory: "Inventory",
+  paused: "Paused",
   complete: "Complete",
   warranty: "Warranty",
   cancelled: "Cancelled",

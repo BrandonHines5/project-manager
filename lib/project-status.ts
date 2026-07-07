@@ -2,12 +2,13 @@ import type { Enums } from "@/lib/db/types"
 
 // Statuses that count as an "open" job. Shared by the jobs-list sidebar's
 // default Open filter and the /all/* aggregate pages' default scope so
-// "all jobs" means the same thing everywhere.
+// "all jobs" means the same thing everywhere. (Statuses mirror the CRM's;
+// complete / warranty / cancelled are the closed ones.)
 export const OPEN_STATUSES: ReadonlyArray<Enums<"project_status">> = [
-  "lead",
-  "pre_construction",
-  "active",
-  "on_hold",
+  "upcoming",
+  "in_work",
+  "inventory",
+  "paused",
 ]
 
 // Sections that have an "all jobs" aggregate view, keyed by the project

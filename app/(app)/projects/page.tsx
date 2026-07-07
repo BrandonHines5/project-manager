@@ -21,12 +21,13 @@ import type { Enums } from "@/lib/db/types"
 export const metadata = { title: "Projects — Hines Homes" }
 
 // A project counts as "active for portfolio health" when it's in one of these
-// statuses. Leads / on-hold / complete / cancelled are excluded from the
+// statuses. Paused / complete / warranty / cancelled are excluded from the
 // on-time / delayed roll-up because they aren't a live build the PM team is
 // pushing against today.
 const PORTFOLIO_ACTIVE: Enums<"project_status">[] = [
-  "pre_construction",
-  "active",
+  "upcoming",
+  "in_work",
+  "inventory",
 ]
 
 export default async function ProjectsPage() {

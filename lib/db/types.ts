@@ -2854,12 +2854,12 @@ export type Database = {
       payment_method: "check" | "wire" | "card" | "cash" | "other"
       po_status: "draft" | "released" | "approved" | "declined" | "void"
       project_status:
-        | "lead"
-        | "pre_construction"
-        | "active"
-        | "on_hold"
+        | "upcoming"
+        | "in_work"
         | "complete"
         | "warranty"
+        | "inventory"
+        | "paused"
         | "cancelled"
       project_type:
         | "residential_new"
@@ -3039,12 +3039,12 @@ export const Constants = {
       payment_method: ["check", "wire", "card", "cash", "other"],
       po_status: ["draft", "released", "approved", "declined", "void"],
       project_status: [
-        "lead",
-        "pre_construction",
-        "active",
-        "on_hold",
+        "upcoming",
+        "in_work",
         "complete",
         "warranty",
+        "inventory",
+        "paused",
         "cancelled",
       ],
       project_type: [

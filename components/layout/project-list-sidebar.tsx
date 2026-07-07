@@ -71,11 +71,13 @@ function isTemplate(p: SidebarProject) {
   return p.project_number.toUpperCase().startsWith("TEMPLATE")
 }
 
+// The enum mirrors the CRM's statuses, so labels are the CRM's exact words
+// (and tones match crmStatusTone so synced and un-synced jobs look alike).
 const STATUS_LABEL: Record<Enums<"project_status">, string> = {
-  lead: "Lead",
-  pre_construction: "Pre",
-  active: "Active",
-  on_hold: "On hold",
+  upcoming: "Upcoming",
+  in_work: "In Work",
+  inventory: "Inventory",
+  paused: "Paused",
   complete: "Complete",
   warranty: "Warranty",
   cancelled: "Cancelled",
@@ -85,10 +87,10 @@ const STATUS_TONE: Record<
   Enums<"project_status">,
   "brand" | "muted" | "warning" | "success" | "danger" | "info"
 > = {
-  lead: "muted",
-  pre_construction: "info",
-  active: "brand",
-  on_hold: "warning",
+  upcoming: "info",
+  in_work: "brand",
+  inventory: "info",
+  paused: "warning",
   complete: "success",
   warranty: "info",
   cancelled: "danger",
@@ -223,13 +225,16 @@ export function ProjectListSidebar({
       if (mode === "templates" && !tpl) return false
       if (mode === "jobs" && tpl) return false
       // Status / label filters apply to Jobs only — templates are few and the
-      // status (usually "lead") isn't a meaningful filter for them.
+      // status (usually "upcoming") isn't a meaningful filter for them.
       if (mode === "jobs") {
         if (activeLabel) {
           if (!(p.labels ?? []).includes(activeLabel)) return false
         } else {
+          // "Active" = a live build: In Work or Inventory (same pair the old
+          // enum collapsed into its single 'active' value).
           if (filter === "open" && !OPEN_STATUSES.includes(p.status)) return false
-          if (filter === "active" && p.status !== "active") return false
+          if (filter === "active" && p.status !== "in_work" && p.status !== "inventory")
+            return false
           if (filter === "warranty" && p.status !== "warranty") return false
           if (filter === "closed" && OPEN_STATUSES.includes(p.status)) return false
         }
