@@ -11,7 +11,9 @@ import {
   bulkDeleteScheduleItems,
   bulkAssignProfileToScheduleItems,
   bulkUnassignProfileFromScheduleItems,
+  type MoveReasonT,
 } from "@/app/actions/schedule"
+import { MOVE_REASON_OPTIONS } from "./move-reason-dialog"
 
 type StatusValue = "not_started" | "in_progress" | "complete" | "delayed"
 
@@ -39,11 +41,19 @@ export function BulkActionsBar({
   selectedIds,
   profiles,
   onClear,
+  baselineSet,
+  hasWorkSelected,
 }: {
   projectId: string
   selectedIds: string[]
   profiles: ProfileOption[]
   onClear: () => void
+  // Baseline is locked for this project — shifting work items then requires
+  // a reason (rendered inline in shift mode).
+  baselineSet: boolean
+  // At least one selected id is a work item; to-dos alone shift/complete
+  // without the baseline rules.
+  hasWorkSelected: boolean
 }) {
   const [pending, startTransition] = useTransition()
   const [mode, setMode] = useState<
@@ -51,11 +61,16 @@ export function BulkActionsBar({
   >("none")
   const [days, setDays] = useState("1")
   const [status, setStatus] = useState<StatusValue>("complete")
+  const [reason, setReason] =
+    useState<MoveReasonT["reason_category"]>("weather")
+  const [reasonNotes, setReasonNotes] = useState("")
   const [profileId, setProfileId] = useState<string>(
     profiles[0]?.id ?? ""
   )
 
   if (selectedIds.length === 0) return null
+
+  const shiftNeedsReason = baselineSet && hasWorkSelected
 
   function runShift() {
     const n = Number(days)
@@ -69,6 +84,9 @@ export function BulkActionsBar({
           project_id: projectId,
           ids: selectedIds,
           days: Math.trunc(n),
+          move_reason: shiftNeedsReason
+            ? { reason_category: reason, notes: reasonNotes || null }
+            : null,
         })
         summarize(r, "shifted")
         // Only clear when at least one row was actually changed —
@@ -82,6 +100,9 @@ export function BulkActionsBar({
   }
 
   function runStatus() {
+    // No pre-check for complete-before-baseline here: the server skips the
+    // affected work items and summarize() surfaces the reason, so partial
+    // selections (to-dos + work) still do the valid part.
     startTransition(async () => {
       try {
         const r = await bulkSetScheduleStatus({
@@ -180,7 +201,7 @@ export function BulkActionsBar({
         <div className="h-5 w-px bg-surface/20 mx-1" />
 
         {mode === "shift" ? (
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 flex-wrap">
             <Input
               type="number"
               value={days}
@@ -189,6 +210,33 @@ export function BulkActionsBar({
               aria-label="Days to shift"
             />
             <span className="text-xs text-surface/70">days</span>
+            {shiftNeedsReason && (
+              <>
+                <Select
+                  value={reason}
+                  onChange={(e) =>
+                    setReason(
+                      e.target.value as MoveReasonT["reason_category"]
+                    )
+                  }
+                  className="h-7 w-36 bg-surface text-foreground"
+                  aria-label="Reason for the shift"
+                >
+                  {MOVE_REASON_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </Select>
+                <Input
+                  value={reasonNotes}
+                  onChange={(e) => setReasonNotes(e.target.value)}
+                  placeholder="Notes (optional)"
+                  className="h-7 w-44 bg-surface text-foreground"
+                  aria-label="Notes for the shift reason"
+                />
+              </>
+            )}
             <Button
               size="sm"
               onClick={runShift}

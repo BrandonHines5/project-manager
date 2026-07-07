@@ -1,6 +1,7 @@
 "use client"
 
 import { useMemo, useState, useTransition } from "react"
+import { toast } from "sonner"
 import {
   ChevronRight,
   CheckCircle2,
@@ -13,6 +14,7 @@ import {
   ChevronsUpDown,
   Paperclip,
   Zap,
+  Flag,
 } from "lucide-react"
 import { cn, formatDateRange, formatDate } from "@/lib/utils"
 import { AvatarStack } from "@/components/ui/avatar"
@@ -255,6 +257,10 @@ export function ScheduleListView({
       <BulkActionsBar
         projectId={projectId}
         selectedIds={Array.from(selectedIds)}
+        baselineSet={!!data.baseline_set_at}
+        hasWorkSelected={data.items.some(
+          (i) => i.kind === "work" && selectedIds.has(i.id)
+        )}
         profiles={data.profiles
           .filter((p) => p.role === "staff")
           .map((p) => ({
@@ -323,9 +329,13 @@ function SelectCheckbox({
 function CompleteCheckbox({
   item,
   size = "md",
+  baselineSet = true,
 }: {
   item: Tables<"schedule_items">
   size?: "sm" | "md"
+  // Work items can't be completed until the project baseline is locked.
+  // To-do callers can omit this — the rule never applies to them.
+  baselineSet?: boolean
 }) {
   const [pending, startTransition] = useTransition()
   const isComplete = item.status === "complete"
@@ -347,12 +357,24 @@ function CompleteCheckbox({
       onClick={(e) => {
         e.stopPropagation()
         if (!canBinaryToggle) return
+        if (item.kind === "work" && !isComplete && !baselineSet) {
+          toast.error(
+            "Set the schedule baseline before marking work items complete — use “Set baseline” at the top of the page."
+          )
+          return
+        }
         startTransition(async () => {
-          await setItemStatus({
-            id: item.id,
-            project_id: item.project_id,
-            status: isComplete ? "not_started" : "complete",
-          })
+          try {
+            await setItemStatus({
+              id: item.id,
+              project_id: item.project_id,
+              status: isComplete ? "not_started" : "complete",
+            })
+          } catch (e) {
+            toast.error(
+              e instanceof Error ? e.message : "Status update failed"
+            )
+          }
         })
       }}
       className={cn(
@@ -439,7 +461,10 @@ function WorkItemRow({
             />
           </button>
           <div className="mt-0.5">
-            <CompleteCheckbox item={item} />
+            <CompleteCheckbox
+              item={item}
+              baselineSet={!!data.baseline_set_at}
+            />
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
@@ -451,6 +476,15 @@ function WorkItemRow({
               >
                 {item.title}
               </h3>
+              {item.milestone && (
+                <span
+                  className="inline-flex items-center gap-1 text-[11px] text-brand-600 bg-brand-50 border border-brand-500/30 px-1.5 py-0.5 rounded"
+                  title="Protected milestone — defines the tracked job duration; can't be deleted"
+                >
+                  <Flag className="h-3 w-3" />
+                  Milestone
+                </span>
+              )}
               <StatusBadge status={item.status} />
               {delays.length > 0 && (
                 <span className="inline-flex items-center gap-1 text-[11px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">

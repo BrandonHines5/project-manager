@@ -6,9 +6,10 @@ import { toast } from "sonner"
 import { addDays as fnsAddDays, differenceInCalendarDays, parseISO, format, isWeekend, startOfDay } from "date-fns"
 import { CalendarDays, Zap, Minimize2 } from "lucide-react"
 import { EmptyState } from "@/components/ui/empty"
-import { cn, todayISO, addDays } from "@/lib/utils"
-import { moveScheduleItem } from "@/app/actions/schedule"
+import { cn, todayISO, addDays, formatDateRange } from "@/lib/utils"
+import { moveScheduleItem, type MoveReasonT } from "@/app/actions/schedule"
 import { computeScheduleAnalysis } from "@/lib/schedule/scheduling"
+import { MoveReasonDialog } from "./move-reason-dialog"
 import type { ScheduleData } from "@/app/(app)/projects/[id]/schedule/schedule-client"
 
 // Two density presets. "Condensed" shrinks the day column and rows so more
@@ -101,6 +102,18 @@ export function GanttView({
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [dragOffsets, setDragOffsets] = useState<Record<string, number>>({})
+  // On a baselined schedule every drag needs a reason: the drop parks here
+  // while the popup collects it. Cancel = the bar simply snaps back.
+  const [pendingMove, setPendingMove] = useState<{
+    itemId: string
+    projectId: string
+    currentStart: string
+    currentEnd: string
+    newStart: string
+    newEnd: string
+    days: number
+  } | null>(null)
+  const baselineSet = !!data.baseline_set_at
   // Track active drag listeners so they can be torn down if the component
   // unmounts mid-drag (e.g. user clicks the List view toggle while a bar is
   // being dragged). Without this, listeners leak and mouseup later triggers
@@ -149,27 +162,59 @@ export function GanttView({
       if (liveDays === 0) return
       const newStart = addDays(currentStart, liveDays)
       const newEnd = addDays(currentEnd, liveDays)
-      startTransition(async () => {
-        try {
-          await moveScheduleItem({
-            id: itemId,
-            project_id: projectId,
-            start_date: newStart,
-            end_date: newEnd,
-          })
-          toast.success(
-            `Moved ${liveDays > 0 ? "+" : ""}${liveDays}d (successors cascaded)`
-          )
-          router.refresh()
-        } catch (e) {
-          toast.error(e instanceof Error ? e.message : "Move failed")
-        }
-      })
+      // Baselined schedule: hold the move until the user gives a reason.
+      // Every gantt bar is a dated work item, so no kind check needed.
+      if (baselineSet) {
+        setPendingMove({
+          itemId,
+          projectId,
+          currentStart,
+          currentEnd,
+          newStart,
+          newEnd,
+          days: liveDays,
+        })
+        return
+      }
+      commitMove(
+        { itemId, projectId, newStart, newEnd, days: liveDays },
+        null
+      )
     }
 
     window.addEventListener("mousemove", onMove)
     window.addEventListener("mouseup", onUp)
     dragCleanupRef.current = cleanup
+  }
+
+  function commitMove(
+    mv: {
+      itemId: string
+      projectId: string
+      newStart: string
+      newEnd: string
+      days: number
+    },
+    reason: MoveReasonT | null
+  ) {
+    startTransition(async () => {
+      try {
+        await moveScheduleItem({
+          id: mv.itemId,
+          project_id: mv.projectId,
+          start_date: mv.newStart,
+          end_date: mv.newEnd,
+          move_reason: reason,
+        })
+        setPendingMove(null)
+        toast.success(
+          `Moved ${mv.days > 0 ? "+" : ""}${mv.days}d (successors cascaded)`
+        )
+        router.refresh()
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Move failed")
+      }
+    })
   }
 
   if (sortedItems.length === 0) {
@@ -507,6 +552,22 @@ export function GanttView({
         </svg>
       </div>
     </div>
+    {pendingMove && (
+      <MoveReasonDialog
+        open={true}
+        pending={pending}
+        description={`${
+          data.items.find((i) => i.id === pendingMove.itemId)?.title ?? "Item"
+        }: ${formatDateRange(
+          pendingMove.currentStart,
+          pendingMove.currentEnd
+        )} → ${formatDateRange(pendingMove.newStart, pendingMove.newEnd)} (${
+          pendingMove.days > 0 ? "+" : ""
+        }${pendingMove.days}d)`}
+        onConfirm={(reason) => commitMove(pendingMove, reason)}
+        onCancel={() => setPendingMove(null)}
+      />
+    )}
     </div>
   )
 }

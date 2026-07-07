@@ -48,6 +48,29 @@ async function applyOne(
         return { mutation, ok: true }
       }
       case "update_schedule_item_status": {
+        // Baseline gate, mirroring setItemStatus: a work item can't cross
+        // into `complete` until the project's schedule baseline is locked.
+        if (mutation.status === "complete") {
+          const { data: item, error: iErr } = await supabase
+            .from("schedule_items")
+            .select("kind, status, project_id")
+            .eq("id", mutation.schedule_item_id)
+            .maybeSingle()
+          if (iErr) throw new Error(iErr.message)
+          if (item && item.kind === "work" && item.status !== "complete") {
+            const { data: proj, error: pErr } = await supabase
+              .from("projects")
+              .select("baseline_set_at")
+              .eq("id", item.project_id)
+              .maybeSingle()
+            if (pErr) throw new Error(pErr.message)
+            if (!proj?.baseline_set_at) {
+              throw new Error(
+                "the schedule baseline isn't locked yet — set it on the schedule page before completing work items"
+              )
+            }
+          }
+        }
         // .select() after .update() so we can tell apart "updated 1 row"
         // from "RLS hid the row" / "id doesn't exist" — without it, both
         // come back as `error: null` and we'd report false-positive success.
@@ -74,20 +97,29 @@ async function applyOne(
         const patch: TablesUpdate<"schedule_items"> = { ...mutation.patch }
         const hasStartPatch = "start_date" in patch
         const hasEndPatch = "end_date" in patch
+        let prior: {
+          kind: "work" | "todo"
+          start_date: string | null
+          end_date: string | null
+          project_id: string
+        } | null = null
         if (hasStartPatch || hasEndPatch) {
+          // Always load the stored row when dates are involved: it completes
+          // one-sided patches for the duration math below AND tells us
+          // whether this move needs a schedule_delays entry (baselined
+          // project + work item).
+          const { data: existing, error: exErr } = await supabase
+            .from("schedule_items")
+            .select("kind, start_date, end_date, project_id")
+            .eq("id", mutation.schedule_item_id)
+            .maybeSingle()
+          if (exErr) throw new Error(exErr.message)
+          prior = existing
           let startStr = patch.start_date as string | null | undefined
           let endStr = patch.end_date as string | null | undefined
-          if (startStr === undefined || endStr === undefined) {
-            const { data: existing, error: exErr } = await supabase
-              .from("schedule_items")
-              .select("start_date, end_date")
-              .eq("id", mutation.schedule_item_id)
-              .maybeSingle()
-            if (exErr) throw new Error(exErr.message)
-            if (existing) {
-              if (startStr === undefined) startStr = existing.start_date
-              if (endStr === undefined) endStr = existing.end_date
-            }
+          if (existing) {
+            if (startStr === undefined) startStr = existing.start_date
+            if (endStr === undefined) endStr = existing.end_date
           }
           if (typeof startStr === "string" && typeof endStr === "string") {
             const start = new Date(startStr)
@@ -108,6 +140,53 @@ async function applyOne(
         if (error) throw new Error(error.message)
         if (!data) {
           throw new Error("schedule item not found or not permitted")
+        }
+        // Post-baseline date moves on work items always leave a
+        // schedule_delays trail. Human moves collect a reason in the UI
+        // popup; agent-applied moves log under "other" with a stock note so
+        // the Delay Report stays complete. Best-effort — the move itself
+        // already landed.
+        if (prior && prior.kind === "work") {
+          const newStart = hasStartPatch
+            ? ((patch.start_date as string | null) ?? null)
+            : prior.start_date
+          const newEnd = hasEndPatch
+            ? ((patch.end_date as string | null) ?? null)
+            : prior.end_date
+          const moved =
+            prior.start_date !== newStart || prior.end_date !== newEnd
+          if (moved) {
+            const { data: proj } = await supabase
+              .from("projects")
+              .select("baseline_set_at")
+              .eq("id", prior.project_id)
+              .maybeSingle()
+            if (proj?.baseline_set_at) {
+              const diff = (a: string, b: string) =>
+                Math.round((Date.parse(b) - Date.parse(a)) / 86400000)
+              const delayDays =
+                prior.end_date && newEnd
+                  ? diff(prior.end_date, newEnd)
+                  : prior.start_date && newStart
+                    ? diff(prior.start_date, newStart)
+                    : 0
+              const { error: dErr } = await supabase
+                .from("schedule_delays")
+                .insert({
+                  schedule_item_id: mutation.schedule_item_id,
+                  delay_days: delayDays,
+                  reason_category: "other",
+                  notes: "Dates changed via AI plan apply",
+                  logged_by: actorId,
+                })
+              if (dErr) {
+                console.warn(
+                  "[ai apply] move-reason delay log failed:",
+                  dErr.message
+                )
+              }
+            }
+          }
         }
         return { mutation, ok: true }
       }
@@ -131,6 +210,14 @@ async function applyOne(
         const end = new Date(mutation.end_date)
         const durationDays =
           Math.round((end.getTime() - start.getTime()) / 86400000) + 1
+        // Work items born after the baseline lock get their initial dates as
+        // baseline (mirrors saveScheduleItem's insert path).
+        const { data: proj, error: projErr } = await supabase
+          .from("projects")
+          .select("baseline_set_at")
+          .eq("id", mutation.project_id)
+          .maybeSingle()
+        if (projErr) throw new Error(projErr.message)
         const { error } = await supabase.from("schedule_items").insert({
           project_id: mutation.project_id,
           kind: "work",
@@ -140,6 +227,12 @@ async function applyOne(
           end_date: mutation.end_date,
           duration_days: durationDays,
           created_by: actorId,
+          ...(proj?.baseline_set_at
+            ? {
+                baseline_start_date: mutation.start_date,
+                baseline_end_date: mutation.end_date,
+              }
+            : {}),
         })
         if (error) throw new Error(error.message)
         return { mutation, ok: true }

@@ -18,6 +18,7 @@ import {
   matchesTemplateTags,
   type TemplateAttributes,
 } from "@/lib/template-tags"
+import { ensureProjectMilestones } from "./schedule"
 
 const ProjectInput = z.object({
   project_number: z.string().min(1, "Required").max(64),
@@ -269,6 +270,17 @@ export async function createProject(
           ? `Project number "${input.project_number}" already exists`
           : error.message,
     }
+  }
+
+  // Every project carries its two protected milestones from birth. Non-fatal:
+  // the schedule health banner offers a create fallback if this ever fails.
+  try {
+    await ensureProjectMilestones({ project_id: data.id })
+  } catch (e) {
+    console.warn(
+      "[createProject] milestone creation failed:",
+      e instanceof Error ? e.message : e
+    )
   }
 
   // Best-effort: tell the dashboard a new project exists. Webhook failures
@@ -940,8 +952,12 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
         status: "not_started" as const,
         position: it.position,
         recurrence_rule: it.recurrence_rule,
-        baseline_start_date: shift(it.baseline_start_date),
-        baseline_end_date: shift(it.baseline_end_date),
+        // Milestone markers (Job Start / Substantial Completion) copy over;
+        // baselines deliberately don't — a new job locks its own baseline
+        // via "Set baseline" once the schedule is settled.
+        milestone: it.milestone,
+        baseline_start_date: null,
+        baseline_end_date: null,
         // Carry the conditions along so a duplicated template is still a
         // working template. Inert on regular projects.
         template_tags: it.template_tags,
@@ -1329,6 +1345,17 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
       }
       attachmentsCopied++
     }
+  }
+
+  // 5b. Safety net: a source that somehow lacks the protected milestones
+  //     still yields a complete project (the copy normally carries them).
+  try {
+    await ensureProjectMilestones({ project_id: newProject.id })
+  } catch (e) {
+    console.warn(
+      "[duplicateProject] milestone ensure failed:",
+      e instanceof Error ? e.message : e
+    )
   }
 
   // 6. Fire the dashboard webhook for the new project (mirrors createProject).

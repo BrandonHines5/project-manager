@@ -20,7 +20,7 @@ export default async function SchedulePage({
 
   const { data: project } = await supabase
     .from("projects")
-    .select("id, project_number, name, address")
+    .select("id, project_number, name, address, baseline_set_at")
     .eq("id", projectId)
     .maybeSingle()
   if (!project) notFound()
@@ -115,6 +115,7 @@ export default async function SchedulePage({
   const data: ScheduleData = {
     project_id: projectId,
     project_address: project.address,
+    baseline_set_at: project.baseline_set_at,
     items: cleanedItems,
     assignments: strip(assignments) as ScheduleData["assignments"],
     predecessors: strip(predecessors) as ScheduleData["predecessors"],
