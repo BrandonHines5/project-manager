@@ -1263,6 +1263,10 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
           quantity: ci.quantity,
           unit: ci.unit,
           unit_cost: ci.unit_cost,
+          // Catalog links are bare uuids into the separate SpecMagician
+          // project — valid across projects, so they copy verbatim (0076).
+          catalog_item_id: ci.catalog_item_id,
+          catalog_item_code: ci.catalog_item_code,
           position: ci.position,
         }
       })

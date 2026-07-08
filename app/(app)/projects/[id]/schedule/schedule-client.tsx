@@ -32,6 +32,8 @@ export type ScheduleData = {
   // assigned to a role resolves to "Role (Person)" for display.
   roles: Pick<Tables<"roles">, "id" | "name" | "kind">[]
   roleMembers: Pick<Tables<"project_role_members">, "role_id" | "profile_id" | "company_id">[]
+  // Destinations for "Copy to job" in the bulk actions bar (RLS-scoped).
+  projects: Pick<Tables<"projects">, "id" | "name" | "project_number">[]
   comments: Tables<"schedule_item_comments">[]
   role: Tables<"profiles">["role"]
   me_name: string
