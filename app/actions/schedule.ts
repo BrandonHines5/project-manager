@@ -458,43 +458,58 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     id = data.id
   }
 
-  // Replace assignments. Track who is newly assigned so we can notify.
-  const { data: oldAssignments } = await supabase
+  // Reconcile assignments by natural key (profile|company|role) rather than
+  // wipe-and-reinsert. An unchanged save then touches no rows, so the project
+  // History doesn't fill with delete+create pairs for assignments that never
+  // moved (schedule_assignments is audited). Only genuine adds/removes log.
+  const assignKey = (a: {
+    profile_id?: string | null
+    company_id?: string | null
+    role_id?: string | null
+  }) => `${a.profile_id ?? ""}|${a.company_id ?? ""}|${a.role_id ?? ""}`
+  const { data: oldAssignments, error: oldAssignErr } = await supabase
     .from("schedule_assignments")
-    .select("profile_id, company_id, role_id")
+    .select("id, profile_id, company_id, role_id")
     .eq("schedule_item_id", id)
-  const { error: aDelErr } = await supabase
-    .from("schedule_assignments")
-    .delete()
-    .eq("schedule_item_id", id)
-  if (aDelErr) throw new Error(aDelErr.message)
+  // Fail closed: a swallowed read error would make oldByKey empty, so every
+  // desired row would be treated as new and re-inserted, tripping the
+  // (schedule_item_id, profile_id, company_id, role_id) unique index.
+  if (oldAssignErr) throw new Error(oldAssignErr.message)
+  const oldByKey = new Map(
+    (oldAssignments ?? []).map((a) => [assignKey(a), a])
+  )
+  const desiredKeys = new Set(cleanedAssignments.map(assignKey))
 
-  if (cleanedAssignments.length) {
-    const rows = cleanedAssignments.map((a) => ({
-      schedule_item_id: id!,
-      profile_id: a.profile_id,
-      company_id: a.company_id,
-      role_id: a.role_id,
-    }))
-    const { error: assignErr } = await supabase
+  const removedIds = (oldAssignments ?? [])
+    .filter((a) => !desiredKeys.has(assignKey(a)))
+    .map((a) => a.id)
+  if (removedIds.length) {
+    const { error: aDelErr } = await supabase
       .from("schedule_assignments")
-      .insert(rows)
-    if (assignErr) throw new Error(assignErr.message)
+      .delete()
+      .in("id", removedIds)
+    if (aDelErr) throw new Error(aDelErr.message)
+  }
+
+  {
+    const newOnes = cleanedAssignments
+      .filter((a) => !oldByKey.has(assignKey(a)))
+      .map((a) => ({
+        schedule_item_id: id!,
+        profile_id: a.profile_id,
+        company_id: a.company_id,
+        role_id: a.role_id,
+      }))
+    if (newOnes.length) {
+      const { error: assignErr } = await supabase
+        .from("schedule_assignments")
+        .insert(newOnes)
+      if (assignErr) throw new Error(assignErr.message)
+    }
 
     // Notify newly-assigned profiles + companies (idempotent against re-saves).
     // Email + notification failures must NOT fail the primary save — wrap in
     // try/catch and log instead.
-    const oldKeys = new Set(
-      (oldAssignments ?? []).map(
-        (a) => `${a.profile_id ?? ""}|${a.company_id ?? ""}|${a.role_id ?? ""}`
-      )
-    )
-    const newOnes = rows.filter(
-      (r) =>
-        !oldKeys.has(
-          `${r.profile_id ?? ""}|${r.company_id ?? ""}|${r.role_id ?? ""}`
-        )
-    )
     if (newOnes.length) {
       try {
         // Role-based assignments don't name a person directly — resolve each

@@ -17,6 +17,7 @@ import {
 import { Field, Input, Select, Label } from "@/components/ui/input"
 import { Avatar } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
+import { roleLabel } from "@/lib/utils"
 import {
   addProjectMember,
   removeProjectMember,
@@ -238,7 +239,7 @@ function MembersDialog({
                 <option value="">Choose user…</option>
                 {candidateProfiles.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {(p.full_name || p.email) + ` · ${p.role}`}
+                    {(p.full_name || p.email) + ` · ${roleLabel(p.role)}`}
                   </option>
                 ))}
               </Select>

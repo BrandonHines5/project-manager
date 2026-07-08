@@ -64,6 +64,20 @@ export function todayISO(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
+// User-facing label for a profiles.role value. The stored enum stays 'staff'
+// (RLS, is_staff(), the whole codebase depend on it) — internal users are just
+// called "Team" everywhere in the UI. Keep this the single source of truth so
+// a future wording change is one edit.
+export function roleLabel(role: string | null | undefined): string {
+  return role === "staff"
+    ? "Team"
+    : role === "trade"
+      ? "Sub"
+      : role === "client"
+        ? "Client"
+        : role ?? ""
+}
+
 // ---- Business-day (Mon–Fri) helpers ---------------------------------------
 // All inputs/outputs are ISO yyyy-mm-dd strings interpreted as calendar dates
 // in UTC (which is what <input type="date"> emits). Saturday=6, Sunday=0.

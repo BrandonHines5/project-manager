@@ -59,15 +59,46 @@ export async function searchCatalogItems(input: {
   // Escape PostgREST or-filter specials so a search string can't break the
   // filter expression.
   const like = `%${q.replace(/[%_,()]/g, " ").trim()}%`
-  const { data, error } = await sm
-    .from("catalog_items")
-    .select(
-      "id, code, description, category, vendor, unit, unit_cost_cents, suggested_price_cents"
-    )
-    .or(`code.ilike.${like},description.ilike.${like},vendor.ilike.${like}`)
-    .order("code", { ascending: true })
-    .limit(25)
-  if (error) return { ok: false, error: error.message }
+  try {
+    const { data, error } = await sm
+      .from("catalog_items")
+      .select(
+        "id, code, description, category, vendor, unit, unit_cost_cents, suggested_price_cents"
+      )
+      .or(`code.ilike.${like},description.ilike.${like},vendor.ilike.${like}`)
+      .order("code", { ascending: true })
+      .limit(25)
+    if (error) {
+      // Keep the raw error server-side for debugging; only the sanitized hint
+      // reaches the picker.
+      console.error("[searchCatalogItems] supabase error:", error.message)
+      return { ok: false, error: cleanCatalogError(error.message) }
+    }
 
-  return { ok: true, items: (data ?? []) as CatalogRow[] }
+    return { ok: true, items: (data ?? []) as CatalogRow[] }
+  } catch (e) {
+    // A misconfigured URL (e.g. the SpecMagician app URL instead of the
+    // Supabase project URL) makes supabase-js receive HTML and throw while
+    // parsing it as JSON — surface a short hint, never the raw page.
+    const raw = e instanceof Error ? e.message : String(e)
+    console.error("[searchCatalogItems] threw:", raw)
+    return { ok: false, error: cleanCatalogError(raw) }
+  }
+}
+
+// PostgREST returns JSON errors, but if SPECMAGICIAN_SUPABASE_URL points at the
+// wrong host (e.g. the SpecMagician web app instead of its Supabase project),
+// the response is an HTML page and supabase-js hands back the raw markup as the
+// error message. Never render that: detect it and return an actionable hint,
+// and cap anything else so the picker can't blow up.
+function cleanCatalogError(message: string): string {
+  const msg = (message ?? "").trim()
+  if (
+    /<!doctype html|<html|<\/html>|Unexpected token '?<'?|is not valid JSON/i.test(
+      msg
+    )
+  ) {
+    return "Couldn't reach the catalog. Check that SPECMAGICIAN_SUPABASE_URL is the Supabase project URL (https://<ref>.supabase.co), not the SpecMagician app URL."
+  }
+  return msg.length > 200 ? `${msg.slice(0, 200)}…` : msg || "Catalog search failed."
 }
