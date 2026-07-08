@@ -2240,7 +2240,6 @@ export type Database = {
           project_type: Database["public"]["Enums"]["project_type"] | null
           start_date: string | null
           status: Database["public"]["Enums"]["project_status"]
-          target_completion_date: string | null
           warranty_end_date: string | null
         }
         Insert: {
@@ -2275,7 +2274,6 @@ export type Database = {
           project_type?: Database["public"]["Enums"]["project_type"] | null
           start_date?: string | null
           status?: Database["public"]["Enums"]["project_status"]
-          target_completion_date?: string | null
           warranty_end_date?: string | null
         }
         Update: {
@@ -2310,7 +2308,6 @@ export type Database = {
           project_type?: Database["public"]["Enums"]["project_type"] | null
           start_date?: string | null
           status?: Database["public"]["Enums"]["project_status"]
-          target_completion_date?: string | null
           warranty_end_date?: string | null
         }
         Relationships: [

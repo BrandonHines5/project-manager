@@ -20,6 +20,12 @@
 - Regenerate types: `supabase gen types typescript --project-id <ref> > lib/db/types.ts`.
 - After any DDL, run `get_advisors` (security + performance) and fix WARNs.
 
+## Projects & templates — model
+
+- **New project dates**: `projects.start_date` = the CRM's "Projected Start Date" (pulled through the dashboard; `normalizeDashboardProject` accepts `start_date`/`projected_start_date`/`projected_start`). On the template-copy path (`duplicateProject`), the schedule is anchored on the **Job Start milestone** so it lands exactly on `start_date` (falls back to the earliest dated item if the template has no dated Job Start); every item shifts by the same delta. Blank projects stamp their Job Start milestone with `start_date` too. There is **no** `target_completion_date` — the column was dropped (0081); a job's projected finish is the Substantial Completion milestone + health banner, not a project field.
+- **Smart templates** (0042): template `schedule_items`/`decisions` carry `template_tags text[]`; `projects.attributes jsonb` stores the boolean answers captured at creation. An item copies only when `matchesTemplateTags` — every tag matches (`walkout` needs true, `!walkout` needs false; empty = always copy). Helpers in `lib/template-tags.ts`. Template tags are surfaced as purple chips on the schedule list view **only when `projects.is_template`** — inert and hidden once copied into a real job.
+- **Either/or tag groups**: staff group tags into mutually-exclusive choices in Settings → Template tags (avatar menu, staff-only, `/settings/template-tags`), stored as JSON in `app_settings` key `template_tag_groups` (`getTemplateTagConfig`/`saveTemplateTagConfig` in `app/actions/settings.ts`). A **required** group renders as a single-select in the create/duplicate questionnaire (`TemplateOptionsFields`) and blocks "Create project"/"Duplicate" until answered (`TemplateOptionsValue.valid`); picking an option sets that tag true and its siblings false via `attributesWithGroupSelections`, riding on the same boolean-attributes matcher. Enforcement is client-side (staff-only flows).
+
 ## Decisions module — model
 
 - One page for both `change_order` and `selection` kinds — they share table `decisions` with a `kind` enum and a per-project sequential `number`.

@@ -48,7 +48,6 @@ const ProjectInput = z.object({
     .or(z.literal("").transform(() => undefined)),
   contract_price: z.coerce.number().nonnegative().nullable().optional(),
   start_date: z.string().optional().or(z.literal("")),
-  target_completion_date: z.string().optional().or(z.literal("")),
   // Staff CAN paste a custom URL but the default is auto-derived from
   // project_number — see dashboardProjectUrl().
   dashboard_url: z
@@ -211,7 +210,6 @@ export async function createProject(
         override_status: input.status,
         override_project_type: input.project_type,
         override_contract_price: input.contract_price ?? null,
-        override_target_completion_date: emptyToNull(input.target_completion_date),
         override_dashboard_url: finalDashboardUrl,
         override_project_manager: projectManager,
         override_notes: emptyToNull(input.notes),
@@ -245,7 +243,6 @@ export async function createProject(
       project_type: input.project_type ?? null,
       contract_price: input.contract_price ?? null,
       start_date: emptyToNull(input.start_date) ?? null,
-      target_completion_date: emptyToNull(input.target_completion_date) ?? null,
       dashboard_url: finalDashboardUrl,
       project_manager: projectManager,
       notes: emptyToNull(input.notes),
@@ -276,6 +273,18 @@ export async function createProject(
   // the schedule health banner offers a create fallback if this ever fails.
   try {
     await ensureProjectMilestones({ project_id: data.id })
+    // Anchor the Job Start milestone to the project's start date (the CRM's
+    // Projected Start Date) so a blank job behaves like a template-built one,
+    // where the copy path lands Job Start on this date. No baseline exists on
+    // a brand-new project, so this write needs no move reason.
+    const startDate = emptyToNull(input.start_date)
+    if (startDate) {
+      await supabase
+        .from("schedule_items")
+        .update({ start_date: startDate, end_date: startDate })
+        .eq("project_id", data.id)
+        .eq("milestone", "job_start")
+    }
   } catch (e) {
     console.warn(
       "[createProject] milestone creation failed:",
@@ -457,7 +466,6 @@ const ProjectEditInput = z
       .optional()
       .or(z.literal("").transform(() => null)),
     start_date: optEditDate,
-    target_completion_date: optEditDate,
     client_name: z.string().max(200).optional().or(z.literal("")),
     client_email: z
       .string()
@@ -538,7 +546,6 @@ export async function updateProject(
     status: rest.status,
     contract_price: rest.contract_price ?? null,
     start_date: emptyToNull(rest.start_date) ?? null,
-    target_completion_date: emptyToNull(rest.target_completion_date) ?? null,
     client_name: emptyToNull(rest.client_name),
     client_email: emptyToNull(rest.client_email),
     client_phone: emptyToNull(rest.client_phone),
@@ -653,7 +660,6 @@ const DuplicateProjectInput = z
       .nullable()
       .optional(),
     override_contract_price: z.number().nullable().optional(),
-    override_target_completion_date: z.string().nullish(),
     override_dashboard_url: z.string().nullish(),
     override_project_manager: z.string().nullish(),
     override_notes: z.string().nullish(),
@@ -854,18 +860,26 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     (it) => !skippedItemIds.has(it.id)
   )
 
-  // Compute the date shift, if any. The "source start" is the earliest
-  // start_date across all source items; due_date-only to-dos contribute via
-  // their due_date as a fallback.
+  // Compute the date shift, if any. The requested start date is the CRM's
+  // Projected Start Date; we anchor the whole schedule on the Job Start
+  // milestone so it lands exactly on that date (the New House Template ships
+  // with a Job Start milestone). If the source has no dated Job Start, fall
+  // back to the earliest start_date across all items (due_date-only to-dos
+  // contribute via their due_date).
   let shiftDays = 0
   if (parsed.new_start_date) {
-    let earliest: string | null = null
-    for (const it of keptItems) {
-      const candidate = it.start_date ?? it.due_date
-      if (candidate && (!earliest || candidate < earliest)) earliest = candidate
+    const jobStart = keptItems.find((it) => it.milestone === "job_start")
+    let anchor: string | null = jobStart
+      ? jobStart.start_date ?? jobStart.end_date ?? jobStart.due_date
+      : null
+    if (!anchor) {
+      for (const it of keptItems) {
+        const candidate = it.start_date ?? it.due_date
+        if (candidate && (!anchor || candidate < anchor)) anchor = candidate
+      }
     }
-    if (earliest) {
-      const a = new Date(earliest + "T00:00:00Z").getTime()
+    if (anchor) {
+      const a = new Date(anchor + "T00:00:00Z").getTime()
       const b = new Date(parsed.new_start_date + "T00:00:00Z").getTime()
       shiftDays = Math.round((b - a) / 86400000)
     }
@@ -887,12 +901,6 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     project_type: ovr(parsed.override_project_type, source.project_type),
     contract_price: ovr(parsed.override_contract_price, source.contract_price),
     start_date: parsed.new_start_date ?? source.start_date,
-    target_completion_date:
-      parsed.override_target_completion_date !== undefined
-        ? parsed.override_target_completion_date
-        : source.target_completion_date
-        ? shift(source.target_completion_date)
-        : null,
     dashboard_url:
       parsed.override_dashboard_url !== undefined
         ? parsed.override_dashboard_url

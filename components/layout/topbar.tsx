@@ -9,6 +9,7 @@ import {
   LogOut,
   MessageSquarePlus,
   Settings,
+  Tags,
 } from "lucide-react"
 import dynamic from "next/dynamic"
 import { cn } from "@/lib/utils"
@@ -165,6 +166,16 @@ export function Topbar({
                   <Settings className="h-4 w-4 text-muted" />
                   Notification settings
                 </Link>
+                {role === "staff" && (
+                  <Link
+                    href="/settings/template-tags"
+                    onClick={() => setMenuOpen(false)}
+                    className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-background cursor-pointer"
+                  >
+                    <Tags className="h-4 w-4 text-muted" />
+                    Template tags
+                  </Link>
+                )}
                 <Link
                   href="/feedback"
                   onClick={() => setMenuOpen(false)}

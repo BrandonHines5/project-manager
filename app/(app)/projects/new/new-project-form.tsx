@@ -430,18 +430,14 @@ function ProjectFormFields({
               className={cn(locked && "bg-background/60 text-muted")}
             />
           </Field>
-          <Field label="Start date">
+          <Field
+            label="Start date"
+            hint="Projected Start Date from the CRM. When copying a template, the Job Start milestone lands on this date and the rest of the schedule shifts with it."
+          >
             <Input
               name="start_date"
               type="date"
               defaultValue={picked?.start_date ?? ""}
-            />
-          </Field>
-          <Field label="Target completion">
-            <Input
-              name="target_completion_date"
-              type="date"
-              defaultValue={picked?.target_completion_date ?? ""}
             />
           </Field>
           <Field
@@ -552,10 +548,17 @@ function ProjectFormFields({
             </Button>
           )}
           {/* When a template is selected, wait for its profile to resolve so
-              a quick submit can't skip the house-attribute filtering. */}
+              a quick submit can't skip the house-attribute filtering, and
+              block while any required either/or group is unanswered. */}
           <Button
             type="submit"
-            disabled={pending || (!!sourceTemplateId && templateOptions === null)}
+            disabled={
+              pending ||
+              (!!sourceTemplateId &&
+                (templateOptions === null ||
+                  (templateOptions.status === "ready" &&
+                    !templateOptions.valid)))
+            }
           >
             {pending ? "Creating…" : "Create project"}
           </Button>

@@ -152,12 +152,17 @@ the picker.
     "client_name": "Jane Smith",
     "client_email": "jane@example.com",
     "client_phone": "(555) 123-4567",
-    "target_completion_date": "2027-03-15"
+    "start_date": "2026-09-01"
   }
 ]
 ```
 
 - `project_number` and `name` are required; everything else is nullable.
+- `start_date` is the CRM's **Projected Start Date**. PM prefills the New
+  Project form's Start date with it, and on the "Start from template" path
+  anchors the new job's Job Start milestone to it (the rest of the schedule
+  shifts with it). PM also accepts `projected_start_date` / `projected_start`
+  as aliases for this field.
 - Order doesn't matter — PM renders them as-is.
 - Return `[]` (not 204) when there are no available projects.
 - Cap response size at 200 projects (PM doesn't paginate yet); send

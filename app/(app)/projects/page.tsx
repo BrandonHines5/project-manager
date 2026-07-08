@@ -36,7 +36,7 @@ export default async function ProjectsPage() {
   const { data: projects } = await supabase
     .from("projects")
     .select(
-      "id, project_number, name, address, status, crm_status, contract_price, start_date, target_completion_date, dashboard_url, is_template, labels"
+      "id, project_number, name, address, status, crm_status, contract_price, start_date, dashboard_url, is_template, labels"
     )
     .order("created_at", { ascending: false })
 
@@ -123,7 +123,6 @@ export default async function ProjectsPage() {
     status: p.status,
     crm_status: p.crm_status,
     contract_price: p.contract_price,
-    target_completion_date: p.target_completion_date,
     is_template: p.is_template,
     labels: p.labels ?? [],
     metrics: metricsByProject.get(p.id) ?? blankMetrics(),

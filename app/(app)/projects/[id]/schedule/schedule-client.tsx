@@ -19,6 +19,11 @@ export type ScheduleData = {
   // projects.baseline_set_at — null until staff lock the plan. Gates the
   // move-reason popup and the "work items can't complete yet" rule.
   baseline_set_at: string | null
+  // projects.is_template — true only for reusable template projects. Template
+  // tags on items are surfaced on the schedule only while this is true; once
+  // the template is duplicated into a real job the copied tags stay inert and
+  // hidden.
+  is_template: boolean
   items: Tables<"schedule_items">[]
   assignments: Tables<"schedule_assignments">[]
   predecessors: Tables<"schedule_predecessors">[]
