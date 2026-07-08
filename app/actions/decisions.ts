@@ -7,6 +7,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { requireSession, requireStaff } from "@/lib/auth"
 import { addDays, formatCurrency, formatDate, todayISO } from "@/lib/utils"
 import { sendEmail, appUrl } from "@/lib/email"
+import { isChannelEnabled } from "@/lib/notifications/preferences"
 import { sendDashboardWebhook } from "@/lib/dashboard"
 import { notifyCommentPosted } from "@/lib/comms/notify"
 import type { TablesInsert, TablesUpdate } from "@/lib/db/types"
@@ -746,7 +747,17 @@ async function notifyClientOfDecision(
         }
       }
     ).profiles
-    if (prof.role === "client" && prof.email && prof.notifications_enabled)
+    if (
+      prof.role === "client" &&
+      prof.email &&
+      prof.notifications_enabled &&
+      (await isChannelEnabled(
+        supabase,
+        { profileId: m.profile_id },
+        "client_decisions",
+        "email"
+      ))
+    )
       recipients.push({
         profile_id: m.profile_id,
         email: prof.email,

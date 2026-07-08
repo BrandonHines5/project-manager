@@ -14,6 +14,7 @@ import type { TablesUpdate } from "@/lib/db/types"
 import { sendEmail, appUrl } from "@/lib/email"
 import { sendQuoSms, normalizeE164 } from "@/lib/quo"
 import { notifyCommentPosted } from "@/lib/comms/notify"
+import { isChannelEnabled } from "@/lib/notifications/preferences"
 import { normalizeTag } from "@/lib/template-tags"
 
 // Permissive schema: accept anything reasonable and normalize inside the
@@ -691,7 +692,13 @@ async function notifyScheduleAssignees(
         if (
           p.email &&
           p.email_digest_pref === "immediate" &&
-          p.notifications_enabled
+          p.notifications_enabled &&
+          (await isChannelEnabled(
+            supabase,
+            { profileId: p.id },
+            "assignments",
+            "email"
+          ))
         ) {
           emails.push(p.email)
           immediateProfileIds.push(p.id)
@@ -759,7 +766,15 @@ async function notifyScheduleAssignees(
         kind: "schedule_assignment",
         counterparty_name: c.name,
       }
-      if (c.email) {
+      if (
+        c.email &&
+        (await isChannelEnabled(
+          supabase,
+          { companyId: c.id },
+          "assignments",
+          "email"
+        ))
+      ) {
         sends.push(
           sendEmail({
             to: [c.email],
@@ -770,7 +785,15 @@ async function notifyScheduleAssignees(
         )
       }
       const e164 = c.phone ? normalizeE164(c.phone) : null
-      if (e164) {
+      if (
+        e164 &&
+        (await isChannelEnabled(
+          supabase,
+          { companyId: c.id },
+          "assignments",
+          "sms"
+        ))
+      ) {
         const smsBody = `Hines Homes: you were assigned to "${title}". Details: ${link}`
         sends.push(
           sendQuoSms({ to: e164, content: smsBody, log }).then((r) => {

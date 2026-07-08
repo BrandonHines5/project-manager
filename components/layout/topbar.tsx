@@ -8,6 +8,7 @@ import {
   ChevronDown,
   LogOut,
   MessageSquarePlus,
+  Settings,
 } from "lucide-react"
 import dynamic from "next/dynamic"
 import { cn } from "@/lib/utils"
@@ -156,6 +157,14 @@ export function Topbar({
                   <div className="text-sm font-medium">{fullName || "—"}</div>
                   <div className="text-xs text-muted">{email}</div>
                 </div>
+                <Link
+                  href="/settings/notifications"
+                  onClick={() => setMenuOpen(false)}
+                  className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-background cursor-pointer"
+                >
+                  <Settings className="h-4 w-4 text-muted" />
+                  Notification settings
+                </Link>
                 <Link
                   href="/feedback"
                   onClick={() => setMenuOpen(false)}

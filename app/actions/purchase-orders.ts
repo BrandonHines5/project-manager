@@ -6,6 +6,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
 import { sendEmail, appUrl } from "@/lib/email"
 import { sendQuoSms, normalizeE164 } from "@/lib/quo"
+import { isChannelEnabled } from "@/lib/notifications/preferences"
 import { generateAccessToken } from "@/lib/tokens"
 import { formatDate } from "@/lib/utils"
 import { notifyCommentPosted } from "@/lib/comms/notify"
@@ -420,7 +421,15 @@ export async function releasePurchaseOrder({
       counterparty_name: company.name,
     }
     const sendJobs: Promise<unknown>[] = []
-    if (company.email) {
+    if (
+      company.email &&
+      (await isChannelEnabled(
+        supabase,
+        { companyId: po.company_id },
+        "bids_pos",
+        "email"
+      ))
+    ) {
       sendJobs.push(
         sendEmail({
           to: [company.email],
@@ -431,7 +440,15 @@ export async function releasePurchaseOrder({
       )
     }
     const e164 = company.phone ? normalizeE164(company.phone) : null
-    if (e164) {
+    if (
+      e164 &&
+      (await isChannelEnabled(
+        supabase,
+        { companyId: po.company_id },
+        "bids_pos",
+        "sms"
+      ))
+    ) {
       sendJobs.push(
         sendQuoSms({
           to: e164,

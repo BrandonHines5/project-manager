@@ -1400,6 +1400,54 @@ export type Database = {
           },
         ]
       }
+      notification_preferences: {
+        Row: {
+          category: string
+          channel: string
+          company_id: string | null
+          created_at: string
+          enabled: boolean
+          id: string
+          profile_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          category: string
+          channel: string
+          company_id?: string | null
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          profile_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          category?: string
+          channel?: string
+          company_id?: string | null
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          profile_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notification_preferences_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notification_preferences_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       notifications: {
         Row: {
           body: string | null

@@ -13,7 +13,11 @@ import type { ReactNode } from "react"
  * The only exceptions: the Projects index (its table IS the project list —
  * repeating it in a sidebar would show every job twice) and the new-job form.
  */
-const SIDEBAR_HIDDEN_EXACT = ["/projects", "/projects/new"]
+const SIDEBAR_HIDDEN_EXACT = [
+  "/projects",
+  "/projects/new",
+  "/settings/notifications",
+]
 
 export function ProjectContextShell({
   sidebar,
