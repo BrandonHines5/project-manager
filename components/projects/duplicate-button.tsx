@@ -190,13 +190,18 @@ export function DuplicateDialog({
             Cancel
           </Button>
           {/* Locked until the template profile resolves so a quick click
-              can't skip the house-attribute filtering. Load errors unlock
-              it (templateOptions becomes {status:"error"}) with a visible
+              can't skip the house-attribute filtering, and while any required
+              either/or group is unanswered. Load errors unlock it
+              (templateOptions becomes {status:"error"}) with a visible
               copy-everything warning. */}
           <Button
             type="button"
             onClick={submit}
-            disabled={pending || templateOptions === null}
+            disabled={
+              pending ||
+              templateOptions === null ||
+              (templateOptions.status === "ready" && !templateOptions.valid)
+            }
           >
             {pending ? "Duplicating…" : "Duplicate"}
           </Button>

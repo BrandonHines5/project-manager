@@ -548,10 +548,17 @@ function ProjectFormFields({
             </Button>
           )}
           {/* When a template is selected, wait for its profile to resolve so
-              a quick submit can't skip the house-attribute filtering. */}
+              a quick submit can't skip the house-attribute filtering, and
+              block while any required either/or group is unanswered. */}
           <Button
             type="submit"
-            disabled={pending || (!!sourceTemplateId && templateOptions === null)}
+            disabled={
+              pending ||
+              (!!sourceTemplateId &&
+                (templateOptions === null ||
+                  (templateOptions.status === "ready" &&
+                    !templateOptions.valid)))
+            }
           >
             {pending ? "Creating…" : "Create project"}
           </Button>

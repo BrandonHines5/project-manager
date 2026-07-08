@@ -12,6 +12,83 @@
 /** Boolean answers keyed by base tag, e.g. { walkout: true }. */
 export type TemplateAttributes = Record<string, boolean>
 
+// ---- Tag groups (settings-defined either/or choices) ----------------------
+// Staff define named groups of mutually-exclusive option tags in Settings →
+// Template tags (stored as JSON in app_settings, key 'template_tag_groups').
+// A "required" group must be answered when creating a project from a template
+// before it can be created. Picking an option sets that option's attribute
+// true and the group's other options false, so groups ride on the same
+// boolean TemplateAttributes model the matcher already uses.
+
+export type TemplateTagGroup = {
+  id: string
+  label: string
+  required: boolean
+  /** Mutually-exclusive option tags (positive, normalized), e.g. ["single_level","multi_level"]. */
+  options: string[]
+}
+
+export type TemplateTagConfig = { groups: TemplateTagGroup[] }
+
+/** Defensive parse of the stored JSON config — never throws, drops junk. */
+export function parseTagGroupConfig(
+  raw: string | null | undefined
+): TemplateTagConfig {
+  if (!raw) return { groups: [] }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return { groups: [] }
+  }
+  const groupsRaw =
+    parsed && typeof parsed === "object"
+      ? (parsed as { groups?: unknown }).groups
+      : null
+  if (!Array.isArray(groupsRaw)) return { groups: [] }
+  const groups: TemplateTagGroup[] = []
+  for (const g of groupsRaw) {
+    if (!g || typeof g !== "object") continue
+    const gg = g as Record<string, unknown>
+    const id = typeof gg.id === "string" ? gg.id : ""
+    const label = typeof gg.label === "string" ? gg.label.trim() : ""
+    const required = gg.required === true
+    const options = Array.isArray(gg.options)
+      ? [
+          ...new Set(
+            gg.options
+              .filter((o): o is string => typeof o === "string")
+              // Group options are positive base tags — negation is meaningless
+              // for a mutually-exclusive pick.
+              .map((o) => baseTag(normalizeTag(o)))
+              .filter(Boolean)
+          ),
+        ]
+      : []
+    if (!id || !label || options.length === 0) continue
+    groups.push({ id, label, required, options })
+  }
+  return { groups }
+}
+
+/**
+ * Fold a group's single-select answers into the boolean attribute map the
+ * matcher consumes: the picked option becomes true, every sibling option in
+ * that group becomes false. Only groups the caller decided to show are passed.
+ */
+export function attributesWithGroupSelections(
+  base: TemplateAttributes,
+  shownGroups: TemplateTagGroup[],
+  selections: Record<string, string>
+): TemplateAttributes {
+  const attrs: TemplateAttributes = { ...base }
+  for (const group of shownGroups) {
+    const chosen = selections[group.id]
+    for (const opt of group.options) attrs[opt] = chosen === opt
+  }
+  return attrs
+}
+
 export function isNegatedTag(tag: string): boolean {
   return tag.startsWith("!")
 }
