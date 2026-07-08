@@ -505,6 +505,70 @@ export type Database = {
           },
         ]
       }
+      client_invites: {
+        Row: {
+          accepted_at: string | null
+          accepted_profile_id: string | null
+          contact_slot: number | null
+          created_at: string
+          email: string
+          id: string
+          invited_at: string
+          invited_by: string | null
+          name: string | null
+          project_id: string
+          token: string | null
+        }
+        Insert: {
+          accepted_at?: string | null
+          accepted_profile_id?: string | null
+          contact_slot?: number | null
+          created_at?: string
+          email: string
+          id?: string
+          invited_at?: string
+          invited_by?: string | null
+          name?: string | null
+          project_id: string
+          token?: string | null
+        }
+        Update: {
+          accepted_at?: string | null
+          accepted_profile_id?: string | null
+          contact_slot?: number | null
+          created_at?: string
+          email?: string
+          id?: string
+          invited_at?: string
+          invited_by?: string | null
+          name?: string | null
+          project_id?: string
+          token?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_invites_accepted_profile_id_fkey"
+            columns: ["accepted_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_invites_invited_by_fkey"
+            columns: ["invited_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_invites_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       companies: {
         Row: {
           address: string | null
@@ -1793,6 +1857,8 @@ export type Database = {
         Row: {
           company_id: string | null
           created_at: string
+          disclaimer_accepted_at: string | null
+          disclaimer_version: string | null
           email: string | null
           email_digest_pref: Database["public"]["Enums"]["email_digest_pref"]
           entra_user_id: string | null
@@ -1807,6 +1873,8 @@ export type Database = {
         Insert: {
           company_id?: string | null
           created_at?: string
+          disclaimer_accepted_at?: string | null
+          disclaimer_version?: string | null
           email?: string | null
           email_digest_pref?: Database["public"]["Enums"]["email_digest_pref"]
           entra_user_id?: string | null
@@ -1821,6 +1889,8 @@ export type Database = {
         Update: {
           company_id?: string | null
           created_at?: string
+          disclaimer_accepted_at?: string | null
+          disclaimer_version?: string | null
           email?: string | null
           email_digest_pref?: Database["public"]["Enums"]["email_digest_pref"]
           entra_user_id?: string | null
