@@ -2,7 +2,15 @@
 
 import { useState, useTransition } from "react"
 import { toast } from "sonner"
-import { X, Calendar, CheckCircle2, Trash2, UserPlus, UserMinus } from "lucide-react"
+import {
+  X,
+  Calendar,
+  CheckCircle2,
+  Trash2,
+  UserPlus,
+  UserMinus,
+  Copy,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input, Select } from "@/components/ui/input"
 import {
@@ -11,6 +19,9 @@ import {
   bulkDeleteScheduleItems,
   bulkAssignProfileToScheduleItems,
   bulkUnassignProfileFromScheduleItems,
+  bulkAssignRoleToScheduleItems,
+  bulkUnassignRoleFromScheduleItems,
+  bulkCopyScheduleItems,
   type MoveReasonT,
 } from "@/app/actions/schedule"
 import { MOVE_REASON_OPTIONS } from "./move-reason-dialog"
@@ -23,13 +34,24 @@ type ProfileOption = {
   email: string | null
 }
 
+type RoleOption = {
+  id: string
+  label: string
+}
+
+type ProjectOption = {
+  id: string
+  label: string
+}
+
 /**
  * Floating sticky bar that appears at the bottom of the schedule list view
  * whenever at least one item is checked. Hosts the bulk actions:
  *
  *  - Shift dates by ±N days (with cascade)
  *  - Set status (one of the four canonical states)
- *  - Assign to / unassign from a person
+ *  - Assign to / unassign from a person OR a project role
+ *  - Copy the selection to another job
  *  - Delete (refuses if any selected item is a predecessor of an unselected
  *    item — staff are pointed at the single-item delete flow for that case)
  *
@@ -40,6 +62,8 @@ export function BulkActionsBar({
   projectId,
   selectedIds,
   profiles,
+  roles,
+  projects,
   onClear,
   baselineSet,
   hasWorkSelected,
@@ -47,6 +71,11 @@ export function BulkActionsBar({
   projectId: string
   selectedIds: string[]
   profiles: ProfileOption[]
+  // Role catalog with resolved labels ("Site Superintendent (Sam)") — assign
+  // targets alongside people.
+  roles: RoleOption[]
+  // Copy-to-job destinations (current project excluded by the parent).
+  projects: ProjectOption[]
   onClear: () => void
   // Baseline is locked for this project — shifting work items then requires
   // a reason (rendered inline in shift mode).
@@ -57,20 +86,32 @@ export function BulkActionsBar({
 }) {
   const [pending, startTransition] = useTransition()
   const [mode, setMode] = useState<
-    "none" | "shift" | "status" | "assign" | "unassign"
+    "none" | "shift" | "status" | "assign" | "unassign" | "copy"
   >("none")
   const [days, setDays] = useState("1")
   const [status, setStatus] = useState<StatusValue>("complete")
   const [reason, setReason] =
     useState<MoveReasonT["reason_category"]>("weather")
   const [reasonNotes, setReasonNotes] = useState("")
-  const [profileId, setProfileId] = useState<string>(
-    profiles[0]?.id ?? ""
+  // "p:<id>" for a person, "r:<id>" for a role.
+  const [assignee, setAssignee] = useState<string>(
+    profiles[0] ? `p:${profiles[0].id}` : roles[0] ? `r:${roles[0].id}` : ""
+  )
+  const [targetProjectId, setTargetProjectId] = useState<string>(
+    projects[0]?.id ?? ""
   )
 
   if (selectedIds.length === 0) return null
 
   const shiftNeedsReason = baselineSet && hasWorkSelected
+
+  function assigneeName(value: string): string {
+    if (value.startsWith("p:")) {
+      const p = profiles.find((x) => x.id === value.slice(2))
+      return p?.full_name || p?.email || "assignee"
+    }
+    return roles.find((r) => r.id === value.slice(2))?.label ?? "role"
+  }
 
   function runShift() {
     const n = Number(days)
@@ -140,52 +181,120 @@ export function BulkActionsBar({
     })
   }
 
-  function runAssign() {
-    if (!profileId) {
-      toast.error("Pick a person to assign.")
+  function runAssign(direction: "assign" | "unassign") {
+    if (!assignee) {
+      toast.error(
+        direction === "assign"
+          ? "Pick a person or role to assign."
+          : "Pick a person or role to unassign."
+      )
       return
     }
-    const personName =
-      profiles.find((p) => p.id === profileId)?.full_name ?? "assignee"
+    const name = assigneeName(assignee)
+    const id = assignee.slice(2)
+    const isRole = assignee.startsWith("r:")
     startTransition(async () => {
       try {
-        const r = await bulkAssignProfileToScheduleItems({
-          project_id: projectId,
-          ids: selectedIds,
-          profile_id: profileId,
-        })
-        summarize(r, `assigned to ${personName}`)
+        const r = isRole
+          ? direction === "assign"
+            ? await bulkAssignRoleToScheduleItems({
+                project_id: projectId,
+                ids: selectedIds,
+                role_id: id,
+              })
+            : await bulkUnassignRoleFromScheduleItems({
+                project_id: projectId,
+                ids: selectedIds,
+                role_id: id,
+              })
+          : direction === "assign"
+            ? await bulkAssignProfileToScheduleItems({
+                project_id: projectId,
+                ids: selectedIds,
+                profile_id: id,
+              })
+            : await bulkUnassignProfileFromScheduleItems({
+                project_id: projectId,
+                ids: selectedIds,
+                profile_id: id,
+              })
+        summarize(
+          r,
+          direction === "assign" ? `assigned to ${name}` : `unassigned from ${name}`
+        )
         if (r.ok > 0) onClear()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Assign failed")
+        toast.error(
+          e instanceof Error
+            ? e.message
+            : direction === "assign"
+              ? "Assign failed"
+              : "Unassign failed"
+        )
       }
     })
   }
 
-  function runUnassign() {
-    if (!profileId) {
-      toast.error("Pick a person to unassign.")
+  function runCopy() {
+    if (!targetProjectId) {
+      toast.error("Pick a job to copy into.")
       return
     }
-    const personName =
-      profiles.find((p) => p.id === profileId)?.full_name ?? "assignee"
+    const targetLabel =
+      projects.find((p) => p.id === targetProjectId)?.label ?? "the job"
     startTransition(async () => {
       try {
-        const r = await bulkUnassignProfileFromScheduleItems({
+        const r = await bulkCopyScheduleItems({
           project_id: projectId,
           ids: selectedIds,
-          profile_id: profileId,
+          target_project_id: targetProjectId,
         })
-        summarize(r, `unassigned from ${personName}`)
+        summarize(r, `copied to ${targetLabel}`)
         if (r.ok > 0) onClear()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Unassign failed")
+        toast.error(e instanceof Error ? e.message : "Copy failed")
       }
     })
   }
+
+  const assigneePicker = (
+    <Select
+      value={assignee}
+      onChange={(e) => setAssignee(e.target.value)}
+      className="h-7 w-52 bg-surface text-foreground"
+      aria-label={
+        mode === "assign" ? "Person or role to assign" : "Person or role to unassign"
+      }
+    >
+      {profiles.length === 0 && roles.length === 0 ? (
+        <option value="">(no people or roles)</option>
+      ) : (
+        <>
+          {profiles.length > 0 && (
+            <optgroup label="People">
+              {profiles.map((p) => (
+                <option key={p.id} value={`p:${p.id}`}>
+                  {p.full_name || p.email || p.id.slice(0, 8)}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          {roles.length > 0 && (
+            <optgroup label="Roles">
+              {roles.map((r) => (
+                <option key={r.id} value={`r:${r.id}`}>
+                  {r.label}
+                </option>
+              ))}
+            </optgroup>
+          )}
+        </>
+      )}
+    </Select>
+  )
 
   return (
-    <div className="fixed bottom-4 left-1/2 z-40 -translate-x-1/2 w-[min(680px,calc(100vw-1rem))]">
+    <div className="fixed bottom-4 left-1/2 z-40 -translate-x-1/2 w-[min(720px,calc(100vw-1rem))]">
       <div className="bg-foreground text-surface rounded-lg shadow-2xl border border-foreground/30 px-3 py-2 flex flex-wrap items-center gap-2">
         <span className="text-sm font-medium">
           {selectedIds.length} selected
@@ -286,26 +395,11 @@ export function BulkActionsBar({
           </div>
         ) : mode === "assign" || mode === "unassign" ? (
           <div className="flex items-center gap-1">
-            <Select
-              value={profileId}
-              onChange={(e) => setProfileId(e.target.value)}
-              className="h-7 w-48 bg-surface text-foreground"
-              aria-label={mode === "assign" ? "Person to assign" : "Person to unassign"}
-            >
-              {profiles.length === 0 ? (
-                <option value="">(no team profiles)</option>
-              ) : (
-                profiles.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.full_name || p.email || p.id.slice(0, 8)}
-                  </option>
-                ))
-              )}
-            </Select>
+            {assigneePicker}
             <Button
               size="sm"
-              onClick={mode === "assign" ? runAssign : runUnassign}
-              disabled={pending || profiles.length === 0}
+              onClick={() => runAssign(mode)}
+              disabled={pending || (profiles.length === 0 && roles.length === 0)}
               variant="primary"
             >
               {pending
@@ -313,6 +407,41 @@ export function BulkActionsBar({
                   ? "Assigning…"
                   : "Removing…"
                 : "Apply"}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setMode("none")}
+              className="text-surface/80 hover:text-surface"
+            >
+              Cancel
+            </Button>
+          </div>
+        ) : mode === "copy" ? (
+          <div className="flex items-center gap-1">
+            <Select
+              value={targetProjectId}
+              onChange={(e) => setTargetProjectId(e.target.value)}
+              className="h-7 w-56 bg-surface text-foreground"
+              aria-label="Job to copy into"
+            >
+              {projects.length === 0 ? (
+                <option value="">(no other jobs)</option>
+              ) : (
+                projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))
+              )}
+            </Select>
+            <Button
+              size="sm"
+              onClick={runCopy}
+              disabled={pending || projects.length === 0}
+              variant="primary"
+            >
+              {pending ? "Copying…" : "Copy"}
             </Button>
             <Button
               size="sm"
@@ -360,6 +489,15 @@ export function BulkActionsBar({
             >
               <UserMinus className="h-3.5 w-3.5 mr-1" />
               Unassign
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setMode("copy")}
+              className="text-surface/90 hover:text-surface hover:bg-surface/10"
+            >
+              <Copy className="h-3.5 w-3.5 mr-1" />
+              Copy to job
             </Button>
             <Button
               size="sm"

@@ -305,6 +305,32 @@ export function ScheduleItemDialog({
       return null
     }
     const anchored = kind === "todo" && !!parentId && anchorEnabled
+    // A recurrence rule advances from the due date — without one there is no
+    // anchor and the repeat never fires. Anchored to-dos derive their due date
+    // from the parent work item, so the chosen anchor date must actually
+    // exist on the parent or the derived due date is null and the series
+    // never rolls.
+    const anchorParent = anchored
+      ? data.items.find((i) => i.id === parentId)
+      : null
+    const anchoredDueBasis =
+      anchored && anchorParent
+        ? anchor === "start"
+          ? anchorParent.start_date
+          : anchorParent.end_date
+        : null
+    if (
+      kind === "todo" &&
+      recurrence &&
+      ((!anchored && !dueDate) || (anchored && !anchoredDueBasis))
+    ) {
+      toast.error(
+        anchored
+          ? "Recurring to-dos need a due date — give the parent work item its dates first, or unlink and set a due date."
+          : "Recurring to-dos need a due date — the repeat schedule counts from it."
+      )
+      return null
+    }
     return {
       id: item?.id,
       project_id: data.project_id,
@@ -1464,7 +1490,8 @@ function RecurrenceEditor({
             </Field>
           </div>
           <p className="mt-2 text-xs text-muted">
-            {describeRecurrence(value)}
+            {describeRecurrence(value)} · Repeats count from the due date:
+            completing this to-do automatically creates the next occurrence.
           </p>
         </>
       )}

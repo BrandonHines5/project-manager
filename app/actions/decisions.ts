@@ -65,6 +65,20 @@ const CostItem = z.object({
   quantity: z.coerce.number().default(1),
   unit: optStr,
   unit_cost: z.coerce.number().default(0),
+  // Optional link to the HH-SpecMagician item catalog (separate Supabase
+  // project — bare uuid, no FK; see migration 0076). The code is a display
+  // snapshot captured when the staffer picks the item.
+  catalog_item_id: optStr,
+  catalog_item_code: optStr,
+})
+
+// A decision assignment targets exactly one of a person / company / role
+// (mirrors schedule_assignments — DB CHECK enforces it; rows failing the
+// one-of rule are dropped in saveDecision rather than failing the save).
+const DecisionAssignment = z.object({
+  profile_id: optStr,
+  company_id: optStr,
+  role_id: optStr,
 })
 
 const Choice = z.object({
@@ -120,6 +134,9 @@ const DecisionInput = z
     followups: z.array(Followup).default([]),
     attachments: z.array(Attachment).default([]),
     choices: z.array(Choice).default([]),
+    // People / companies / roles this decision is assigned to (selections —
+    // lets subs see the selections they're on; migration 0075).
+    assignments: z.array(DecisionAssignment).default([]),
   })
   .passthrough()
   .superRefine((d, ctx) => {
@@ -456,6 +473,8 @@ export async function saveDecision(input: DecisionInputT) {
       quantity: ci.quantity,
       unit: ci.unit ?? null,
       unit_cost: ci.unit_cost,
+      catalog_item_id: nz(ci.catalog_item_id),
+      catalog_item_code: nz(ci.catalog_item_code),
       position: i,
     }))
     const { error } = await supabase.from("decision_cost_items").insert(rows)
@@ -550,6 +569,8 @@ export async function saveDecision(input: DecisionInputT) {
             quantity: ci.quantity,
             unit: ci.unit ?? null,
             unit_cost: ci.unit_cost,
+            catalog_item_id: nz(ci.catalog_item_id),
+            catalog_item_code: nz(ci.catalog_item_code),
             position: j,
           })
         }
@@ -601,6 +622,78 @@ export async function saveDecision(input: DecisionInputT) {
       .from("decision_followup_templates")
       .insert(rows)
     if (error) throw new Error(error.message)
+  }
+
+  // Replace decision assignments (people / companies / roles — lets subs see
+  // the selections they're on, migration 0075). Wipe-and-reinsert like
+  // followups; the staff form is the source of truth. Reads the prior rows
+  // first so newly-added staff assignees get an in-app notification.
+  {
+    const { data: prevAssignments } = await supabase
+      .from("decision_assignments")
+      .select("profile_id")
+      .eq("decision_id", id)
+    const prevProfiles = new Set(
+      (prevAssignments ?? []).map((a) => a.profile_id).filter(Boolean)
+    )
+    const { error: dassDelErr } = await supabase
+      .from("decision_assignments")
+      .delete()
+      .eq("decision_id", id)
+    if (dassDelErr) throw new Error(dassDelErr.message)
+
+    const seen = new Set<string>()
+    // Selections only — mirrors the client-side gate and the non-selection
+    // choices cleanup above, so a create-mode kind switch can't persist
+    // invisible assignment rows (which would grant trades RLS read) on a
+    // change order.
+    const sourceAssignments =
+      parsed.kind === "selection" ? parsed.assignments : []
+    const assignmentRows = sourceAssignments
+      .map((a) => ({
+        profile_id: nz(a.profile_id),
+        company_id: nz(a.company_id),
+        role_id: nz(a.role_id),
+      }))
+      .filter(
+        (a) =>
+          [a.profile_id, a.company_id, a.role_id].filter(Boolean).length === 1
+      )
+      .filter((a) => {
+        const k = `${a.profile_id}|${a.company_id}|${a.role_id}`
+        if (seen.has(k)) return false
+        seen.add(k)
+        return true
+      })
+      .map((a) => ({ decision_id: id!, ...a }))
+    if (assignmentRows.length) {
+      const { error: dassInsErr } = await supabase
+        .from("decision_assignments")
+        .insert(assignmentRows)
+      if (dassInsErr) throw new Error(dassInsErr.message)
+
+      // Best-effort in-app notification for newly-added staff assignees.
+      const newProfiles = assignmentRows
+        .map((a) => a.profile_id)
+        .filter((p): p is string => !!p && !prevProfiles.has(p))
+      if (newProfiles.length) {
+        const { error: notifErr } = await supabase.from("notifications").insert(
+          newProfiles.map((p) => ({
+            recipient_id: p,
+            type: "decision_assignment",
+            title: `Assigned: ${parsed.title}`,
+            body: `You were assigned to a ${parsed.kind === "selection" ? "selection" : "change order"}`,
+            link_url: `/projects/${parsed.project_id}/decisions?open=${id}`,
+          }))
+        )
+        if (notifErr) {
+          console.warn(
+            "[saveDecision] assignment notification failed:",
+            notifErr.message
+          )
+        }
+      }
+    }
   }
 
   // Reconcile attachments
@@ -1619,6 +1712,8 @@ export async function copyDecision({
       quantity: ci.quantity,
       unit: ci.unit,
       unit_cost: ci.unit_cost,
+      catalog_item_id: ci.catalog_item_id,
+      catalog_item_code: ci.catalog_item_code,
       position: ci.position,
     }))
     const { error: ciErr } = await supabase
@@ -1656,6 +1751,28 @@ export async function copyDecision({
       .from("decision_followup_templates")
       .insert(rows)
     if (fErr) throw new Error(fErr.message)
+  }
+
+  // Assignments — people and roles are project-agnostic (roles re-resolve
+  // through the target project's role map), so they copy verbatim.
+  const { data: srcAssignments } = await supabase
+    .from("decision_assignments")
+    .select("profile_id, company_id, role_id")
+    .eq("decision_id", id)
+  if (srcAssignments?.length) {
+    const { error: dassErr } = await supabase
+      .from("decision_assignments")
+      .insert(
+        srcAssignments.map((a) => ({
+          decision_id: newId!,
+          profile_id: a.profile_id,
+          company_id: a.company_id,
+          role_id: a.role_id,
+        }))
+      )
+    if (dassErr) {
+      console.warn("[copyDecision] assignment copy failed:", dassErr.message)
+    }
   }
 
   // Attachments — copy the storage blob into a fresh key under the target
@@ -1836,4 +1953,218 @@ export async function getSignedUrlsForDecisions(paths: string[]) {
     if (d.path && d.signedUrl) out[d.path] = d.signedUrl
   }
   return out
+}
+
+// ============================================================================
+// Client "request due-date reset", bulk copy, and the disclaimer setting
+// ============================================================================
+
+export type RequestDueDateResetResult =
+  | { ok: true }
+  | { ok: false; error: string }
+
+/**
+ * A client whose change order / selection is past its due date can no longer
+ * approve it (gate in the client_decide_decision RPC, migration 0074). This
+ * action is their escape hatch: it leaves a comment on the decision (the
+ * durable, client-visible record of the request) and notifies staff in-app +
+ * by email so someone extends the due date.
+ *
+ * requireSession, not requireStaff — clients call this. The RLS-scoped read
+ * doubles as the authorization check (clients only see non-draft decisions on
+ * their own projects).
+ */
+export async function requestDueDateReset(input: {
+  decision_id: string
+  project_id: string
+}): Promise<RequestDueDateResetResult> {
+  const profile = await requireSession()
+  const parsed = z
+    .object({ decision_id: z.string().uuid(), project_id: z.string().uuid() })
+    .safeParse(input)
+  if (!parsed.success) return { ok: false, error: "Bad input." }
+  const { decision_id, project_id } = parsed.data
+  const supabase = await createSupabaseServerClient()
+
+  const { data: decision, error: dErr } = await supabase
+    .from("decisions")
+    .select("id, number, kind, title, status, due_date, project_id")
+    .eq("id", decision_id)
+    .eq("project_id", project_id)
+    .maybeSingle()
+  if (dErr) return { ok: false, error: dErr.message }
+  if (!decision) return { ok: false, error: "Decision not found." }
+  if (decision.status !== "pending_client") {
+    return { ok: false, error: "This item isn't awaiting approval." }
+  }
+  // Mirror the RPC's gate: the reset request only exists because approval is
+  // blocked. A not-actually-overdue decision doesn't need one (and shouldn't
+  // let anyone poke staff-wide email).
+  const today = new Date().toISOString().slice(0, 10)
+  if (!decision.due_date || decision.due_date >= today) {
+    return { ok: false, error: "This item isn't past its due date." }
+  }
+
+  // Throttle: one request per person per decision per day. Repeat clicks are
+  // an idempotent success rather than another staff-wide email.
+  const { data: recent } = await supabase
+    .from("decision_comments")
+    .select("id")
+    .eq("decision_id", decision_id)
+    .eq("author_id", profile.id)
+    .ilike("body", "Requested a due-date reset%")
+    .gte("created_at", new Date(Date.now() - 24 * 3600 * 1000).toISOString())
+    .limit(1)
+  if (recent && recent.length > 0) {
+    return { ok: true }
+  }
+
+  // The comment is the audit trail; RLS enforces author_id = auth.uid().
+  const { error: cErr } = await supabase.from("decision_comments").insert({
+    decision_id,
+    author_id: profile.id,
+    body: "Requested a due-date reset — the approval window has passed and I'd still like to respond.",
+  })
+  if (cErr) return { ok: false, error: cErr.message }
+
+  // Staff fan-out via the admin client (clients can't insert notifications).
+  const admin = createSupabaseAdminClient()
+  if (admin) {
+    const kindLabel =
+      decision.kind === "selection" ? "Selection" : "Change order"
+    const title = `${kindLabel} #${decision.number}: due-date reset requested`
+    const link = `/projects/${project_id}/decisions?open=${decision_id}`
+    const { data: staff } = await admin
+      .from("profiles")
+      .select("id, email, notifications_enabled")
+      .eq("role", "staff")
+    const recipients = (staff ?? []).filter((s) => s.notifications_enabled)
+    if (recipients.length) {
+      const { error: nErr } = await admin.from("notifications").insert(
+        recipients.map((s) => ({
+          recipient_id: s.id,
+          type: "decision_due_reset_request",
+          title,
+          body: `${profile.full_name ?? "A client"} asked to extend the due date on "${decision.title}".`,
+          link_url: link,
+        }))
+      )
+      if (nErr) {
+        console.warn("[requestDueDateReset] notifications failed:", nErr.message)
+      }
+      const emails = recipients
+        .map((s) => s.email)
+        .filter((e): e is string => !!e)
+      if (emails.length) {
+        await sendEmail({
+          to: emails,
+          subject: title,
+          text: `${profile.full_name ?? "A client"} asked to extend the due date on "${decision.title}" so they can respond. Open: ${appUrl(link)}`,
+          log: {
+            project_id,
+            profile_id: null,
+            sent_by: profile.id,
+            kind: "decision_due_reset_request",
+            counterparty_name: null,
+          },
+        }).catch((e) =>
+          console.warn("[requestDueDateReset] email failed:", e)
+        )
+      }
+    }
+  }
+
+  revalidatePath(`/projects/${project_id}/decisions`)
+  return { ok: true }
+}
+
+export type BulkCopyDecisionsResult = {
+  ok: number
+  skipped: { id: string; reason: string }[]
+}
+
+/**
+ * Copies each selected decision into the target project — the multi-select
+ * counterpart of copyDecision (which does all the heavy lifting per id:
+ * number allocation, choices/cost items/followups/assignments/attachments,
+ * cross-project anchor dropping).
+ */
+export async function bulkCopyDecisions(input: {
+  project_id: string
+  ids: string[]
+  target_project_id: string
+}): Promise<BulkCopyDecisionsResult> {
+  await requireStaff()
+  const parsed = z
+    .object({
+      project_id: z.string().uuid(),
+      ids: z.array(z.string().uuid()).min(1).max(100),
+      target_project_id: z.string().uuid(),
+    })
+    .parse(input)
+
+  const supabase = await createSupabaseServerClient()
+  // Scope the ids to the source project so a forged id can't copy another
+  // project's decision even with a valid staff session.
+  const { data: rows, error } = await supabase
+    .from("decisions")
+    .select("id")
+    .in("id", parsed.ids)
+    .eq("project_id", parsed.project_id)
+  if (error) throw new Error(error.message)
+  const validIds = new Set((rows ?? []).map((r) => r.id))
+
+  const skipped: { id: string; reason: string }[] = []
+  let ok = 0
+  for (const id of parsed.ids) {
+    if (!validIds.has(id)) {
+      skipped.push({ id, reason: "not found in project (or RLS denied)" })
+      continue
+    }
+    try {
+      await copyDecision({ id, target_project_id: parsed.target_project_id })
+      ok++
+    } catch (e) {
+      skipped.push({
+        id,
+        reason: e instanceof Error ? e.message : "copy failed",
+      })
+    }
+  }
+  return { ok, skipped }
+}
+
+// NOT exported: "use server" modules may only export async functions. The
+// decisions page hardcodes the same key when reading app_settings.
+const DECISION_DISCLAIMER_KEY = "decision_disclaimer"
+
+export type SaveDisclaimerResult = { ok: true } | { ok: false; error: string }
+
+/**
+ * Org-wide default disclaimer shown to clients at the bottom of every change
+ * order and selection (app_settings key 'decision_disclaimer', migration
+ * 0077). Empty text clears it.
+ */
+export async function saveDecisionDisclaimer(input: {
+  text: string
+}): Promise<SaveDisclaimerResult> {
+  const profile = await requireStaff()
+  const parsed = z.object({ text: z.string().max(4000) }).safeParse(input)
+  if (!parsed.success) {
+    return { ok: false, error: "Disclaimer is too long (4000 chars max)." }
+  }
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase.from("app_settings").upsert(
+    {
+      key: DECISION_DISCLAIMER_KEY,
+      value: parsed.data.text.trim() || null,
+      updated_by: profile.id,
+    },
+    { onConflict: "key" }
+  )
+  if (error) return { ok: false, error: error.message }
+  // Every project's decisions tab renders the disclaimer — invalidate them
+  // all so the new text shows without waiting out the router cache.
+  revalidatePath("/projects/[id]/decisions", "page")
+  return { ok: true }
 }

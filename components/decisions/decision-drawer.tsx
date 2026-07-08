@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useTransition, useRef, useEffect } from "react"
+import { useState, useTransition, useRef, useEffect, Fragment } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import {
@@ -22,6 +22,9 @@ import {
   RotateCcw,
   Copy,
   CalendarClock,
+  Eye,
+  BookMarked,
+  Users,
 } from "lucide-react"
 import { formatCurrency } from "@/lib/utils"
 import {
@@ -45,8 +48,13 @@ import {
   copyDecision,
   postComment,
   clientDecideDecision,
+  requestDueDateReset,
   type DecisionInputT,
 } from "@/app/actions/decisions"
+import {
+  searchCatalogItems,
+  type CatalogItemHit,
+} from "@/app/actions/catalog"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
 import { formatTags, parseTagsInput } from "@/lib/template-tags"
 import {
@@ -92,6 +100,18 @@ type CostItem = {
   quantity: number
   unit?: string | null
   unit_cost: number
+  // Optional link to the HH-SpecMagician catalog (bare uuid + display-snapshot
+  // code). Editing the line's description/cost manually does NOT unlink it.
+  catalog_item_id: string | null
+  catalog_item_code: string | null
+}
+
+// A decision assignment targets exactly one of person / company / role
+// (mirrors decision_assignments' DB CHECK).
+type AssignmentDraft = {
+  profile_id: string | null
+  company_id: string | null
+  role_id: string | null
 }
 
 type Choice = {
@@ -201,6 +221,8 @@ export function DecisionDrawer({
         quantity: Number(ci.quantity),
         unit: ci.unit,
         unit_cost: Number(ci.unit_cost),
+        catalog_item_id: ci.catalog_item_id,
+        catalog_item_code: ci.catalog_item_code,
       }))
   })
 
@@ -248,6 +270,18 @@ export function DecisionDrawer({
         notes: f.notes,
       }))
   })
+  // Who this decision is assigned to (0075). Sent on every save — the server
+  // replaces the full set, so an empty array clears assignments.
+  const [assignments, setAssignments] = useState<AssignmentDraft[]>(() => {
+    if (!decision) return []
+    return data.assignments
+      .filter((a) => a.decision_id === decision.id)
+      .map((a) => ({
+        profile_id: a.profile_id,
+        company_id: a.company_id,
+        role_id: a.role_id,
+      }))
+  })
   const [attachments, setAttachments] = useState<Attachment[]>(() => {
     if (!decision) return []
     return data.attachments
@@ -282,6 +316,8 @@ export function DecisionDrawer({
             quantity: Number(ci.quantity),
             unit: ci.unit,
             unit_cost: Number(ci.unit_cost),
+            catalog_item_id: ci.catalog_item_id,
+            catalog_item_code: ci.catalog_item_code,
           })),
       }))
   })
@@ -312,8 +348,25 @@ export function DecisionDrawer({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [copyOpen, setCopyOpen] = useState(false)
 
-  const isClient = data.role === "client"
-  const canEdit = data.role === "staff"
+  // Staff can flip into a read-only "client preview" to sanity-check what the
+  // owner will see. Every isClient/canEdit branch below flows from these
+  // derived values, so the whole drawer follows the toggle. actualClient stays
+  // separate: preview must render the client layout without granting the
+  // client's WRITE affordances (comment posting).
+  const actualClient = data.role === "client"
+  const [previewAsClient, setPreviewAsClient] = useState(false)
+  const isClient = actualClient || previewAsClient
+  const canEdit = data.role === "staff" && !previewAsClient
+
+  // Past-due approval gate: the client_decide_decision RPC rejects approvals
+  // once due_date < today (0074), so pre-empt it in the UI. Same date
+  // convention as DueCell in decisions-client.tsx.
+  const overdue =
+    !!decision?.due_date &&
+    decision.due_date < new Date().toISOString().slice(0, 10)
+  const [resetPending, startResetTransition] = useTransition()
+  const [resetRequested, setResetRequested] = useState(false)
+
   const myComments = decision
     ? data.comments.filter((c) => c.decision_id === decision.id)
     : []
@@ -441,6 +494,8 @@ export function DecisionDrawer({
             quantity: ci.quantity,
             unit: ci.unit || null,
             unit_cost: ci.unit_cost,
+            catalog_item_id: ci.catalog_item_id,
+            catalog_item_code: ci.catalog_item_code,
           })),
       allowance_amount:
         kind === "selection" && allowanceAmount !== ""
@@ -518,9 +573,15 @@ export function DecisionDrawer({
                     quantity: ci.quantity,
                     unit: ci.unit || null,
                     unit_cost: ci.unit_cost,
+                    catalog_item_id: ci.catalog_item_id,
+                    catalog_item_code: ci.catalog_item_code,
                   })),
               }))
           : [],
+      // Selections only, matching choices above: a create-mode kind switch
+      // must not persist assignments (invisible on change orders, and they'd
+      // grant trades read access) — the server mirrors this gate.
+      assignments: kind === "selection" ? assignments : [],
     }
     startTransition(async () => {
       try {
@@ -611,6 +672,14 @@ export function DecisionDrawer({
 
   function handleClientDecide(action: "approve" | "decline") {
     if (!decision) return
+    // Staff preview renders these buttons disabled; belt-and-braces here.
+    if (previewAsClient) return
+    if (action === "approve" && overdue) {
+      toast.error(
+        "The approval window for this item has passed — request a due-date reset first."
+      )
+      return
+    }
     if (action === "approve" && kind === "selection") {
       if (!clientSelectedChoiceKey) {
         toast.error("Pick a choice first")
@@ -648,6 +717,24 @@ export function DecisionDrawer({
     })
   }
 
+  function handleRequestDueReset() {
+    if (!decision || previewAsClient) return
+    startResetTransition(async () => {
+      const r = await requestDueDateReset({
+        decision_id: decision.id,
+        project_id: data.project_id,
+      })
+      if (r.ok) {
+        setResetRequested(true)
+        toast.success("Request sent — we'll extend the due date.")
+        // The action leaves a comment on the decision — pull it in.
+        router.refresh()
+      } else {
+        toast.error(r.error)
+      }
+    })
+  }
+
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent side="right">
@@ -679,8 +766,38 @@ export function DecisionDrawer({
                 : "Selections the owner needs to make (paint, fixtures, finishes)."}
             </DialogDescription>
           </div>
+          {/* mr-8 keeps clear of the dialog's absolute close button. */}
+          {data.role === "staff" && mode === "edit" && decision && (
+            <Button
+              type="button"
+              size="sm"
+              variant={previewAsClient ? "secondary" : "ghost"}
+              onClick={() => setPreviewAsClient((v) => !v)}
+              className="mr-8 shrink-0"
+              title={
+                previewAsClient
+                  ? "Back to the staff editor"
+                  : "See this item exactly as the client will"
+              }
+            >
+              <Eye className="h-3.5 w-3.5" />
+              {previewAsClient ? "Exit preview" : "Preview as client"}
+            </Button>
+          )}
         </DialogHeader>
         <DialogBody className="space-y-6">
+          {previewAsClient && (
+            <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 flex items-center justify-between gap-3">
+              <span>Client preview — this is what the client sees.</span>
+              <button
+                type="button"
+                onClick={() => setPreviewAsClient(false)}
+                className="font-medium underline underline-offset-2 hover:text-amber-950 cursor-pointer shrink-0"
+              >
+                Exit preview
+              </button>
+            </div>
+          )}
           {canEdit && mode === "create" && (
             <div className="grid grid-cols-2 gap-2">
               <button
@@ -1045,6 +1162,8 @@ export function DecisionDrawer({
                 selectedChoiceId={decision?.selected_choice_id ?? null}
                 allowance={allowanceNum}
                 markupPercent={markupNum}
+                markupPercentText={markupPercent}
+                onMarkupPercentChange={setMarkupPercent}
                 costCodes={data.cost_codes}
               />
             ) : (
@@ -1122,6 +1241,18 @@ export function DecisionDrawer({
             </div>
           </div>
 
+          {/* Assigned to (selections only) — feeds the trade portal. */}
+          {canEdit && kind === "selection" && (
+            <AssignmentsEditor
+              value={assignments}
+              onChange={setAssignments}
+              profiles={data.profiles}
+              companies={data.companies}
+              roles={data.roles}
+              roleMembers={data.roleMembers}
+            />
+          )}
+
           {/* Follow-ups (staff only) */}
           {canEdit && (
             <FollowupsEditor
@@ -1141,9 +1272,16 @@ export function DecisionDrawer({
             comments={myComments}
             profiles={data.profiles}
             meName={data.me_name}
-            canPost={!!decision && (canEdit || isClient)}
+            canPost={!!decision && (canEdit || actualClient)}
             isClient={isClient}
           />
+
+          {/* Org-wide disclaimer — clients only, both kinds. */}
+          {isClient && !!data.disclaimer?.trim() && (
+            <div className="border-t border-border pt-3 text-xs text-muted whitespace-pre-wrap">
+              {data.disclaimer}
+            </div>
+          )}
         </DialogBody>
         {canEdit && copyOpen && decision && (
           <CopyDecisionFooter
@@ -1240,7 +1378,30 @@ export function DecisionDrawer({
         )}
         {/* Client-side decide footer: visible only while pending_client. */}
         {isClient && decision && status === "pending_client" && (
-          <DialogFooter>
+          <DialogFooter className="flex-wrap">
+            {overdue && (
+              <div className="mr-auto flex flex-col items-start gap-1.5 min-w-0">
+                <span className="text-xs text-danger">
+                  The approval window for this item has passed — ask us to
+                  reset the due date, then approve.
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={handleRequestDueReset}
+                  disabled={resetPending || resetRequested || previewAsClient}
+                  title={previewAsClient ? "Disabled in preview" : undefined}
+                >
+                  <CalendarClock className="h-3.5 w-3.5" />
+                  {resetRequested
+                    ? "Request sent"
+                    : resetPending
+                    ? "Sending…"
+                    : "Request due-date reset"}
+                </Button>
+              </div>
+            )}
             <Button type="button" variant="ghost" onClick={onClose}>
               Cancel
             </Button>
@@ -1248,7 +1409,8 @@ export function DecisionDrawer({
               type="button"
               variant="secondary"
               onClick={() => handleClientDecide("decline")}
-              disabled={pending}
+              disabled={pending || previewAsClient}
+              title={previewAsClient ? "Disabled in preview" : undefined}
               className="text-danger"
             >
               <XCircle className="h-4 w-4" /> Decline
@@ -1258,7 +1420,16 @@ export function DecisionDrawer({
               onClick={() => handleClientDecide("approve")}
               disabled={
                 pending ||
+                previewAsClient ||
+                overdue ||
                 (kind === "selection" && !clientSelectedChoiceKey)
+              }
+              title={
+                previewAsClient
+                  ? "Disabled in preview"
+                  : overdue
+                  ? "The due date has passed — request a reset first"
+                  : undefined
               }
             >
               <Check className="h-4 w-4" />
@@ -1282,6 +1453,8 @@ function ChoicesEditor({
   selectedChoiceId,
   allowance,
   markupPercent,
+  markupPercentText,
+  onMarkupPercentChange,
   costCodes,
 }: {
   value: Choice[]
@@ -1299,6 +1472,10 @@ function ChoicesEditor({
   // absolute costs and we surface a variance preview against this amount.
   allowance: number | null
   markupPercent: number
+  // Raw text of the SHARED decision-level markup state — every choice's
+  // breakdown footer edits the same value.
+  markupPercentText: string
+  onMarkupPercentChange: (v: string) => void
   costCodes: DecisionsData["cost_codes"]
 }) {
   const hasAllowance = allowance != null
@@ -1452,6 +1629,8 @@ function ChoicesEditor({
                 items={c.cost_items}
                 onChange={(items) => update(c.client_key, { cost_items: items })}
                 costCodes={costCodes}
+                markupPercentText={markupPercentText}
+                onMarkupPercentChange={onMarkupPercentChange}
               />
               <ChoicePhotosRow
                 photos={photos}
@@ -1478,15 +1657,27 @@ function ChoiceCostBreakdownEditor({
   items,
   onChange,
   costCodes,
+  markupPercentText,
+  onMarkupPercentChange,
 }: {
   items: CostItem[]
   onChange: (v: CostItem[]) => void
   costCodes: DecisionsData["cost_codes"]
+  // Shared decision-level markup — editing it here changes EVERY choice.
+  markupPercentText: string
+  onMarkupPercentChange: (v: string) => void
 }) {
   const subtotal = items.reduce(
     (s, ci) => s + (Number(ci.quantity) || 0) * (Number(ci.unit_cost) || 0),
     0
   )
+  // Same rounding as ChoicesEditor's effectivePrice so the footer total
+  // matches the price shown on the choice row.
+  const markupNum =
+    markupPercentText === "" ? 0 : Number(markupPercentText) || 0
+  const total = Math.round(subtotal * (1 + markupNum / 100) * 100) / 100
+  // Which line's catalog search panel is open (one at a time per editor).
+  const [catalogOpenIdx, setCatalogOpenIdx] = useState<number | null>(null)
   function add() {
     onChange([
       ...items,
@@ -1496,6 +1687,8 @@ function ChoiceCostBreakdownEditor({
         quantity: 1,
         unit: null,
         unit_cost: 0,
+        catalog_item_id: null,
+        catalog_item_code: null,
       },
     ])
   }
@@ -1503,6 +1696,7 @@ function ChoiceCostBreakdownEditor({
     onChange(items.map((it, idx) => (idx === i ? { ...it, ...patch } : it)))
   }
   function remove(i: number) {
+    setCatalogOpenIdx(null)
     onChange(items.filter((_, idx) => idx !== i))
   }
   return (
@@ -1527,14 +1721,15 @@ function ChoiceCostBreakdownEditor({
                 <th className="text-left font-medium pb-1 w-14">Unit</th>
                 <th className="text-right font-medium pb-1 w-24">Unit cost</th>
                 <th className="text-right font-medium pb-1 w-24">Line</th>
-                <th className="w-6"></th>
+                <th className="w-12"></th>
               </tr>
             </thead>
             <tbody>
               {items.map((ci, i) => {
                 const lineTotal = (ci.quantity || 0) * (ci.unit_cost || 0)
                 return (
-                  <tr key={i} className="align-top">
+                  <Fragment key={i}>
+                  <tr className="align-top">
                     <td className="pr-1 pb-1">
                       <Select
                         value={ci.cost_code_id ?? ""}
@@ -1558,6 +1753,17 @@ function ChoiceCostBreakdownEditor({
                         }
                         placeholder="Detail"
                       />
+                      {ci.catalog_item_id && (
+                        <CatalogCodeChip
+                          code={ci.catalog_item_code}
+                          onClear={() =>
+                            update(i, {
+                              catalog_item_id: null,
+                              catalog_item_code: null,
+                            })
+                          }
+                        />
+                      )}
                     </td>
                     <td className="pr-1 pb-1">
                       <Input
@@ -1592,36 +1798,96 @@ function ChoiceCostBreakdownEditor({
                       {formatCurrency(lineTotal)}
                     </td>
                     <td className="pb-1 pt-2">
-                      <button
-                        type="button"
-                        onClick={() => remove(i)}
-                        className="text-muted hover:text-danger p-1 cursor-pointer"
-                        aria-label="Remove line"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
+                      <div className="flex items-center">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setCatalogOpenIdx(catalogOpenIdx === i ? null : i)
+                          }
+                          className={cn(
+                            "p-1 cursor-pointer",
+                            ci.catalog_item_id
+                              ? "text-brand-600"
+                              : "text-muted hover:text-brand-600"
+                          )}
+                          title="Link to SpecMagician catalog"
+                          aria-label="Link to SpecMagician catalog"
+                        >
+                          <BookMarked className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => remove(i)}
+                          className="text-muted hover:text-danger p-1 cursor-pointer"
+                          aria-label="Remove line"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
+                  {catalogOpenIdx === i && (
+                    <tr>
+                      <td colSpan={7} className="pb-1.5">
+                        <CatalogLinkSearch
+                          onPick={(item) => {
+                            update(i, catalogPatch(item))
+                            setCatalogOpenIdx(null)
+                          }}
+                          onClose={() => setCatalogOpenIdx(null)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 )
               })}
             </tbody>
           </table>
         </div>
       )}
-      <div className="flex items-center justify-between gap-2">
-        <button
-          type="button"
-          onClick={add}
-          className="text-[11px] text-brand-600 hover:underline inline-flex items-center gap-1 cursor-pointer"
-        >
-          <Plus className="h-3 w-3" /> Add line
-        </button>
-        {items.length > 0 && (
-          <span className="text-[11px] font-mono tabular-nums text-muted">
-            Subtotal {formatCurrency(subtotal)}
-          </span>
-        )}
-      </div>
+      <button
+        type="button"
+        onClick={add}
+        className="text-[11px] text-brand-600 hover:underline inline-flex items-center gap-1 cursor-pointer"
+      >
+        <Plus className="h-3 w-3" /> Add line
+      </button>
+      {items.length > 0 && (
+        <div className="border-t border-border pt-1.5 space-y-1 text-xs">
+          <div className="flex items-center justify-between">
+            <span className="text-muted">Subtotal (cost)</span>
+            <span className="font-mono tabular-nums">
+              {formatCurrency(subtotal)}
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <label className="text-muted flex items-center gap-2">
+              Markup %
+              <Input
+                type="number"
+                step="0.01"
+                value={markupPercentText}
+                onChange={(e) => onMarkupPercentChange(e.target.value)}
+                placeholder="0"
+                className="w-20 h-7 text-right tabular-nums"
+              />
+              <span className="text-[10px] text-muted">
+                Applies to every choice
+              </span>
+            </label>
+            <span className="font-mono tabular-nums text-muted">
+              + {formatCurrency(total - subtotal)}
+            </span>
+          </div>
+          <div className="flex items-center justify-between font-semibold border-t border-border pt-1">
+            <span>Choice price</span>
+            <span className="font-mono tabular-nums">
+              {formatCurrency(total)}
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -2330,6 +2596,9 @@ function CostBreakdownEditor({
   subtotal: number
   total: number
 }) {
+  // Which line's catalog search panel is open (one at a time per editor).
+  const [catalogOpenIdx, setCatalogOpenIdx] = useState<number | null>(null)
+
   function add() {
     onChange([
       ...items,
@@ -2339,6 +2608,8 @@ function CostBreakdownEditor({
         quantity: 1,
         unit: null,
         unit_cost: 0,
+        catalog_item_id: null,
+        catalog_item_code: null,
       },
     ])
   }
@@ -2348,6 +2619,7 @@ function CostBreakdownEditor({
   }
 
   function remove(i: number) {
+    setCatalogOpenIdx(null)
     onChange(items.filter((_, idx) => idx !== i))
   }
 
@@ -2374,14 +2646,15 @@ function CostBreakdownEditor({
                 <th className="text-left font-medium pb-1.5 w-16">Unit</th>
                 <th className="text-right font-medium pb-1.5 w-28">Unit cost</th>
                 <th className="text-right font-medium pb-1.5 w-28">Line total</th>
-                <th className="w-6"></th>
+                <th className="w-12"></th>
               </tr>
             </thead>
             <tbody>
               {items.map((ci, i) => {
                 const lineTotal = (ci.quantity || 0) * (ci.unit_cost || 0)
                 return (
-                  <tr key={i} className="align-top">
+                  <Fragment key={i}>
+                  <tr className="align-top">
                     <td className="pr-1.5 pb-1.5">
                       <Select
                         value={ci.cost_code_id ?? ""}
@@ -2405,6 +2678,17 @@ function CostBreakdownEditor({
                         }
                         placeholder="Detail"
                       />
+                      {ci.catalog_item_id && (
+                        <CatalogCodeChip
+                          code={ci.catalog_item_code}
+                          onClear={() =>
+                            update(i, {
+                              catalog_item_id: null,
+                              catalog_item_code: null,
+                            })
+                          }
+                        />
+                      )}
                     </td>
                     <td className="pr-1.5 pb-1.5">
                       <Input
@@ -2439,16 +2723,48 @@ function CostBreakdownEditor({
                       {formatCurrency(lineTotal)}
                     </td>
                     <td className="pb-1.5 pt-2">
-                      <button
-                        type="button"
-                        onClick={() => remove(i)}
-                        className="text-muted hover:text-danger p-1 cursor-pointer"
-                        aria-label="Remove line"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
+                      <div className="flex items-center">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setCatalogOpenIdx(catalogOpenIdx === i ? null : i)
+                          }
+                          className={cn(
+                            "p-1 cursor-pointer",
+                            ci.catalog_item_id
+                              ? "text-brand-600"
+                              : "text-muted hover:text-brand-600"
+                          )}
+                          title="Link to SpecMagician catalog"
+                          aria-label="Link to SpecMagician catalog"
+                        >
+                          <BookMarked className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => remove(i)}
+                          className="text-muted hover:text-danger p-1 cursor-pointer"
+                          aria-label="Remove line"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
+                  {catalogOpenIdx === i && (
+                    <tr>
+                      <td colSpan={7} className="pb-1.5">
+                        <CatalogLinkSearch
+                          onPick={(item) => {
+                            update(i, catalogPatch(item))
+                            setCatalogOpenIdx(null)
+                          }}
+                          onClose={() => setCatalogOpenIdx(null)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 )
               })}
             </tbody>
@@ -2623,5 +2939,304 @@ function CopyDecisionFooter({
         </Button>
       </div>
     </DialogFooter>
+  )
+}
+
+// Staff editor for who a selection is assigned to — people, companies, or
+// project roles. Chips + a single "Add…" select; the set is saved wholesale
+// by saveDecision.
+function AssignmentsEditor({
+  value,
+  onChange,
+  profiles,
+  companies,
+  roles,
+  roleMembers,
+}: {
+  value: AssignmentDraft[]
+  onChange: (v: AssignmentDraft[]) => void
+  profiles: DecisionsData["profiles"]
+  companies: DecisionsData["companies"]
+  roles: DecisionsData["roles"]
+  roleMembers: DecisionsData["roleMembers"]
+}) {
+  // Local resolver — resolveRoleLabel in components/schedule/helpers.ts wants
+  // ScheduleData's wider picks (profiles.company_id, companies.phone), which
+  // DecisionsData doesn't carry.
+  function label(a: AssignmentDraft): string {
+    if (a.profile_id) {
+      const p = profiles.find((x) => x.id === a.profile_id)
+      return p ? p.full_name || p.email || "Unknown" : "Unknown person"
+    }
+    if (a.company_id) {
+      return (
+        companies.find((x) => x.id === a.company_id)?.name ?? "Unknown company"
+      )
+    }
+    if (a.role_id) {
+      const role = roles.find((r) => r.id === a.role_id)
+      const member = roleMembers.find((m) => m.role_id === a.role_id)
+      let who = "unassigned"
+      if (member?.profile_id) {
+        const p = profiles.find((x) => x.id === member.profile_id)
+        if (p) who = p.full_name || p.email || "unassigned"
+      } else if (member?.company_id) {
+        const c = companies.find((x) => x.id === member.company_id)
+        if (c) who = c.name
+      }
+      return `${role?.name ?? "Role"} (${who})`
+    }
+    return "Unknown"
+  }
+
+  function addFromValue(v: string) {
+    if (!v) return
+    const next: AssignmentDraft = {
+      profile_id: v.startsWith("p:") ? v.slice(2) : null,
+      company_id: v.startsWith("c:") ? v.slice(2) : null,
+      role_id: v.startsWith("r:") ? v.slice(2) : null,
+    }
+    const dup = value.some(
+      (a) =>
+        a.profile_id === next.profile_id &&
+        a.company_id === next.company_id &&
+        a.role_id === next.role_id
+    )
+    if (dup) return
+    onChange([...value, next])
+  }
+
+  return (
+    <div>
+      <Label>
+        <Users className="inline h-3 w-3 mr-1 text-brand-500" />
+        Assigned to
+      </Label>
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        {value.map((a, i) => (
+          <span
+            key={`${a.profile_id ?? ""}:${a.company_id ?? ""}:${a.role_id ?? ""}`}
+            className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-xs"
+          >
+            {label(a)}
+            <button
+              type="button"
+              onClick={() => onChange(value.filter((_, idx) => idx !== i))}
+              className="text-muted hover:text-danger cursor-pointer"
+              aria-label={`Remove ${label(a)}`}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        ))}
+        {/* Always-empty controlled value = the select resets after each add. */}
+        <Select
+          value=""
+          onChange={(e) => addFromValue(e.target.value)}
+          className="h-7 w-auto text-xs"
+          aria-label="Add assignee"
+        >
+          <option value="">Add…</option>
+          <optgroup label="People">
+            {profiles
+              .filter((p) => p.role === "staff")
+              .map((p) => (
+                <option key={p.id} value={`p:${p.id}`}>
+                  {p.full_name || p.email}
+                </option>
+              ))}
+          </optgroup>
+          <optgroup label="Companies">
+            {companies.map((c) => (
+              <option key={c.id} value={`c:${c.id}`}>
+                {c.name}
+              </option>
+            ))}
+          </optgroup>
+          <optgroup label="Roles">
+            {roles.map((r) => (
+              <option key={r.id} value={`r:${r.id}`}>
+                {r.name}
+              </option>
+            ))}
+          </optgroup>
+        </Select>
+      </div>
+      <p className="text-xs text-muted mt-1.5">
+        Assigned subs can see this selection in their portal once it leaves
+        draft.
+      </p>
+    </div>
+  )
+}
+
+// Maps a picked catalog item onto a cost line: description always copies,
+// unit/unit cost only when the catalog has them (cost falls back to the
+// suggested price), plus the link itself.
+function catalogPatch(item: CatalogItemHit): Partial<CostItem> {
+  const cents = item.unit_cost_cents ?? item.suggested_price_cents
+  return {
+    description: item.description,
+    ...(item.unit ? { unit: item.unit } : {}),
+    ...(cents != null ? { unit_cost: cents / 100 } : {}),
+    catalog_item_id: item.id,
+    catalog_item_code: item.code,
+  }
+}
+
+// "vendor · unit · cost $X.XX (suggested $Y.YY)" with missing parts omitted.
+function catalogHitMeta(h: CatalogItemHit): string {
+  const parts: string[] = []
+  if (h.vendor) parts.push(h.vendor)
+  if (h.unit) parts.push(h.unit)
+  if (h.unit_cost_cents != null) {
+    let cost = `cost ${formatCurrency(h.unit_cost_cents / 100)}`
+    if (h.suggested_price_cents != null) {
+      cost += ` (suggested ${formatCurrency(h.suggested_price_cents / 100)})`
+    }
+    parts.push(cost)
+  } else if (h.suggested_price_cents != null) {
+    parts.push(`suggested ${formatCurrency(h.suggested_price_cents / 100)}`)
+  }
+  return parts.join(" · ")
+}
+
+// Tiny "linked to catalog" marker on a cost line. The × clears only the link;
+// the copied description/cost stay put.
+function CatalogCodeChip({
+  code,
+  onClear,
+}: {
+  code: string | null
+  onClear: () => void
+}) {
+  return (
+    <span
+      title="Linked to catalog item"
+      className="mt-1 inline-flex items-center gap-1 rounded border border-border bg-background px-1 py-0.5 text-[10px] font-mono text-muted"
+    >
+      <BookMarked className="h-2.5 w-2.5 text-brand-500" />
+      {code || "linked"}
+      <button
+        type="button"
+        onClick={onClear}
+        className="hover:text-danger cursor-pointer"
+        aria-label="Unlink from catalog"
+      >
+        <X className="h-2.5 w-2.5" />
+      </button>
+    </span>
+  )
+}
+
+// Inline search against the SpecMagician catalog — an expanding row under a
+// cost line. Debounced ~300ms; picking a hit copies its fields onto the line.
+function CatalogLinkSearch({
+  onPick,
+  onClose,
+}: {
+  onPick: (item: CatalogItemHit) => void
+  onClose: () => void
+}) {
+  const [query, setQuery] = useState("")
+  const [hits, setHits] = useState<CatalogItemHit[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [searching, setSearching] = useState(false)
+
+  useEffect(() => {
+    const q = query.trim()
+    let cancelled = false
+    // Every setState goes through the debounce timer — nothing synchronous in
+    // the effect body (react-hooks/set-state-in-effect).
+    const t = setTimeout(async () => {
+      if (q.length < 2) {
+        if (!cancelled) {
+          setHits([])
+          setError(null)
+          setSearching(false)
+        }
+        return
+      }
+      if (!cancelled) setSearching(true)
+      try {
+        const r = await searchCatalogItems({ query: q })
+        if (cancelled) return
+        if (r.ok) {
+          setHits(r.items)
+          setError(null)
+        } else {
+          setHits([])
+          // Covers the "SpecMagician not configured" case too.
+          setError(r.error)
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setHits([])
+          setError(e instanceof Error ? e.message : "Search failed")
+        }
+      } finally {
+        if (!cancelled) setSearching(false)
+      }
+    }, 300)
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+    }
+  }, [query])
+
+  return (
+    <div className="rounded border border-border bg-surface p-2 space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <Input
+          autoFocus
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search the SpecMagician catalog (code, description, vendor)"
+          className="h-8 text-xs"
+        />
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-muted hover:text-foreground p-1 cursor-pointer"
+          aria-label="Close catalog search"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      {query.trim().length < 2 ? (
+        <p className="text-[11px] text-muted">
+          Type at least 2 characters to search.
+        </p>
+      ) : error ? (
+        <p className="text-xs text-danger">{error}</p>
+      ) : searching && hits.length === 0 ? (
+        <p className="text-[11px] text-muted">Searching…</p>
+      ) : hits.length === 0 ? (
+        <p className="text-[11px] text-muted">No catalog items match.</p>
+      ) : (
+        <ul className="max-h-48 overflow-y-auto divide-y divide-border">
+          {hits.map((h) => {
+            const meta = catalogHitMeta(h)
+            return (
+              <li key={h.id}>
+                <button
+                  type="button"
+                  onClick={() => onPick(h)}
+                  className="w-full text-left rounded px-1.5 py-1.5 hover:bg-background cursor-pointer"
+                >
+                  <span className="block text-xs">
+                    <span className="font-mono">{h.code}</span> —{" "}
+                    {h.description}
+                  </span>
+                  {meta && (
+                    <span className="block text-[11px] text-muted">{meta}</span>
+                  )}
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
   )
 }

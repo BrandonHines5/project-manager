@@ -50,6 +50,7 @@ const SECTIONS: Section[] = [
   { label: "Files", slug: "files" },
   { label: "Pricing", slug: "pricing" },
   { label: "Roles", slug: "roles", hideForRoles: ["client", "trade"] },
+  { label: "History", slug: "history", hideForRoles: ["client", "trade"] },
 ]
 
 /**
