@@ -134,6 +134,13 @@ const DecisionInput = z
     followups: z.array(Followup).default([]),
     attachments: z.array(Attachment).default([]),
     choices: z.array(Choice).default([]),
+    // Selections only: the client_key of the choice staff is approving on the
+    // client's behalf. Lets a staff-direct approval record which option was
+    // chosen (and bill its cost) without the client having picked through the
+    // portal. A saved choice's client_key equals its id. Ignored unless the
+    // save transitions to `approved`; unset means "auto-select if there's
+    // exactly one choice, else keep the client's existing pick".
+    selected_choice_key: optStr,
     // People / companies / roles this decision is assigned to (selections —
     // lets subs see the selections they're on; migration 0075).
     assignments: z.array(DecisionAssignment).default([]),
@@ -286,35 +293,62 @@ export async function saveDecision(input: DecisionInputT) {
       : 0
 
   // Derive the client-facing cost_delta:
-  // - Selection: null until approval — the RPC fills it in from the chosen
-  //   choice's price (minus allowance, if set). If staff is re-saving an
-  //   already-approved selection and the chosen choice's price changed, we
-  //   recompute here so the pricing rollup stays accurate.
+  // - Selection: the chosen choice's price (minus allowance, if set) becomes
+  //   cost_delta on approval. The choice can be picked by the client (the
+  //   client_decide RPC sets selected_choice_id) OR, on a staff-direct
+  //   approval, designated by staff / auto-selected when there's exactly one
+  //   choice. We resolve the chosen choice's client_key here — prices are
+  //   keyed by client_key and available before the upsert — so cost_delta
+  //   lands immediately; selected_choice_id itself is written AFTER the choice
+  //   upsert (below), once any brand-new choice has a real id.
   // - Change order: marked-up total from decision-level cost_items if any,
   //   else the manual cost_delta value — plus the delay cost either way.
   let finalCostDelta: number | null
+  // Selections: client_key of the choice being approved (resolved to a real
+  // choice id post-upsert). Stays null when nothing is picked yet.
+  let approvedChoiceKey: string | null = null
   if (isSelection) {
     finalCostDelta = null
-    if (parsed.status === "approved" && parsed.id) {
-      const { data: existing } = await supabase
-        .from("decisions")
-        .select("selected_choice_id, cost_delta")
-        .eq("id", parsed.id)
-        .maybeSingle()
-      const selectedId = existing?.selected_choice_id ?? null
-      const existingCostDelta = existing?.cost_delta ?? null
-      if (selectedId) {
-        const match = parsed.choices.find((c) => c.id === selectedId)
-        if (match) {
-          // If the chosen choice has no recorded price (legacy data from
-          // before per-choice costs), preserve the existing cost_delta
-          // rather than treating the missing price as zero.
-          const price = effectiveChoicePrice.get(match.client_key) ?? null
-          finalCostDelta =
-            price == null
-              ? existingCostDelta
-              : round2(price - (allowanceAmount ?? 0))
-        }
+    if (parsed.status === "approved") {
+      // Prior selection state — a client may already have picked, and legacy
+      // choices with no recorded price fall back to the stored cost_delta.
+      let existingSelectedId: string | null = null
+      let existingCostDelta: number | null = null
+      if (parsed.id) {
+        const { data: existing } = await supabase
+          .from("decisions")
+          .select("selected_choice_id, cost_delta")
+          .eq("id", parsed.id)
+          .maybeSingle()
+        existingSelectedId = existing?.selected_choice_id ?? null
+        existingCostDelta = existing?.cost_delta ?? null
+      }
+      // Which choice is being approved? Priority:
+      //   1. Staff's explicit pick (client_key sent from the drawer)
+      //   2. The choice the client already picked (existing selected_choice_id),
+      //      as long as it still exists in the form
+      //   3. Auto-select when the selection offers exactly one choice
+      const explicitKey = nz(parsed.selected_choice_key)
+      const existingMatch = existingSelectedId
+        ? parsed.choices.find((c) => c.id === existingSelectedId)
+        : undefined
+      if (explicitKey && parsed.choices.some((c) => c.client_key === explicitKey)) {
+        approvedChoiceKey = explicitKey
+      } else if (existingMatch) {
+        approvedChoiceKey = existingMatch.client_key
+      } else if (parsed.choices.length === 1) {
+        approvedChoiceKey = parsed.choices[0].client_key
+      }
+      if (approvedChoiceKey) {
+        // A missing price (legacy data from before per-choice costs) preserves
+        // the existing cost_delta rather than treating it as zero.
+        const price = effectiveChoicePrice.get(approvedChoiceKey) ?? null
+        finalCostDelta =
+          price == null
+            ? existingCostDelta
+            : round2(price - (allowanceAmount ?? 0))
+      } else {
+        finalCostDelta = existingCostDelta
       }
     }
   } else if (parsed.cost_items.length > 0) {
@@ -580,6 +614,21 @@ export async function saveDecision(input: DecisionInputT) {
           .from("decision_cost_items")
           .insert(choiceRows)
         if (dciInsErr) throw new Error(dciInsErr.message)
+      }
+    }
+    // Record the approved choice (staff pick or auto-selected lone choice) now
+    // that every choice has a real id. The pricing rollup keys off cost_delta
+    // (written in the decision update above) and the drawer's "Chosen" badge
+    // off selected_choice_id. Only on approval — the draft/pending flow leaves
+    // the client's own pick untouched.
+    if (parsed.status === "approved" && approvedChoiceKey) {
+      const resolvedChoiceId = choiceIdByClientKey.get(approvedChoiceKey) ?? null
+      if (resolvedChoiceId) {
+        const { error: selErr } = await supabase
+          .from("decisions")
+          .update({ selected_choice_id: resolvedChoiceId })
+          .eq("id", id)
+        if (selErr) throw new Error(selErr.message)
       }
     }
   } else {
