@@ -20,6 +20,10 @@ const UpdateProfileInput = z
       .enum(["immediate", "daily", "off"])
       .default("immediate"),
     financial_access: z.boolean().default(false),
+    // Quo (OpenPhone) number this person sends texts/calls from. Stored as the
+    // phone-number id ("PN…") plus its E.164 for display + webhook lookup.
+    quo_phone_number_id: optStr,
+    quo_phone_number: optStr,
   })
   .passthrough()
 
@@ -82,9 +86,20 @@ export async function updateProfile(input: UpdateProfileInputT) {
       phone: nz(parsed.phone),
       email_digest_pref: parsed.email_digest_pref,
       financial_access: parsed.financial_access,
+      quo_phone_number_id: nz(parsed.quo_phone_number_id),
+      quo_phone_number: nz(parsed.quo_phone_number),
     })
     .eq("id", parsed.id)
-  if (error) throw new Error(error.message)
+  if (error) {
+    // A Quo number is 1:1 with a person (partial-unique indexes). Turn the raw
+    // 23505 into something staff can act on instead of a Postgres error code.
+    if ((error as { code?: string }).code === "23505") {
+      throw new Error(
+        "That Quo number is already assigned to another team member."
+      )
+    }
+    throw new Error(error.message)
+  }
   revalidatePath("/team")
 }
 

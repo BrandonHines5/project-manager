@@ -58,6 +58,14 @@ export async function POST(req: NextRequest) {
         const inbound = obj.direction === "incoming"
         const counterpartyNumber = inbound ? obj.from : firstTo(obj.to)
         const match = await matchCounterparty(admin, { phone: counterpartyNumber })
+        // Which staffer owns the Quo number this text went through — powers
+        // per-user attribution for texts typed directly in the Quo app (app-sent
+        // texts already carry sent_by and win the ON CONFLICT below).
+        const staffProfileId = await staffProfileForQuoNumber(
+          admin,
+          obj.phoneNumberId,
+          inbound ? firstTo(obj.to) : (obj.from ?? null)
+        )
         const { error } = await admin.from("communications").upsert(
           {
             channel: "sms",
@@ -66,6 +74,9 @@ export async function POST(req: NextRequest) {
             project_id: match.project_id,
             company_id: match.company_id,
             profile_id: match.profile_id,
+            // Outbound = the staffer sent it, so attribute them as sender.
+            // Inbound = they only received it; the line owner lives in meta.
+            sent_by: inbound ? null : staffProfileId,
             from_address: obj.from ?? null,
             to_address: firstTo(obj.to),
             counterparty_name: match.counterparty_name,
@@ -78,6 +89,7 @@ export async function POST(req: NextRequest) {
               userId: obj.userId ?? null,
               phoneNumberId: obj.phoneNumberId ?? null,
               conversationId: obj.conversationId ?? null,
+              quoStaffProfileId: staffProfileId,
             },
           },
           // App-sent texts already hold this (source, provider_id) — keep
@@ -101,6 +113,11 @@ export async function POST(req: NextRequest) {
         const inbound = obj.direction === "incoming"
         const counterpartyNumber = inbound ? obj.from : firstTo(obj.to)
         const match = await matchCounterparty(admin, { phone: counterpartyNumber })
+        const staffProfileId = await staffProfileForQuoNumber(
+          admin,
+          obj.phoneNumberId,
+          inbound ? firstTo(obj.to) : (obj.from ?? null)
+        )
         const durationSeconds =
           obj.answeredAt && obj.completedAt
             ? Math.max(
@@ -120,6 +137,8 @@ export async function POST(req: NextRequest) {
             project_id: match.project_id,
             company_id: match.company_id,
             profile_id: match.profile_id,
+            // Outbound call = the staffer dialed it → attribute as sender.
+            sent_by: inbound ? null : staffProfileId,
             from_address: obj.from ?? null,
             to_address: firstTo(obj.to),
             counterparty_name: match.counterparty_name,
@@ -138,6 +157,7 @@ export async function POST(req: NextRequest) {
               userId: obj.userId ?? null,
               phoneNumberId: obj.phoneNumberId ?? null,
               conversationId: obj.conversationId ?? null,
+              quoStaffProfileId: staffProfileId,
               missed,
               voicemail: Boolean(voicemailUrl),
             },
@@ -217,6 +237,36 @@ type QuoEvent = {
 function firstTo(to: string | string[] | undefined): string | null {
   if (!to) return null
   return Array.isArray(to) ? (to[0] ?? null) : to
+}
+
+/**
+ * The staff profile that owns the business-side Quo number an event went
+ * through — matched first on the stable phone-number id, then its E.164.
+ * Returns null when the number isn't assigned to anyone (the shared line, or
+ * an unmapped number), which just leaves the row unattributed.
+ */
+async function staffProfileForQuoNumber(
+  admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
+  phoneNumberId: string | undefined,
+  e164: string | null
+): Promise<string | null> {
+  if (phoneNumberId) {
+    const { data } = await admin
+      .from("profiles")
+      .select("id")
+      .eq("quo_phone_number_id", phoneNumberId)
+      .maybeSingle()
+    if (data?.id) return data.id
+  }
+  if (e164) {
+    const { data } = await admin
+      .from("profiles")
+      .select("id")
+      .eq("quo_phone_number", e164)
+      .maybeSingle()
+    if (data?.id) return data.id
+  }
+  return null
 }
 
 async function projectName(
