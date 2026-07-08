@@ -251,19 +251,27 @@ async function staffProfileForQuoNumber(
   e164: string | null
 ): Promise<string | null> {
   if (phoneNumberId) {
-    const { data } = await admin
+    const { data, error } = await admin
       .from("profiles")
       .select("id")
       .eq("quo_phone_number_id", phoneNumberId)
       .maybeSingle()
+    // Log — a query failure must stay distinguishable from a genuine no-match
+    // (both fall through to null), else attribution vanishes with no signal.
+    if (error) {
+      console.warn("[quo webhook] phoneNumberId → profile lookup failed:", error.message)
+    }
     if (data?.id) return data.id
   }
   if (e164) {
-    const { data } = await admin
+    const { data, error } = await admin
       .from("profiles")
       .select("id")
       .eq("quo_phone_number", e164)
       .maybeSingle()
+    if (error) {
+      console.warn("[quo webhook] e164 → profile lookup failed:", error.message)
+    }
     if (data?.id) return data.id
   }
   return null

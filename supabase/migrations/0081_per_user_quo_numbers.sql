@@ -20,6 +20,15 @@ alter table public.profiles
   add column if not exists quo_phone_number_id text,
   add column if not exists quo_phone_number    text;
 
+-- The two columns are one logical assignment — keep them set/unset together so
+-- the id (send `from`) and E.164 (display + webhook reverse-lookup) can't drift
+-- apart. The Team update action always writes both; this is the DB backstop.
+do $$ begin
+  alter table public.profiles
+    add constraint profiles_quo_number_pair_check
+    check ((quo_phone_number_id is null) = (quo_phone_number is null));
+exception when duplicate_object then null; end $$;
+
 -- A Quo number belongs to at most one person (tracking is 1:1). Partial so
 -- the many unassigned staff (null) never collide with each other.
 create unique index if not exists idx_profiles_quo_phone_number_id
