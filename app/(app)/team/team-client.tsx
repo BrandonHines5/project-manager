@@ -39,14 +39,17 @@ import {
   type InviteTeamMemberInputT,
 } from "@/app/actions/team"
 import type { Tables, Enums } from "@/lib/db/types"
+import type { QuoPhoneNumber } from "@/lib/quo"
 
 export function TeamClient({
   profiles,
   companies,
+  quoNumbers,
   currentUserId,
 }: {
   profiles: Tables<"profiles">[]
   companies: Pick<Tables<"companies">, "id" | "name" | "type" | "trade_category">[]
+  quoNumbers: QuoPhoneNumber[]
   currentUserId: string
 }) {
   const [search, setSearch] = useState("")
@@ -170,6 +173,7 @@ export function TeamClient({
           key={editing.id}
           profile={editing}
           companies={companies}
+          quoNumbers={quoNumbers}
           currentUserId={currentUserId}
           onClose={() => setEditing(null)}
         />
@@ -245,11 +249,13 @@ function NotifyToggle({ profile }: { profile: Tables<"profiles"> }) {
 function EditDialog({
   profile,
   companies,
+  quoNumbers,
   currentUserId,
   onClose,
 }: {
   profile: Tables<"profiles">
   companies: Pick<Tables<"companies">, "id" | "name" | "type" | "trade_category">[]
+  quoNumbers: QuoPhoneNumber[]
   currentUserId: string
   onClose: () => void
 }) {
@@ -261,6 +267,7 @@ function EditDialog({
   const [role, setRole] = useState<Enums<"user_role">>(profile.role)
   const [companyId, setCompanyId] = useState(profile.company_id ?? "")
   const [phone, setPhone] = useState(profile.phone ?? "")
+  const [quoNumberId, setQuoNumberId] = useState(profile.quo_phone_number_id ?? "")
   const [emailDigestPref, setEmailDigestPref] = useState<
     Enums<"email_digest_pref">
   >(profile.email_digest_pref ?? "immediate")
@@ -273,6 +280,25 @@ function EditDialog({
   const [resetPassword, setResetPassword] = useState<string | null>(null)
 
   const isSelf = profile.id === currentUserId
+
+  // Options for the Quo-number picker. If this person is already assigned a
+  // number that isn't in the workspace list (API down, or the number was
+  // removed in Quo), keep it as a synthetic option so saving doesn't silently
+  // drop the assignment.
+  const quoOptions = useMemo<QuoPhoneNumber[]>(() => {
+    const list = [...quoNumbers]
+    if (
+      profile.quo_phone_number_id &&
+      !list.some((n) => n.id === profile.quo_phone_number_id)
+    ) {
+      list.unshift({
+        id: profile.quo_phone_number_id,
+        number: profile.quo_phone_number ?? profile.quo_phone_number_id,
+        name: "current",
+      })
+    }
+    return list
+  }, [quoNumbers, profile.quo_phone_number_id, profile.quo_phone_number])
 
   function doResetPassword() {
     startResetPw(async () => {
@@ -299,6 +325,11 @@ function EditDialog({
       toast.error("Name is required")
       return
     }
+    // Only staff send from a Quo number; clear any assignment if the role
+    // changed away from staff. Persist the E.164 alongside the id for display
+    // + webhook reverse-lookup.
+    const selectedQuo =
+      role === "staff" ? quoOptions.find((n) => n.id === quoNumberId) : undefined
     const payload: UpdateProfileInputT = {
       id: profile.id,
       full_name: fullName.trim(),
@@ -307,6 +338,8 @@ function EditDialog({
       phone: phone || null,
       email_digest_pref: emailDigestPref,
       financial_access: financialAccess,
+      quo_phone_number_id: selectedQuo?.id ?? null,
+      quo_phone_number: selectedQuo?.number ?? null,
     }
     startTransition(async () => {
       try {
@@ -390,6 +423,33 @@ function EditDialog({
               onChange={(e) => setPhone(e.target.value)}
             />
           </Field>
+
+          {role === "staff" && (
+            <Field
+              label="Quo number"
+              hint="Texts and calls this person sends go out from this Quo number, so replies come back to them. Leave on the shared number to use the default business line."
+            >
+              {quoOptions.length > 0 ? (
+                <Select
+                  value={quoNumberId}
+                  onChange={(e) => setQuoNumberId(e.target.value)}
+                >
+                  <option value="">Shared business number</option>
+                  {quoOptions.map((n) => (
+                    <option key={n.id} value={n.id}>
+                      {n.name ? `${n.name} · ${n.number}` : n.number}
+                    </option>
+                  ))}
+                </Select>
+              ) : (
+                <p className="text-xs text-muted">
+                  No Quo numbers found. Connect Quo (set QUO_API_KEY) to assign a
+                  per-person number — texts fall back to the shared number until
+                  then.
+                </p>
+              )}
+            </Field>
+          )}
           <Field
             label="Email notifications"
             hint="Immediate: one email per event. Daily digest: a single roll-up each morning. Off: in-app bell only."

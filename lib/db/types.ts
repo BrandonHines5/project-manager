@@ -1868,6 +1868,8 @@ export type Database = {
           last_digest_at: string | null
           notifications_enabled: boolean
           phone: string | null
+          quo_phone_number: string | null
+          quo_phone_number_id: string | null
           role: Database["public"]["Enums"]["user_role"]
         }
         Insert: {
@@ -1884,6 +1886,8 @@ export type Database = {
           last_digest_at?: string | null
           notifications_enabled?: boolean
           phone?: string | null
+          quo_phone_number?: string | null
+          quo_phone_number_id?: string | null
           role?: Database["public"]["Enums"]["user_role"]
         }
         Update: {
@@ -1900,6 +1904,8 @@ export type Database = {
           last_digest_at?: string | null
           notifications_enabled?: boolean
           phone?: string | null
+          quo_phone_number?: string | null
+          quo_phone_number_id?: string | null
           role?: Database["public"]["Enums"]["user_role"]
         }
         Relationships: [
