@@ -674,7 +674,7 @@ async function executeTool({
 }): Promise<string> {
   switch (name) {
     case "search_help_topics": {
-      const query = (input.query as string | undefined) ?? null
+      const query = typeof input.query === "string" ? input.query : null
       const topicIds = Array.isArray(input.topic_ids)
         ? (input.topic_ids as unknown[]).filter(
             (v): v is string => typeof v === "string"

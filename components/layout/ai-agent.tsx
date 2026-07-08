@@ -44,7 +44,16 @@ import {
 } from "@/lib/speech/web-speech"
 import { useScreenWakeLock } from "@/lib/hooks/use-wake-lock"
 
-type Message = { role: "user" | "assistant"; content: string }
+// `isQuestion` marks an assistant turn that is the agent's ask_user clarifying
+// question (vs a help-desk / reporting answer or a plan summary), so the bubble
+// can label it correctly without guessing from the text. Optional + stripped
+// server-side (ClientMessageSchema only keeps role/content), so it never
+// round-trips to the model.
+type Message = {
+  role: "user" | "assistant"
+  content: string
+  isQuestion?: boolean
+}
 
 type Phase =
   | { kind: "compose" }
@@ -255,7 +264,7 @@ export function AIAgent({ dark = false }: { dark?: boolean }) {
       // see what they're answering, then move to the "question" phase.
       setMessages([
         ...currentMessages,
-        { role: "assistant", content: result.question },
+        { role: "assistant", content: result.question, isQuestion: true },
       ])
       setPhase({ kind: "question", question: result.question })
       requestAnimationFrame(() => textareaRef.current?.focus())
@@ -358,7 +367,7 @@ export function AIAgent({ dark = false }: { dark?: boolean }) {
               <DialogTitle>
                 <span className="inline-flex items-center gap-2">
                   <Sparkles className="h-4 w-4 text-brand-500" />
-                  AI smart updates
+                  AI assistant
                 </span>
               </DialogTitle>
               <DialogDescription>
@@ -395,7 +404,12 @@ export function AIAgent({ dark = false }: { dark?: boolean }) {
                 <Starter onPick={(s) => setDraft(s)} />
               )}
               {messages.map((m, i) => (
-                <Bubble key={i} role={m.role} text={m.content} />
+                <Bubble
+                  key={i}
+                  role={m.role}
+                  text={m.content}
+                  isQuestion={m.isQuestion}
+                />
               ))}
               {phase.kind === "thinking" && (
                 <div className="flex items-center gap-2 text-sm text-muted">
@@ -508,16 +522,17 @@ export function AIAgent({ dark = false }: { dark?: boolean }) {
   )
 }
 
-// The agent's ask_user clarifying question is one short sentence ending in a
-// "?". A help-desk or reporting answer is longer prose (and may quote a
-// question like "what's the difference…?") — don't mislabel those. Kept as a
-// heuristic because the transcript stores only {role, content}, not intent.
-function isClarifyingQuestion(text: string): boolean {
-  const t = text.trim()
-  return t.length < 160 && t.endsWith("?")
-}
-
-function Bubble({ role, text }: { role: "user" | "assistant"; text: string }) {
+function Bubble({
+  role,
+  text,
+  isQuestion,
+}: {
+  role: "user" | "assistant"
+  text: string
+  // True only for the agent's ask_user clarifying question — set by
+  // handleResult, not inferred from the text.
+  isQuestion?: boolean
+}) {
   const isUser = role === "user"
   return (
     <div
@@ -536,7 +551,7 @@ function Bubble({ role, text }: { role: "user" | "assistant"; text: string }) {
       >
         {!isUser && (
           <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted mb-1">
-            {isClarifyingQuestion(text) ? (
+            {isQuestion ? (
               <>
                 <HelpCircle className="h-3 w-3" />
                 Clarifying question
