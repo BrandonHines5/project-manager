@@ -18,6 +18,7 @@ import {
   FileBadge,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { BrandTile } from "@/components/layout/brand-tile"
 import type { UserRole } from "@/lib/auth"
 import { HINES_HOMES, type Brand } from "@/lib/brand"
 
@@ -88,11 +89,7 @@ export function SidebarBrand({
       onClick={onNavigate}
       className="px-5 h-14 flex items-center gap-2 border-b border-white/10"
     >
-      <div className="h-8 w-8 rounded-md bg-brand-500 text-white flex items-center justify-center font-bold text-sm">
-        {/* Static SVG mark from /public — next/image adds no benefit for SVGs. */}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={brand.mark} alt={brand.name} className="h-6 w-6" />
-      </div>
+      <BrandTile brand={brand} className="h-8 w-8 rounded-md" imgClassName="h-6 w-6" />
       <div className="leading-tight">
         <div className="text-sm font-semibold">{brand.name}</div>
         <div className="text-[10px] uppercase text-white/60 tracking-wider">

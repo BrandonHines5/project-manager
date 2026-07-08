@@ -1,4 +1,5 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
+import { BrandTile } from "@/components/layout/brand-tile"
 import { UploadForm } from "./upload-form"
 
 /**
@@ -37,9 +38,7 @@ export default async function InsuranceUploadPage({
     <main className="min-h-dvh bg-background flex items-center justify-center p-4">
       <div className="w-full max-w-lg rounded-xl border border-border bg-surface shadow-sm p-6 sm:p-8">
         <div className="flex items-center gap-2 mb-6">
-          <div className="h-8 w-8 rounded-md bg-brand-500 text-white flex items-center justify-center font-bold text-sm">
-            HH
-          </div>
+          <BrandTile className="h-8 w-8 rounded-md" imgClassName="h-6 w-6" />
           <span className="font-semibold text-foreground">Hines Homes</span>
         </div>
 
