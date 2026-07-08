@@ -391,6 +391,15 @@ export function DailyLogDrawer({
                 {uploading ? "Uploading…" : "Add files"}
               </button>
             </div>
+            {!attachments.some((a) => (a.file_type ?? "").startsWith("image/")) && (
+              <p className="text-xs text-muted mt-1.5">
+                No photos yet — consider adding a few site photos so the log tells
+                the full story
+                {visibility === "client"
+                  ? "; homeowners love seeing progress on their build."
+                  : "."}
+              </p>
+            )}
           </div>
 
           {/* Comments (edit only) — client questions land here too. */}
