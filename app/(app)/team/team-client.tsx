@@ -73,7 +73,7 @@ export function TeamClient({
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Team</h1>
           <p className="text-sm text-muted">
-            Add staff, trades, or clients. New users get a temporary password
+            Add team members, trades, or clients. New users get a temporary password
             you share with them — they can change it after signing in.
           </p>
         </div>
@@ -86,7 +86,7 @@ export function TeamClient({
             className="w-auto"
           >
             <option value="all">All roles</option>
-            <option value="staff">Staff</option>
+            <option value="staff">Team</option>
             <option value="trade">Trades</option>
             <option value="client">Clients</option>
           </Select>
@@ -181,7 +181,7 @@ export function TeamClient({
 }
 
 function RoleBadge({ role }: { role: Enums<"user_role"> }) {
-  if (role === "staff") return <Badge tone="brand">Staff</Badge>
+  if (role === "staff") return <Badge tone="brand">Team</Badge>
   if (role === "trade") return <Badge tone="warning">Trade</Badge>
   return <Badge tone="info">Client</Badge>
 }
@@ -354,7 +354,7 @@ function EditDialog({
               value={role}
               onChange={(e) => setRole(e.target.value as Enums<"user_role">)}
             >
-              <option value="staff">Staff — full access</option>
+              <option value="staff">Team — full access</option>
               <option value="trade">
                 Trade — only schedule items assigned to them
               </option>
@@ -419,7 +419,7 @@ function EditDialog({
                 <span className="block text-xs text-muted mt-0.5">
                   Shows the Contract value, Cost growth, and per-row
                   financial columns on the /projects dashboard. Keep off
-                  for staff who shouldn&rsquo;t see contract totals.
+                  for team members who shouldn&rsquo;t see contract totals.
                 </span>
               </span>
             </label>
@@ -623,7 +623,7 @@ function InviteDialog({ onClose }: { onClose: () => void }) {
               value={role}
               onChange={(e) => setRole(e.target.value as Enums<"user_role">)}
             >
-              <option value="staff">Staff — full access</option>
+              <option value="staff">Team — full access</option>
               <option value="trade">
                 Trade — only schedule items assigned to them
               </option>

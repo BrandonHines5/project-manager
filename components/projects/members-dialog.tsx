@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { Users, X, Plus } from "lucide-react"
+import { Users, X, Plus, Mail } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -21,6 +21,7 @@ import {
   addProjectMember,
   removeProjectMember,
 } from "@/app/actions/project-members"
+import { inviteProjectClients } from "@/app/actions/client-invites"
 
 type MemberProfile = {
   id: string
@@ -125,6 +126,29 @@ function MembersDialog({
     })
   }
 
+  function handleInvite() {
+    startTransition(async () => {
+      try {
+        const r = await inviteProjectClients(projectId)
+        if (r.sent > 0) {
+          toast.success(
+            `Sent ${r.sent} client invite${r.sent === 1 ? "" : "s"}.` +
+              (r.alreadyJoined
+                ? ` ${r.alreadyJoined} already joined.`
+                : "")
+          )
+        } else if (r.alreadyJoined > 0) {
+          toast.success("All client contacts have already joined.")
+        } else {
+          toast.error("No invites were sent.")
+        }
+        router.refresh()
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Could not send invites")
+      }
+    })
+  }
+
   return (
     <Dialog open={true} onOpenChange={(v) => !v && onClose()}>
       <DialogContent size="md">
@@ -133,11 +157,30 @@ function MembersDialog({
             <DialogTitle>Project members</DialogTitle>
             <DialogDescription>
               Add trades or clients here so they can see this project.
-              (Staff have access to all projects automatically.)
+              (Team members have access to all projects automatically.)
             </DialogDescription>
           </div>
         </DialogHeader>
         <DialogBody className="space-y-4">
+          <div className="rounded-md border border-border bg-background/40 p-3 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium">Client portal</p>
+              <p className="text-xs text-muted">
+                Email this job&rsquo;s client contacts a link to set up their own
+                login. They accept a disclaimer, choose a password, and are added
+                here automatically.
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={handleInvite}
+              disabled={pending}
+              className="shrink-0"
+            >
+              <Mail className="h-4 w-4" /> Invite clients
+            </Button>
+          </div>
           <div>
             <Label>Current members</Label>
             {members.length === 0 ? (
@@ -233,7 +276,7 @@ function MembersDialog({
 }
 
 function RoleBadge({ role }: { role: "staff" | "trade" | "client" }) {
-  if (role === "staff") return <Badge tone="brand">Staff</Badge>
+  if (role === "staff") return <Badge tone="brand">Team</Badge>
   if (role === "trade") return <Badge tone="warning">Trade</Badge>
   return <Badge tone="info">Client</Badge>
 }

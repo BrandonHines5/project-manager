@@ -8,15 +8,26 @@ import {
   ChevronDown,
   LogOut,
   MessageSquarePlus,
+  Settings,
 } from "lucide-react"
+import dynamic from "next/dynamic"
 import { cn } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
 import { GlobalSearch } from "@/components/layout/global-search"
-import { AIAgent } from "@/components/layout/ai-agent"
 import { FeedbackButton } from "@/components/feedback/feedback-button"
 import { MobileNav } from "@/components/layout/mobile-nav"
 import type { UserRole } from "@/lib/auth"
 import { HINES_HOMES, type Brand } from "@/lib/brand"
+
+// AIAgent bundles the smart-update chat, its ~450-LOC plan-review UI, and the
+// Web-Speech shims — all of it only ever mounts behind the trigger button. Code-
+// split it out of the shared client bundle so it doesn't ship in first-load JS on
+// every authed page; ssr:false + a same-size placeholder avoids any layout shift
+// while the chunk loads on first open.
+const AIAgent = dynamic(
+  () => import("@/components/layout/ai-agent").then((m) => m.AIAgent),
+  { ssr: false, loading: () => <span className="h-9 w-9 shrink-0" aria-hidden /> }
+)
 
 // Buildertrend-style primary nav: everything that used to live in the dark
 // left sidebar now sits across the top, grouped into dropdowns. The jobs list
@@ -125,8 +136,8 @@ export function Topbar({
               <div className="text-sm font-medium leading-tight text-white">
                 {fullName || email}
               </div>
-              <div className="text-[11px] text-white/60 capitalize leading-tight">
-                {role}
+              <div className="text-[11px] text-white/60 leading-tight">
+                {role === "staff" ? "Team" : role === "trade" ? "Sub" : "Client"}
               </div>
             </div>
             <ChevronDown className="h-4 w-4 text-white/60" />
@@ -146,6 +157,14 @@ export function Topbar({
                   <div className="text-sm font-medium">{fullName || "—"}</div>
                   <div className="text-xs text-muted">{email}</div>
                 </div>
+                <Link
+                  href="/settings/notifications"
+                  onClick={() => setMenuOpen(false)}
+                  className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-background cursor-pointer"
+                >
+                  <Settings className="h-4 w-4 text-muted" />
+                  Notification settings
+                </Link>
                 <Link
                   href="/feedback"
                   onClick={() => setMenuOpen(false)}

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { sendEmail, appUrl } from "@/lib/email"
+import { isChannelEnabled } from "@/lib/notifications/preferences"
 import {
   buildInsuranceRequestEmail,
   insuranceReplyTo,
@@ -166,6 +167,22 @@ export async function GET(req: Request) {
         policies: policies.length,
         sent: false,
         reason: "no email on file",
+      })
+      continue
+    }
+    if (
+      !(await isChannelEnabled(
+        supabase,
+        { companyId: company.id },
+        "reminders",
+        "email"
+      ))
+    ) {
+      summary.push({
+        company: company.name,
+        policies: policies.length,
+        sent: false,
+        reason: "reminder emails disabled for this company",
       })
       continue
     }

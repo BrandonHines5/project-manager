@@ -101,7 +101,8 @@ export async function runAgentTurnAction(input: {
   today?: string
   context?: OnsiteContextInput
 }): Promise<AgentTurnResult> {
-  await requireStaff()
+  const profile = await requireStaff()
+  const displayName = profile.full_name || profile.email || "Team member"
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
     return {
@@ -137,7 +138,14 @@ export async function runAgentTurnAction(input: {
     if (!project) {
       return { type: "error", message: "Project not found or not permitted." }
     }
-    projectContext = { ...project, mode: context.mode }
+    projectContext = {
+      ...project,
+      mode: context.mode,
+      currentUser: {
+        id: profile.id,
+        name: displayName,
+      },
+    }
   }
 
   try {
@@ -161,6 +169,24 @@ export async function runAgentTurnAction(input: {
         context.attachments,
         today
       )
+    }
+    // Item 4 — an onsite walkthrough's to-dos must always have an owner and a
+    // due date. The system prompt asks the model to set them (assigning to the
+    // named person, or to the walkthrough user by default); this backstop
+    // guarantees it so a vague note ("order more 2x4s") can't produce a
+    // floating, un-owned, date-less to-do. Only the walkthrough (mode
+    // "onsite") is gated — the global/page dialog keeps to-dos optional.
+    if (result.type === "plan" && context?.mode === "onsite") {
+      for (const m of result.mutations) {
+        if (m.kind !== "create_todo") continue
+        if (!m.due_date) m.due_date = today
+        if (!m.assignee_profile_id && !m.assignee_company_id) {
+          m.assignee_profile_id = profile.id
+          if (!m.context.assignee_name) {
+            m.context.assignee_name = displayName
+          }
+        }
+      }
     }
     return result
   } catch (e) {

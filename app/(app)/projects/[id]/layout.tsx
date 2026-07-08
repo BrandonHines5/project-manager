@@ -67,15 +67,19 @@ export default async function ProjectDetailLayout({
     role: "staff" | "trade" | "client"
   }[] = []
   if (isStaff) {
-    const { data: m } = await supabase
-      .from("project_members")
-      .select("profile_id, role_on_project")
-      .eq("project_id", project.id)
+    // These two reads are independent — run them together instead of serially
+    // (this layout renders on every project page, so the saved round-trip counts).
+    const [{ data: m }, { data: ps }] = await Promise.all([
+      supabase
+        .from("project_members")
+        .select("profile_id, role_on_project")
+        .eq("project_id", project.id),
+      supabase
+        .from("profiles")
+        .select("id, full_name, email, role")
+        .order("full_name"),
+    ])
     members = m ?? []
-    const { data: ps } = await supabase
-      .from("profiles")
-      .select("id, full_name, email, role")
-      .order("full_name")
     memberProfiles = (ps ?? []) as typeof memberProfiles
   }
 

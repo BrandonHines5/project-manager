@@ -2292,7 +2292,7 @@ function FollowupsEditor({
                     }}
                   >
                     <option value="">— Assign to —</option>
-                    <optgroup label="Staff">
+                    <optgroup label="Team">
                       {profiles
                         .filter((p) => p.role === "staff")
                         .map((p) => (

@@ -39,6 +39,7 @@ export default async function BidsPage({
     { data: companies },
     { data: companyTrades },
     { data: costCodes },
+    { data: projects },
   ] = await Promise.all([
     supabase
       .from("bid_packages")
@@ -81,6 +82,11 @@ export default async function BidsPage({
       .select("id, code, name, position, is_active")
       .eq("is_active", true)
       .order("position", { ascending: true }),
+    // Projects the caller can see — destinations for "copy to another job".
+    supabase
+      .from("projects")
+      .select("id, name, project_number")
+      .order("project_number", { ascending: true }),
   ])
 
   // Drop the embedded joins that only exist for project filtering — same
@@ -134,6 +140,7 @@ export default async function BidsPage({
     companies: companies ?? [],
     company_trades: companyTrades ?? [],
     cost_codes: costCodes ?? [],
+    projects: projects ?? [],
     signed_urls: signedUrls,
   }
 

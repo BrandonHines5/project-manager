@@ -6,6 +6,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
 import { sendEmail, appUrl } from "@/lib/email"
 import { sendQuoSms, normalizeE164 } from "@/lib/quo"
+import { isChannelEnabled } from "@/lib/notifications/preferences"
 import { generateAccessToken } from "@/lib/tokens"
 import { formatDate } from "@/lib/utils"
 import { notifyCommentPosted } from "@/lib/comms/notify"
@@ -218,6 +219,147 @@ export async function savePurchaseOrder(input: PurchaseOrderInputT) {
 }
 
 /**
+ * Copy a purchase order to another job (or duplicate within the same job).
+ * The copy is always a fresh DRAFT: token, release/approval/decline/void
+ * state and work-complete flags are all reset, and source_bid_recipient_id
+ * is dropped (it points at a bid recipient in the SOURCE project). Line items
+ * + attachments carry over — cost codes and the vendor company are global
+ * catalogs, so cost_code_id and company_id copy verbatim. po_comments are
+ * NOT copied. Runs under the caller's session, so RLS limits the target to
+ * projects the staffer can see.
+ */
+const CopyPurchaseOrderInput = z.object({
+  id: z.string().uuid(),
+  target_project_id: z.string().uuid(),
+})
+
+export async function copyPurchaseOrder(
+  input: z.infer<typeof CopyPurchaseOrderInput>
+) {
+  const { id, target_project_id } = CopyPurchaseOrderInput.parse(input)
+  const profile = await requireStaff()
+  const supabase = await createSupabaseServerClient()
+
+  const { data: src, error: srcErr } = await supabase
+    .from("purchase_orders")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle()
+  if (srcErr) throw new Error(srcErr.message)
+  if (!src) throw new Error("Purchase order not found")
+
+  const { data: targetProject, error: tgtErr } = await supabase
+    .from("projects")
+    .select("id")
+    .eq("id", target_project_id)
+    .maybeSingle()
+  if (tgtErr) throw new Error(tgtErr.message)
+  if (!targetProject) throw new Error("Target project not found.")
+
+  const sameProject = src.project_id === target_project_id
+
+  // Race-safe per-project number, same retry loop as savePurchaseOrder. The
+  // insert omits every release/approval column so they take their draft
+  // defaults (token null, status 'draft', etc.).
+  let newId: string | null = null
+  for (let attempt = 0; attempt < 5 && !newId; attempt++) {
+    const { data: nextNum, error: rpcErr } = await supabase.rpc("next_po_number", {
+      p_project: target_project_id,
+    })
+    if (rpcErr) throw new Error(rpcErr.message)
+    const { data, error } = await supabase
+      .from("purchase_orders")
+      .insert({
+        project_id: target_project_id,
+        number: Number(nextNum),
+        title: src.title,
+        scope: src.scope,
+        company_id: src.company_id,
+        custom_number: src.custom_number,
+        approval_deadline: src.approval_deadline,
+        flat_fee: src.flat_fee,
+        flat_total: src.flat_total,
+        status: "draft",
+        created_by: profile.id,
+      })
+      .select("id")
+      .single()
+    if (!error) {
+      newId = data.id
+      break
+    }
+    if (error.code !== "23505") throw new Error(error.message)
+    await new Promise((r) => setTimeout(r, 25 + Math.random() * 50))
+  }
+  if (!newId) {
+    throw new Error("Could not allocate a PO number after 5 attempts.")
+  }
+
+  // Line items — plain insert (nothing FKs them).
+  const { data: srcLines } = await supabase
+    .from("po_line_items")
+    .select("*")
+    .eq("purchase_order_id", id)
+    .order("position", { ascending: true })
+  if (srcLines?.length) {
+    const { error: liErr } = await supabase.from("po_line_items").insert(
+      srcLines.map((li) => ({
+        purchase_order_id: newId!,
+        cost_code_id: li.cost_code_id,
+        description: li.description,
+        quantity: li.quantity,
+        unit: li.unit,
+        unit_cost: li.unit_cost,
+        position: li.position,
+      }))
+    )
+    if (liErr) throw new Error(liErr.message)
+  }
+
+  // Attachments — copy each storage blob to a fresh key under the target
+  // project. A failed blob copy is non-fatal.
+  const { data: srcAtts } = await supabase
+    .from("po_attachments")
+    .select("*")
+    .eq("purchase_order_id", id)
+    .order("position", { ascending: true })
+  for (const a of srcAtts ?? []) {
+    const ext = a.file_name.split(".").pop()?.toLowerCase() ?? "bin"
+    const newPath = `projects/${target_project_id}/purchase-orders/${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}.${ext}`
+    const { error: copyErr } = await supabase.storage
+      .from("project-files")
+      .copy(a.storage_path, newPath)
+    if (copyErr) {
+      console.warn(
+        "[copyPurchaseOrder] attachment blob copy failed (skipping):",
+        copyErr.message
+      )
+      continue
+    }
+    const { error: aErr } = await supabase.from("po_attachments").insert({
+      purchase_order_id: newId,
+      storage_bucket: a.storage_bucket,
+      storage_path: newPath,
+      file_name: a.file_name,
+      file_type: a.file_type,
+      file_size: a.file_size,
+      caption: a.caption,
+      position: a.position,
+    })
+    if (aErr) {
+      await supabase.storage.from("project-files").remove([newPath])
+      throw new Error(aErr.message)
+    }
+  }
+
+  revalidatePath(`/projects/${target_project_id}/purchase-orders`)
+  if (!sameProject) revalidatePath(`/projects/${src.project_id}/purchase-orders`)
+  return { id: newId, project_id: target_project_id, sameProject }
+}
+
+/**
  * Release a draft PO to the sub: mint a fresh access token, flip to
  * `released`, and email/SMS the company their public approval link.
  */
@@ -281,7 +423,15 @@ export async function releasePurchaseOrder({
       counterparty_name: company.name,
     }
     const sendJobs: Promise<unknown>[] = []
-    if (company.email) {
+    if (
+      company.email &&
+      (await isChannelEnabled(
+        supabase,
+        { companyId: po.company_id },
+        "bids_pos",
+        "email"
+      ))
+    ) {
       sendJobs.push(
         sendEmail({
           to: [company.email],
@@ -292,7 +442,15 @@ export async function releasePurchaseOrder({
       )
     }
     const e164 = company.phone ? normalizeE164(company.phone) : null
-    if (e164) {
+    if (
+      e164 &&
+      (await isChannelEnabled(
+        supabase,
+        { companyId: po.company_id },
+        "bids_pos",
+        "sms"
+      ))
+    ) {
       sendJobs.push(
         sendQuoSms({
           to: e164,

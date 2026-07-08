@@ -20,6 +20,8 @@ export type PurchaseOrdersData = {
   comments: Tables<"po_comments">[]
   companies: Pick<Tables<"companies">, "id" | "name" | "type" | "trade_category">[]
   cost_codes: Pick<Tables<"cost_codes">, "id" | "code" | "name" | "position" | "is_active">[]
+  // Projects the caller can see — destinations for "Copy to job…".
+  projects: Pick<Tables<"projects">, "id" | "name" | "project_number">[]
   // source_bid_recipient_id -> the bid package it was awarded from.
   source_bids: Record<string, { number: number; title: string }>
   signed_urls: Record<string, string>

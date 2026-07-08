@@ -1,3 +1,4 @@
+import { cache } from "react"
 import { redirect } from "next/navigation"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import type { Tables, Enums } from "@/lib/db/types"
@@ -21,7 +22,13 @@ const SSO_ENABLED = process.env.NEXT_PUBLIC_ENTRA_SSO_ENABLED === "1"
  * profile row on-demand. The DB trigger trg_prevent_role_escalation prevents
  * a later UPDATE from elevating this profile's role.
  */
-export async function getSessionProfile(): Promise<SessionProfile | null> {
+// Wrapped in React cache() so a single request render dedupes the
+// auth.getUser() round-trip + profiles SELECT across every caller
+// (app layout, nested layout, page, and each signed-URL server action all
+// call requireSession/requireStaff). cache() is per-request only, keyed by
+// args (there are none here), so nothing leaks across requests. The
+// self-heal insert / SSO signOut side-effects therefore run at most once.
+export const getSessionProfile = cache(async (): Promise<SessionProfile | null> => {
   const supabase = await createSupabaseServerClient()
   const {
     data: { user },
@@ -108,7 +115,7 @@ export async function getSessionProfile(): Promise<SessionProfile | null> {
     return null
   }
   return created ?? null
-}
+})
 
 /**
  * Authentication methods used to establish the CURRENT session, read from

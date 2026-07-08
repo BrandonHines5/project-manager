@@ -81,7 +81,7 @@ export function RolesClient({
         .sort((a, b) => a.name.localeCompare(b.name))
     return (
       [
-        { key: "staff", label: "Staff", roles: byKind("staff") },
+        { key: "staff", label: "Team", roles: byKind("staff") },
         { key: "company", label: "Subs / vendors", roles: byKind("company") },
         { key: "any", label: "Anyone", roles: byKind("any") },
       ] as const
@@ -331,7 +331,7 @@ function AddRoleForm() {
             onChange={(e) => setKind(e.target.value as RoleKind)}
           >
             <option value="any">Anyone</option>
-            <option value="staff">Staff</option>
+            <option value="staff">Team</option>
             <option value="company">Sub / vendor</option>
           </Select>
         </Field>
@@ -414,7 +414,7 @@ function EditRoleDialog({
           <Field label="Usually filled by">
             <Select value={kind} onChange={(e) => setKind(e.target.value as RoleKind)}>
               <option value="any">Anyone</option>
-              <option value="staff">Staff</option>
+              <option value="staff">Team</option>
               <option value="company">Sub / vendor</option>
             </Select>
           </Field>

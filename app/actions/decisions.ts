@@ -7,6 +7,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { requireSession, requireStaff } from "@/lib/auth"
 import { addDays, formatCurrency, formatDate, todayISO } from "@/lib/utils"
 import { sendEmail, appUrl } from "@/lib/email"
+import { isChannelEnabled } from "@/lib/notifications/preferences"
 import { sendDashboardWebhook } from "@/lib/dashboard"
 import { notifyCommentPosted } from "@/lib/comms/notify"
 import type { TablesInsert, TablesUpdate } from "@/lib/db/types"
@@ -839,7 +840,17 @@ async function notifyClientOfDecision(
         }
       }
     ).profiles
-    if (prof.role === "client" && prof.email && prof.notifications_enabled)
+    if (
+      prof.role === "client" &&
+      prof.email &&
+      prof.notifications_enabled &&
+      (await isChannelEnabled(
+        supabase,
+        { profileId: m.profile_id },
+        "client_decisions",
+        "email"
+      ))
+    )
       recipients.push({
         profile_id: m.profile_id,
         email: prof.email,
@@ -929,12 +940,26 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
 
   const { data: staff } = await admin
     .from("profiles")
-    .select("email")
+    .select("id, email")
     .eq("role", "staff")
     .eq("notifications_enabled", true)
-  const emails = (staff ?? [])
-    .map((p) => p.email)
-    .filter((e): e is string => !!e)
+  const staffWithEmail = (staff ?? []).filter(
+    (p): p is { id: string; email: string } => !!p.email
+  )
+  // Honor each staffer's client_decisions/email preference.
+  const gated = await Promise.all(
+    staffWithEmail.map(async (p) =>
+      (await isChannelEnabled(
+        admin,
+        { profileId: p.id },
+        "client_decisions",
+        "email"
+      ))
+        ? p.email
+        : null
+    )
+  )
+  const emails = gated.filter((e): e is string => !!e)
   if (!emails.length) {
     console.warn(
       "[approved-decision email] skipped — no staff with notifications_enabled + an email on file"
@@ -1006,7 +1031,7 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
     : "(unknown project)"
   const approver = d.client_approver?.full_name || d.client_approver?.email
     ? `${d.client_approver?.full_name ?? d.client_approver?.email} (client)`
-    : "Staff"
+    : "Team"
   const creatorLabel =
     d.creator?.full_name || d.creator?.email || "(unknown)"
 

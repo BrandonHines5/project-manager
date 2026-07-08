@@ -35,6 +35,9 @@ export type OnsiteProjectContext = {
   project_number: string
   address: string | null
   mode?: "onsite" | "page"
+  // The staffer running the walkthrough — used as the default assignee for
+  // onsite-created to-dos (item 4: every one must have an owner + due date).
+  currentUser?: { id: string; name: string } | null
 }
 
 const buildSystemPrompt = (
@@ -96,7 +99,12 @@ ${
       projectContext.mode === "page"
         ? ""
         : `
-- Any photos the user took are uploaded and attached to the daily log automatically outside this conversation — never mention needing them, and don't propose anything about photos.`
+- Any photos the user took are uploaded and attached to the daily log automatically outside this conversation — never mention needing them, and don't propose anything about photos.
+- Every to-do you propose from these site notes MUST have BOTH a due date AND exactly one assignee. If the note says who should do it, assign them (find staff with list_staff, subs/vendors with list_companies). If no one is named, assign it to the person doing this walkthrough${
+          projectContext.currentUser
+            ? `: ${projectContext.currentUser.name} (profile id ${projectContext.currentUser.id})`
+            : " (the current staff user)"
+        }. If the note gives no timeframe, set the due date to today (${today}); otherwise use the near-term date the note implies.`
     }
 `
     : ""
@@ -595,7 +603,7 @@ async function resolveAssigneeName(
       .eq("id", profileId)
       .maybeSingle()
     if (!prof) return false
-    return prof.full_name || prof.email || "Staff member"
+    return prof.full_name || prof.email || "Team member"
   }
   if (companyId) {
     const { data: co } = await supabase

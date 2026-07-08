@@ -28,6 +28,8 @@ export type BidsData = {
   >[]
   company_trades: Pick<Tables<"company_trades">, "company_id" | "trade">[]
   cost_codes: Pick<Tables<"cost_codes">, "id" | "code" | "name" | "position" | "is_active">[]
+  // Projects the caller can see — destinations for "Copy to job…".
+  projects: Pick<Tables<"projects">, "id" | "name" | "project_number">[]
   signed_urls: Record<string, string>
 }
 

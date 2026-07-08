@@ -828,6 +828,20 @@ export function Walkthrough({
               </div>
             )}
 
+            {/* Item 5 — recommend photos on job logs that have none. The
+                walkthrough always writes a daily log; nudge (non-blocking) to
+                add site photos before submitting when the user has notes but
+                hasn't attached any. */}
+            {nonEmptySegments.length > 0 &&
+              photos.length === 0 &&
+              uploadingCount === 0 && (
+                <div className="rounded-md border border-amber-300/60 bg-amber-50/70 px-3 py-2 text-xs text-amber-800">
+                  No photos yet — consider snapping a few before you submit. Photos
+                  attach to this job&rsquo;s daily log and help show today&rsquo;s
+                  progress.
+                </div>
+              )}
+
             <Button
               type="button"
               onClick={submit}

@@ -35,6 +35,7 @@ export default async function PurchaseOrdersPage({
     { data: comments, error: commentsError },
     { data: companies, error: companiesError },
     { data: costCodes, error: costCodesError },
+    { data: projects, error: projectsError },
   ] = await Promise.all([
     supabase
       .from("purchase_orders")
@@ -66,6 +67,11 @@ export default async function PurchaseOrdersPage({
       .select("id, code, name, position, is_active")
       .eq("is_active", true)
       .order("position", { ascending: true }),
+    // Projects the caller can see — destinations for "copy to another job".
+    supabase
+      .from("projects")
+      .select("id, name, project_number")
+      .order("project_number", { ascending: true }),
   ])
 
   const queryError =
@@ -74,7 +80,8 @@ export default async function PurchaseOrdersPage({
     attachmentsError ??
     commentsError ??
     companiesError ??
-    costCodesError
+    costCodesError ??
+    projectsError
   if (queryError) throw new Error(queryError.message)
 
   const strip = <T extends { purchase_orders?: unknown }>(rows: T[] | null) =>
@@ -131,6 +138,7 @@ export default async function PurchaseOrdersPage({
     comments: strip(comments) as PurchaseOrdersData["comments"],
     companies: companies ?? [],
     cost_codes: costCodes ?? [],
+    projects: projects ?? [],
     source_bids: sourceBids,
     signed_urls: signedUrls,
   }

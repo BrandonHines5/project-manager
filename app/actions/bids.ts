@@ -240,6 +240,141 @@ export async function saveBidPackage(input: BidPackageInputT) {
 }
 
 /**
+ * Copy a bid package to another job (or duplicate within the same job).
+ * Mirrors copyDecision: the copy is always a fresh DRAFT with a newly
+ * allocated per-project number. Line items + attachments are carried over
+ * (cost codes are a global catalog, so cost_code_id copies verbatim), but
+ * recipients / quotes / comments are DROPPED — each recipient row carries a
+ * live token and sub-specific response state, so a copy starts with no
+ * invitees. The insert runs under the caller's session, so RLS restricts the
+ * target to projects the staffer can see.
+ */
+const CopyBidPackageInput = z.object({
+  id: z.string().uuid(),
+  target_project_id: z.string().uuid(),
+})
+
+export async function copyBidPackage(input: z.infer<typeof CopyBidPackageInput>) {
+  const { id, target_project_id } = CopyBidPackageInput.parse(input)
+  const profile = await requireStaff()
+  const supabase = await createSupabaseServerClient()
+
+  const { data: src, error: srcErr } = await supabase
+    .from("bid_packages")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle()
+  if (srcErr) throw new Error(srcErr.message)
+  if (!src) throw new Error("Bid package not found")
+
+  const { data: targetProject, error: tgtErr } = await supabase
+    .from("projects")
+    .select("id")
+    .eq("id", target_project_id)
+    .maybeSingle()
+  if (tgtErr) throw new Error(tgtErr.message)
+  if (!targetProject) throw new Error("Target project not found.")
+
+  const sameProject = src.project_id === target_project_id
+
+  // Race-safe per-project number, same retry loop as saveBidPackage.
+  let newId: string | null = null
+  for (let attempt = 0; attempt < 5 && !newId; attempt++) {
+    const { data: nextNum, error: rpcErr } = await supabase.rpc(
+      "next_bid_package_number",
+      { p_project: target_project_id }
+    )
+    if (rpcErr) throw new Error(rpcErr.message)
+    const { data, error } = await supabase
+      .from("bid_packages")
+      .insert({
+        project_id: target_project_id,
+        number: Number(nextNum),
+        title: src.title,
+        scope: src.scope,
+        due_date: src.due_date,
+        flat_fee: src.flat_fee,
+        allow_multiple_awards: src.allow_multiple_awards,
+        status: "draft",
+        created_by: profile.id,
+      })
+      .select("id")
+      .single()
+    if (!error) {
+      newId = data.id
+      break
+    }
+    if (error.code !== "23505") throw new Error(error.message)
+    await new Promise((r) => setTimeout(r, 25 + Math.random() * 50))
+  }
+  if (!newId) {
+    throw new Error("Could not allocate a bid number after 5 attempts.")
+  }
+
+  // Line items — plain insert (no sub quotes to preserve on a fresh copy).
+  const { data: srcLines } = await supabase
+    .from("bid_package_line_items")
+    .select("*")
+    .eq("bid_package_id", id)
+    .order("position", { ascending: true })
+  if (srcLines?.length) {
+    const { error: liErr } = await supabase.from("bid_package_line_items").insert(
+      srcLines.map((li) => ({
+        bid_package_id: newId!,
+        cost_code_id: li.cost_code_id,
+        description: li.description,
+        quantity: li.quantity,
+        unit: li.unit,
+        position: li.position,
+      }))
+    )
+    if (liErr) throw new Error(liErr.message)
+  }
+
+  // Attachments — copy each storage blob to a fresh key under the target
+  // project, then record the row. A failed blob copy is non-fatal.
+  const { data: srcAtts } = await supabase
+    .from("bid_package_attachments")
+    .select("*")
+    .eq("bid_package_id", id)
+    .order("position", { ascending: true })
+  for (const a of srcAtts ?? []) {
+    const ext = a.file_name.split(".").pop()?.toLowerCase() ?? "bin"
+    const newPath = `projects/${target_project_id}/bids/${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}.${ext}`
+    const { error: copyErr } = await supabase.storage
+      .from("project-files")
+      .copy(a.storage_path, newPath)
+    if (copyErr) {
+      console.warn(
+        "[copyBidPackage] attachment blob copy failed (skipping):",
+        copyErr.message
+      )
+      continue
+    }
+    const { error: aErr } = await supabase.from("bid_package_attachments").insert({
+      bid_package_id: newId,
+      storage_bucket: a.storage_bucket,
+      storage_path: newPath,
+      file_name: a.file_name,
+      file_type: a.file_type,
+      file_size: a.file_size,
+      caption: a.caption,
+      position: a.position,
+    })
+    if (aErr) {
+      await supabase.storage.from("project-files").remove([newPath])
+      throw new Error(aErr.message)
+    }
+  }
+
+  revalidatePath(`/projects/${target_project_id}/bids`)
+  if (!sameProject) revalidatePath(`/projects/${src.project_id}/bids`)
+  return { id: newId, project_id: target_project_id, sameProject }
+}
+
+/**
  * Invite companies to bid (and/or re-send to existing invitees). Flips a
  * draft package to `sent`. Each new recipient gets a fresh access token and
  * an email (+ SMS when a phone is on file) with their public bid link.
