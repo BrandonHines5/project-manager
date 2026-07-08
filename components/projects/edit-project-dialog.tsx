@@ -26,7 +26,6 @@ type EditableProject = {
   project_type: Enums<"project_type"> | null
   contract_price: number | null
   start_date: string | null
-  target_completion_date: string | null
   client_name: string | null
   client_email: string | null
   client_phone: string | null
@@ -86,7 +85,6 @@ function EditProjectDialog({
       project_type: String(fd.get("project_type") ?? ""),
       contract_price: String(fd.get("contract_price") ?? ""),
       start_date: String(fd.get("start_date") ?? ""),
-      target_completion_date: String(fd.get("target_completion_date") ?? ""),
       client_name: String(fd.get("client_name") ?? ""),
       client_email: String(fd.get("client_email") ?? ""),
       client_phone: String(fd.get("client_phone") ?? ""),
@@ -235,13 +233,6 @@ function EditProjectDialog({
                 name="start_date"
                 type="date"
                 defaultValue={project.start_date ?? ""}
-              />
-            </Field>
-            <Field label="Target completion">
-              <Input
-                name="target_completion_date"
-                type="date"
-                defaultValue={project.target_completion_date ?? ""}
               />
             </Field>
             <Field label="Client name">

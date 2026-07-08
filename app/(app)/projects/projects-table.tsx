@@ -4,7 +4,7 @@ import { useMemo, useState } from "react"
 import Link from "next/link"
 import { Search, Activity, AlertTriangle, Tag } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { cn, formatCurrency, formatDate } from "@/lib/utils"
+import { cn, formatCurrency } from "@/lib/utils"
 import { crmStatusTone } from "@/lib/crm-status"
 import {
   ALL_STATUSES,
@@ -73,7 +73,6 @@ export type ProjectRow = {
   status: Enums<"project_status">
   crm_status: string | null
   contract_price: number | null
-  target_completion_date: string | null
   is_template: boolean
   labels: string[]
   metrics: ProjectMetrics
@@ -249,9 +248,6 @@ export function ProjectsTable({
                     Changes
                   </th>
                 )}
-                <th className="text-left font-medium px-4 py-2.5 hidden lg:table-cell">
-                  Target
-                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -330,9 +326,6 @@ export function ProjectsTable({
                         )}
                       </td>
                     )}
-                    <td className="px-4 py-3 text-muted hidden lg:table-cell">
-                      {formatDate(p.target_completion_date)}
-                    </td>
                   </tr>
                 )
               })}

@@ -316,7 +316,6 @@ export async function addWarrantyProjectFromCrm(
       client_phone_2: p.client_phone_2,
       warranty_end_date: p.warranty_end_date,
       start_date: p.start_date,
-      target_completion_date: p.end_date,
       notes: p.notes,
       created_by: profile.id,
     })

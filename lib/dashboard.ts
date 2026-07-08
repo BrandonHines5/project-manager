@@ -207,9 +207,10 @@ export interface DashboardProject {
   // A canonical, absolute dashboard URL for this project, if the dashboard
   // hands one back directly. Preferred over building one ourselves.
   url: string | null
-  // ISO date strings or null. Optional: dashboards may not capture them.
+  // The CRM's "Projected Start Date", mirrored through the dashboard. ISO date
+  // string or null (dashboards may not capture it). PM anchors the new job's
+  // Job Start milestone to this on the template-copy path.
   start_date?: string | null
-  target_completion_date?: string | null
 }
 
 /**
@@ -378,11 +379,12 @@ function normalizeDashboardProject(json: unknown): DashboardProject | null {
       "manager",
     ]),
     url: firstString(r, ["url", "dashboard_url", "link", "permalink"]),
-    start_date:
-      typeof r.start_date === "string" ? r.start_date : null,
-    target_completion_date:
-      typeof r.target_completion_date === "string"
-        ? r.target_completion_date
-        : null,
+    // The CRM calls this "Projected Start Date"; accept the common field
+    // names so the pull works whatever the dashboard names it.
+    start_date: firstString(r, [
+      "start_date",
+      "projected_start_date",
+      "projected_start",
+    ]),
   }
 }

@@ -51,7 +51,7 @@ export default async function ProjectDetailLayout({
   const { data: project } = await supabase
     .from("projects")
     .select(
-      "id, project_number, name, address, status, crm_status, project_type, dashboard_url, project_manager, client_name, client_email, client_phone, client_name_2, client_email_2, client_phone_2, contract_price, cost_plus, is_template, start_date, target_completion_date, notes"
+      "id, project_number, name, address, status, crm_status, project_type, dashboard_url, project_manager, client_name, client_email, client_phone, client_name_2, client_email_2, client_phone_2, contract_price, cost_plus, is_template, start_date, notes"
     )
     .eq("id", id)
     .maybeSingle()
@@ -204,7 +204,6 @@ export default async function ProjectDetailLayout({
                     project_type: project.project_type,
                     contract_price: project.contract_price,
                     start_date: project.start_date,
-                    target_completion_date: project.target_completion_date,
                     client_name: project.client_name,
                     client_email: project.client_email,
                     client_phone: project.client_phone,
