@@ -44,7 +44,16 @@ import {
 } from "@/lib/speech/web-speech"
 import { useScreenWakeLock } from "@/lib/hooks/use-wake-lock"
 
-type Message = { role: "user" | "assistant"; content: string }
+// `isQuestion` marks an assistant turn that is the agent's ask_user clarifying
+// question (vs a help-desk / reporting answer or a plan summary), so the bubble
+// can label it correctly without guessing from the text. Optional + stripped
+// server-side (ClientMessageSchema only keeps role/content), so it never
+// round-trips to the model.
+type Message = {
+  role: "user" | "assistant"
+  content: string
+  isQuestion?: boolean
+}
 
 type Phase =
   | { kind: "compose" }
@@ -75,9 +84,10 @@ function projectIdFromPath(path: string | null): string | null {
 }
 
 const STARTER_EXAMPLES = [
+  "How do I set a schedule baseline?",
+  "What's the difference between a change order and a selection?",
   "The tile guy says he will finish today",
   "The dumpster needs to be flipped — text the dumpster company",
-  "I need to order more 2x4s",
   "Add 'Check that nails are picked up' to the framing to-do in every open project",
 ]
 
@@ -254,7 +264,7 @@ export function AIAgent({ dark = false }: { dark?: boolean }) {
       // see what they're answering, then move to the "question" phase.
       setMessages([
         ...currentMessages,
-        { role: "assistant", content: result.question },
+        { role: "assistant", content: result.question, isQuestion: true },
       ])
       setPhase({ kind: "question", question: result.question })
       requestAnimationFrame(() => textareaRef.current?.focus())
@@ -344,7 +354,7 @@ export function AIAgent({ dark = false }: { dark?: boolean }) {
             : "border-brand-500 bg-brand-500/10 text-brand-700 hover:bg-brand-500/20"
         )}
         aria-label="Open AI assistant"
-        title="AI smart updates"
+        title="AI assistant — help desk, reports & smart updates"
       >
         <Sparkles className="h-4 w-4" />
         <span className="hidden sm:inline">AI</span>
@@ -357,13 +367,13 @@ export function AIAgent({ dark = false }: { dark?: boolean }) {
               <DialogTitle>
                 <span className="inline-flex items-center gap-2">
                   <Sparkles className="h-4 w-4 text-brand-500" />
-                  AI smart updates
+                  AI assistant
                 </span>
               </DialogTitle>
               <DialogDescription>
-                Talk or type what&apos;s happening on site — schedule updates,
-                texts to subs, to-dos, and a daily-log note are drafted for
-                your review before anything happens.
+                Ask how the app works, ask about your jobs, or talk/type
+                what&apos;s happening on site. Any schedule updates, texts, or
+                to-dos are drafted for your review before anything happens.
               </DialogDescription>
             </div>
           </DialogHeader>
@@ -394,7 +404,12 @@ export function AIAgent({ dark = false }: { dark?: boolean }) {
                 <Starter onPick={(s) => setDraft(s)} />
               )}
               {messages.map((m, i) => (
-                <Bubble key={i} role={m.role} text={m.content} />
+                <Bubble
+                  key={i}
+                  role={m.role}
+                  text={m.content}
+                  isQuestion={m.isQuestion}
+                />
               ))}
               {phase.kind === "thinking" && (
                 <div className="flex items-center gap-2 text-sm text-muted">
@@ -451,7 +466,7 @@ export function AIAgent({ dark = false }: { dark?: boolean }) {
                         ? "Type your answer…"
                         : listening
                           ? "Listening… talk now"
-                          : "What's happening on site? (⌘+Enter to send)"
+                          : "Ask how something works, or say what's happening on site (⌘+Enter)"
                     }
                     disabled={pending}
                     className="min-h-[60px]"
@@ -507,7 +522,17 @@ export function AIAgent({ dark = false }: { dark?: boolean }) {
   )
 }
 
-function Bubble({ role, text }: { role: "user" | "assistant"; text: string }) {
+function Bubble({
+  role,
+  text,
+  isQuestion,
+}: {
+  role: "user" | "assistant"
+  text: string
+  // True only for the agent's ask_user clarifying question — set by
+  // handleResult, not inferred from the text.
+  isQuestion?: boolean
+}) {
   const isUser = role === "user"
   return (
     <div
@@ -526,7 +551,7 @@ function Bubble({ role, text }: { role: "user" | "assistant"; text: string }) {
       >
         {!isUser && (
           <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted mb-1">
-            {text.toLowerCase().includes("?") ? (
+            {isQuestion ? (
               <>
                 <HelpCircle className="h-3 w-3" />
                 Clarifying question
