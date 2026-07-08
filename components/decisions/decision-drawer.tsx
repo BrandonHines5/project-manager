@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useTransition, useRef, useEffect, Fragment } from "react"
+import { useState, useTransition, useRef, useEffect, useMemo, Fragment } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import {
@@ -159,8 +159,9 @@ export function DecisionDrawer({
   )
   // Existing template-tag vocabulary across this project's decisions, so the
   // tags field can suggest reusing one instead of coining a variant.
-  const tagSuggestions = collectBaseTags(
-    data.decisions.map((d) => d.template_tags)
+  const tagSuggestions = useMemo(
+    () => collectBaseTags(data.decisions.map((d) => d.template_tags)),
+    [data.decisions]
   )
   const [dueDate, setDueDate] = useState<string>(decision?.due_date ?? "")
   // Due-date link: instead of a fixed date, the due date can follow a

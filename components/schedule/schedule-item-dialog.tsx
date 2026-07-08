@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useTransition } from "react"
+import { useState, useTransition, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import {
@@ -113,7 +113,10 @@ export function ScheduleItemDialog({
   )
   // Existing template-tag vocabulary across this project's schedule items, so
   // the tags field can suggest reusing one instead of coining a variant.
-  const tagSuggestions = collectBaseTags(data.items.map((i) => i.template_tags))
+  const tagSuggestions = useMemo(
+    () => collectBaseTags(data.items.map((i) => i.template_tags)),
+    [data.items]
+  )
   const [startDate, setStartDate] = useState(item?.start_date ?? "")
   const [endDate, setEndDate] = useState(item?.end_date ?? "")
   // Duration is in business days (M–F). Derived from start+end on existing
