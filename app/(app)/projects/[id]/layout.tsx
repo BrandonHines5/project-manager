@@ -8,6 +8,7 @@ import { MembersButton } from "@/components/projects/members-dialog"
 import { DuplicateProjectButton } from "@/components/projects/duplicate-button"
 import { EditProjectButton } from "@/components/projects/edit-project-dialog"
 import { SyncDashboardButton } from "@/components/projects/sync-dashboard-button"
+import { BrandTile } from "@/components/layout/brand-tile"
 import { brandForProjectType } from "@/lib/brand"
 import { crmStatusTone } from "@/lib/crm-status"
 import type { Enums } from "@/lib/db/types"
@@ -101,11 +102,7 @@ export default async function ProjectDetailLayout({
             const brand = brandForProjectType(project.project_type)
             return (
               <div className="flex items-center gap-2 mb-2">
-                <div className="h-7 w-7 rounded-md bg-brand-500 text-white flex items-center justify-center font-bold text-[11px]">
-                  {/* Static SVG mark from /public — next/image adds no benefit for SVGs. */}
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={brand.mark} alt={brand.name} className="h-5 w-5" />
-                </div>
+                <BrandTile brand={brand} className="h-7 w-7 rounded-md" imgClassName="h-5 w-5" />
                 <span className="text-sm font-semibold">{brand.name}</span>
               </div>
             )

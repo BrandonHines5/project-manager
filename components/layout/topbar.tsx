@@ -17,6 +17,7 @@ import { Avatar } from "@/components/ui/avatar"
 import { GlobalSearch } from "@/components/layout/global-search"
 import { FeedbackButton } from "@/components/feedback/feedback-button"
 import { MobileNav } from "@/components/layout/mobile-nav"
+import { BrandTile } from "@/components/layout/brand-tile"
 import type { UserRole } from "@/lib/auth"
 import { HINES_HOMES, type Brand } from "@/lib/brand"
 
@@ -94,11 +95,7 @@ export function Topbar({
         href="/projects"
         className="flex items-center gap-2 shrink-0 md:mr-3"
       >
-        <div className="h-8 w-8 rounded-md bg-brand-500 text-white flex items-center justify-center text-sm font-bold">
-          {/* Static SVG mark from /public — next/image adds no benefit for SVGs. */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={brand.mark} alt={brand.name} className="h-6 w-6" />
-        </div>
+        <BrandTile brand={brand} className="h-8 w-8 rounded-md" imgClassName="h-6 w-6" />
         {/* Brand text yields to the menus below lg; the mark alone carries
             the brand at tablet widths. */}
         <div className="hidden lg:block leading-tight">
