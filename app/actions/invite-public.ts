@@ -95,10 +95,13 @@ export async function acceptClientInvite(input: {
       password,
     })
     if (pwErr) return { ok: false, error: pwErr.message }
-    await admin
+    const { error: discErr } = await admin
       .from("profiles")
       .update({ disclaimer_accepted_at: now, disclaimer_version: CLIENT_DISCLAIMER_VERSION })
       .eq("id", profileId)
+    if (discErr) {
+      return { ok: false, error: "Could not record disclaimer acceptance." }
+    }
   } else {
     const { data: created, error: createErr } =
       await admin.auth.admin.createUser({
@@ -118,7 +121,7 @@ export async function acceptClientInvite(input: {
     profileId = created.user.id
     // handle_new_user inserts a role='client' profile; upsert reaffirms it and
     // stamps the disclaimer in one shot (admin bypasses the escalation trigger).
-    await admin.from("profiles").upsert(
+    const { error: upsertErr } = await admin.from("profiles").upsert(
       {
         id: profileId,
         email,
@@ -129,6 +132,9 @@ export async function acceptClientInvite(input: {
       },
       { onConflict: "id" }
     )
+    if (upsertErr) {
+      return { ok: false, error: "Could not record disclaimer acceptance." }
+    }
   }
 
   // Add them to the project as a client member (idempotent).

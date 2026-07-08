@@ -35,6 +35,13 @@ export default async function NotificationSettingsPage() {
         .in("type", ["sub", "vendor"])
         .order("name"),
     ])
+    if (profRes.error || coRes.error) {
+      console.error(
+        "[notifications settings] failed to load profiles/companies",
+        profRes.error?.message,
+        coRes.error?.message
+      )
+    }
     profiles = (profRes.data ?? []) as typeof profiles
     companies = coRes.data ?? []
   }

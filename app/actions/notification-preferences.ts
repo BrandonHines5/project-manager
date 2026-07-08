@@ -75,7 +75,21 @@ export async function saveNotificationPreference(
       channel: parsed.channel,
       enabled: parsed.enabled,
     })
-    if (error) throw new Error(error.message)
+    if (error && (error as { code?: string }).code === "23505") {
+      // Lost a read-then-write race (duplicate click / multi-tab) — someone
+      // inserted the same (owner, category, channel) first. Fall back to update.
+      const col = parsed.profile_id ? "profile_id" : "company_id"
+      const val = parsed.profile_id ?? parsed.company_id!
+      const { error: retryErr } = await supabase
+        .from("notification_preferences")
+        .update({ enabled: parsed.enabled })
+        .eq(col, val)
+        .eq("category", parsed.category)
+        .eq("channel", parsed.channel)
+      if (retryErr) throw new Error(retryErr.message)
+    } else if (error) {
+      throw new Error(error.message)
+    }
   }
 
   revalidatePath("/settings/notifications")

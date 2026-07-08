@@ -102,6 +102,7 @@ export async function runAgentTurnAction(input: {
   context?: OnsiteContextInput
 }): Promise<AgentTurnResult> {
   const profile = await requireStaff()
+  const displayName = profile.full_name || profile.email || "Team member"
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
     return {
@@ -142,7 +143,7 @@ export async function runAgentTurnAction(input: {
       mode: context.mode,
       currentUser: {
         id: profile.id,
-        name: profile.full_name || profile.email || "Team member",
+        name: displayName,
       },
     }
   }
@@ -182,8 +183,7 @@ export async function runAgentTurnAction(input: {
         if (!m.assignee_profile_id && !m.assignee_company_id) {
           m.assignee_profile_id = profile.id
           if (!m.context.assignee_name) {
-            m.context.assignee_name =
-              profile.full_name || profile.email || "Team member"
+            m.context.assignee_name = displayName
           }
         }
       }

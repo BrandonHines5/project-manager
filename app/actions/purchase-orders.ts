@@ -228,13 +228,15 @@ export async function savePurchaseOrder(input: PurchaseOrderInputT) {
  * NOT copied. Runs under the caller's session, so RLS limits the target to
  * projects the staffer can see.
  */
-export async function copyPurchaseOrder({
-  id,
-  target_project_id,
-}: {
-  id: string
-  target_project_id: string
-}) {
+const CopyPurchaseOrderInput = z.object({
+  id: z.string().uuid(),
+  target_project_id: z.string().uuid(),
+})
+
+export async function copyPurchaseOrder(
+  input: z.infer<typeof CopyPurchaseOrderInput>
+) {
+  const { id, target_project_id } = CopyPurchaseOrderInput.parse(input)
   const profile = await requireStaff()
   const supabase = await createSupabaseServerClient()
 

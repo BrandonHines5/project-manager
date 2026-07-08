@@ -1,5 +1,6 @@
 "use server"
 
+import { z } from "zod"
 import { revalidatePath } from "next/cache"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
@@ -22,6 +23,8 @@ export type InviteClientsResult = {
 export async function inviteProjectClients(
   projectId: string
 ): Promise<InviteClientsResult> {
+  const parsedId = z.string().uuid().safeParse(projectId)
+  if (!parsedId.success) throw new Error("Invalid project id")
   const me = await requireStaff()
   const supabase = await createSupabaseServerClient()
 
@@ -110,7 +113,7 @@ export async function inviteProjectClients(
       result.sent += 1
       result.details.push({ email, status: "sent" })
     } catch (e) {
-      console.warn("[inviteProjectClients] failed for", email, e)
+      console.warn("[inviteProjectClients] failed for contact slot", c.slot, e)
       result.details.push({ email, status: "failed" })
     }
   }

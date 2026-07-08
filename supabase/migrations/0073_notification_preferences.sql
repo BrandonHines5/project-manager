@@ -88,7 +88,8 @@ begin
   -- Per-category in-app preference (0073). `inbound_${kind}` types are built
   -- dynamically, so match the family with LIKE.
   v_category := case
-    when new.type in ('schedule_assignment','decision_followup') then 'assignments'
+    when new.type = 'schedule_assignment' then 'assignments'
+    when new.type in ('decision_assignment','decision_followup','decision_due_reset_request') then 'client_decisions'
     when new.type in ('bid_submitted','bid_declined','po_approved','po_declined') then 'bids_pos'
     when new.type = 'comment_posted' or new.type like 'inbound_%' then 'comments'
     else null

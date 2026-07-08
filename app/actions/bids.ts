@@ -249,13 +249,13 @@ export async function saveBidPackage(input: BidPackageInputT) {
  * invitees. The insert runs under the caller's session, so RLS restricts the
  * target to projects the staffer can see.
  */
-export async function copyBidPackage({
-  id,
-  target_project_id,
-}: {
-  id: string
-  target_project_id: string
-}) {
+const CopyBidPackageInput = z.object({
+  id: z.string().uuid(),
+  target_project_id: z.string().uuid(),
+})
+
+export async function copyBidPackage(input: z.infer<typeof CopyBidPackageInput>) {
+  const { id, target_project_id } = CopyBidPackageInput.parse(input)
   const profile = await requireStaff()
   const supabase = await createSupabaseServerClient()
 

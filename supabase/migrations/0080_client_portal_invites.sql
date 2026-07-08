@@ -40,6 +40,12 @@ create index if not exists idx_client_invites_project on public.client_invites(p
 create index if not exists idx_client_invites_token on public.client_invites(token);
 create index if not exists idx_client_invites_accepted_profile
   on public.client_invites(accepted_profile_id);
+-- Hard guarantee of the one-open-invite-per-contact-per-job rule (the app also
+-- refreshes an open invite in place). Scoped to unaccepted invites so a
+-- re-invite after acceptance is still allowed.
+create unique index if not exists uq_client_invites_open
+  on public.client_invites (project_id, email)
+  where accepted_at is null;
 
 alter table public.client_invites enable row level security;
 
