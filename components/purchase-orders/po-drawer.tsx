@@ -19,6 +19,7 @@ import {
   Gavel,
   MessageSquare,
   Lock,
+  Copy,
 } from "lucide-react"
 import {
   Dialog,
@@ -42,6 +43,7 @@ import {
   setPoWorkComplete,
   deletePurchaseOrder,
   postPoCommentStaff,
+  copyPurchaseOrder,
   type PurchaseOrderInputT,
 } from "@/app/actions/purchase-orders"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
@@ -87,6 +89,32 @@ export function PoDrawer({
   // CopyDecisionFooter for why).
   const [approveOpen, setApproveOpen] = useState(false)
   const [signerName, setSignerName] = useState("")
+  const [copyOpen, setCopyOpen] = useState(false)
+
+  function handleCopy(targetProjectId: string) {
+    if (!po) return
+    startTransition(async () => {
+      try {
+        const r = await copyPurchaseOrder({
+          id: po.id,
+          target_project_id: targetProjectId,
+        })
+        const targetProject = data.projects.find((p) => p.id === targetProjectId)
+        toast.success(
+          r.sameProject
+            ? "Copied — new draft created in this project"
+            : `Copied to ${targetProject?.project_number ?? "the selected project"}`
+        )
+        router.refresh()
+        if (!r.sameProject) {
+          router.push(`/projects/${targetProjectId}/purchase-orders`)
+        }
+        onClose()
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Copy failed")
+      }
+    })
+  }
 
   const status = po?.status ?? "draft"
   const isDraft = status === "draft"
@@ -628,7 +656,15 @@ export function PoDrawer({
             comments={myComments}
           />
         </DialogBody>
-        {approveOpen && po ? (
+        {copyOpen && po ? (
+          <CopyPoFooter
+            projects={data.projects}
+            currentProjectId={data.project_id}
+            pending={pending}
+            onCancel={() => setCopyOpen(false)}
+            onCopy={handleCopy}
+          />
+        ) : approveOpen && po ? (
           <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:items-center">
             <div className="flex-1 min-w-0">
               <Label className="mb-1">
@@ -661,16 +697,28 @@ export function PoDrawer({
           </DialogFooter>
         ) : (
           <DialogFooter className="flex-wrap">
-            {po && isDraft && (
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={handleDelete}
-                disabled={pending}
-                className="mr-auto text-danger hover:bg-red-50"
-              >
-                <Trash2 className="h-4 w-4" /> Delete
-              </Button>
+            {po && (
+              <div className="mr-auto flex items-center gap-1">
+                {isDraft && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={handleDelete}
+                    disabled={pending}
+                    className="text-danger hover:bg-red-50"
+                  >
+                    <Trash2 className="h-4 w-4" /> Delete
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setCopyOpen(true)}
+                  disabled={pending}
+                >
+                  <Copy className="h-4 w-4" /> Copy to job…
+                </Button>
+              </div>
             )}
             <Button type="button" variant="ghost" onClick={onClose}>
               Cancel
@@ -786,6 +834,50 @@ export function PoDrawer({
         )}
       </DialogContent>
     </Dialog>
+  )
+}
+
+// Inline footer for copying this PO to another job — mirrors CopyDecisionFooter.
+function CopyPoFooter({
+  projects,
+  currentProjectId,
+  pending,
+  onCancel,
+  onCopy,
+}: {
+  projects: PurchaseOrdersData["projects"]
+  currentProjectId: string
+  pending: boolean
+  onCancel: () => void
+  onCopy: (targetProjectId: string) => void
+}) {
+  const [target, setTarget] = useState(currentProjectId)
+  const sorted = [...projects].sort((a, b) =>
+    a.project_number.localeCompare(b.project_number)
+  )
+  return (
+    <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+      <div className="flex-1 min-w-0">
+        <Label className="mb-1">Copy this PO to…</Label>
+        <Select value={target} onChange={(e) => setTarget(e.target.value)}>
+          {sorted.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.project_number} — {p.name}
+              {p.id === currentProjectId ? " (this project)" : ""}
+            </option>
+          ))}
+        </Select>
+      </div>
+      <div className="flex items-center gap-2 sm:self-end">
+        <Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>
+          Cancel
+        </Button>
+        <Button type="button" onClick={() => onCopy(target)} disabled={pending}>
+          <Copy className="h-4 w-4" />
+          {pending ? "Copying…" : "Create copy"}
+        </Button>
+      </div>
+    </DialogFooter>
   )
 }
 
