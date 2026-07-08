@@ -3208,7 +3208,9 @@ function CatalogLinkSearch({
           Type at least 2 characters to search.
         </p>
       ) : error ? (
-        <p className="text-xs text-danger">{error}</p>
+        <p className="text-xs text-danger max-h-24 overflow-y-auto break-words whitespace-pre-wrap">
+          {error}
+        </p>
       ) : searching && hits.length === 0 ? (
         <p className="text-[11px] text-muted">Searching…</p>
       ) : hits.length === 0 ? (

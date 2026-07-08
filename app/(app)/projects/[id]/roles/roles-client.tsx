@@ -7,6 +7,7 @@ import { Pencil, Plus, Trash2, Users } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 import { Field, Input, Select } from "@/components/ui/input"
+import { roleLabel } from "@/lib/utils"
 import {
   Dialog,
   DialogContent,
@@ -251,7 +252,7 @@ function RoleRow({
                   <optgroup key="people" label="People">
                     {people.map((p) => (
                       <option key={p.id} value={`p:${p.id}`}>
-                        {(p.full_name || p.email) + ` · ${p.role}`}
+                        {(p.full_name || p.email) + ` · ${roleLabel(p.role)}`}
                       </option>
                     ))}
                   </optgroup>

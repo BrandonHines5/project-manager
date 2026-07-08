@@ -10,7 +10,7 @@ import {
   CheckCircle2,
   Circle,
 } from "lucide-react"
-import { cn, formatDate } from "@/lib/utils"
+import { cn, formatDate, roleLabel } from "@/lib/utils"
 import { AssigneeChips } from "./assignee-chips"
 import { EmptyState } from "@/components/ui/empty"
 import { Button } from "@/components/ui/button"
@@ -130,7 +130,10 @@ export function TodosView({
   const assigneeOptions = useMemo(() => {
     const opts: { value: string; label: string }[] = []
     for (const p of data.profiles)
-      opts.push({ value: p.id, label: `${p.full_name || p.email} · ${p.role}` })
+      opts.push({
+        value: p.id,
+        label: `${p.full_name || p.email} · ${roleLabel(p.role)}`,
+      })
     for (const c of data.companies)
       if (c.type !== "client")
         opts.push({ value: c.id, label: `${c.name} (company)` })
