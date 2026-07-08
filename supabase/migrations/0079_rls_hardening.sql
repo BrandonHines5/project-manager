@@ -53,11 +53,11 @@ create policy project_files_trade_read on storage.objects
         select 1
         from public.schedule_item_attachments sia
         join public.schedule_assignments sa on sa.schedule_item_id = sia.schedule_item_id
-        left join public.profiles p on p.id = auth.uid()
+        left join public.profiles p on p.id = (select auth.uid())
         where sia.storage_path = storage.objects.name
           and sia.storage_bucket = storage.objects.bucket_id
           and (
-            sa.profile_id = auth.uid()
+            sa.profile_id = (select auth.uid())
             or sa.company_id = p.company_id
             or (
               sa.role_id is not null
@@ -89,9 +89,12 @@ create policy sia_trade_read on public.schedule_item_attachments
     and (
       exists (
         select 1 from public.schedule_assignments sa
-        left join public.profiles p on p.id = auth.uid()
+        left join public.profiles p on p.id = (select auth.uid())
         where sa.schedule_item_id = schedule_item_attachments.schedule_item_id
-          and (sa.profile_id = auth.uid() or sa.company_id = p.company_id)
+          and (
+            sa.profile_id = (select auth.uid())
+            or sa.company_id = p.company_id
+          )
       )
       or public.trade_sees_item_via_role(schedule_item_attachments.schedule_item_id)
     )
