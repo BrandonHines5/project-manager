@@ -642,7 +642,13 @@ export async function saveDecision(input: DecisionInputT) {
     if (dassDelErr) throw new Error(dassDelErr.message)
 
     const seen = new Set<string>()
-    const assignmentRows = parsed.assignments
+    // Selections only — mirrors the client-side gate and the non-selection
+    // choices cleanup above, so a create-mode kind switch can't persist
+    // invisible assignment rows (which would grant trades RLS read) on a
+    // change order.
+    const sourceAssignments =
+      parsed.kind === "selection" ? parsed.assignments : []
+    const assignmentRows = sourceAssignments
       .map((a) => ({
         profile_id: nz(a.profile_id),
         company_id: nz(a.company_id),
@@ -1979,6 +1985,27 @@ export async function requestDueDateReset(input: {
   if (!decision) return { ok: false, error: "Decision not found." }
   if (decision.status !== "pending_client") {
     return { ok: false, error: "This item isn't awaiting approval." }
+  }
+  // Mirror the RPC's gate: the reset request only exists because approval is
+  // blocked. A not-actually-overdue decision doesn't need one (and shouldn't
+  // let anyone poke staff-wide email).
+  const today = new Date().toISOString().slice(0, 10)
+  if (!decision.due_date || decision.due_date >= today) {
+    return { ok: false, error: "This item isn't past its due date." }
+  }
+
+  // Throttle: one request per person per decision per day. Repeat clicks are
+  // an idempotent success rather than another staff-wide email.
+  const { data: recent } = await supabase
+    .from("decision_comments")
+    .select("id")
+    .eq("decision_id", decision_id)
+    .eq("author_id", profile.id)
+    .ilike("body", "Requested a due-date reset%")
+    .gte("created_at", new Date(Date.now() - 24 * 3600 * 1000).toISOString())
+    .limit(1)
+  if (recent && recent.length > 0) {
+    return { ok: true }
   }
 
   // The comment is the audit trail; RLS enforces author_id = auth.uid().

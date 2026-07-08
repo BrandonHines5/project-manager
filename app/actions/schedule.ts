@@ -632,6 +632,15 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
   // recompute. Same for successors the predecessor cascade just moved.
   await applyAnchoredChildrenCascade(movedIds)
 
+  // Recurring to-do completed via the edit dialog: spawn the next occurrence,
+  // matching setItemStatus / updateScheduleItemFields / the bulk path. Runs
+  // AFTER the checklist/assignment replacement above so the next occurrence
+  // copies the just-saved rows. No-ops (compare-and-swap on the rule) when
+  // the item isn't recurring or was already rolled; never throws.
+  if (parsed.kind === "todo" && parsed.status === "complete") {
+    await rollRecurringTodo(supabase, id!)
+  }
+
   revalidatePath(`/projects/${parsed.project_id}/schedule`)
   return { id }
 }
@@ -2549,33 +2558,62 @@ export async function bulkCopyScheduleItems(input: {
   })
   if (copyable.length === 0) return { ok: 0, skipped }
 
-  const [{ data: checklist }, { data: assignments }, { data: predecessors }] =
-    await Promise.all([
-      supabase
-        .from("todo_checklist_items")
-        .select(
-          "schedule_item_id, label, position, assignee_profile_id, assignee_company_id, assignee_role_id"
-        )
-        .in(
-          "schedule_item_id",
-          copyable.map((i) => i.id)
-        )
-        .order("position", { ascending: true }),
-      supabase
-        .from("schedule_assignments")
-        .select("schedule_item_id, profile_id, company_id, role_id")
-        .in(
-          "schedule_item_id",
-          copyable.map((i) => i.id)
-        ),
-      supabase
-        .from("schedule_predecessors")
-        .select("item_id, predecessor_id, dep_type, lag_days")
-        .in(
-          "item_id",
-          copyable.map((i) => i.id)
-        ),
-    ])
+  // Sub-entity reads run (and are error-checked) BEFORE anything is inserted
+  // so a failed read aborts the copy cleanly instead of landing items with
+  // silently-missing checklists/assignments/links. Paginated: 500 selected
+  // to-dos can carry more checklist rows than PostgREST's 1000-row page cap.
+  const fetchAllPages = async <T>(
+    build: (from: number, to: number) => PromiseLike<{
+      data: T[] | null
+      error: { message: string } | null
+    }>,
+    what: string
+  ): Promise<T[]> => {
+    const page = 1000
+    const out: T[] = []
+    for (let from = 0; ; from += page) {
+      const { data, error } = await build(from, from + page - 1)
+      if (error) throw new Error(`Reading ${what} failed: ${error.message}`)
+      out.push(...(data ?? []))
+      if (!data || data.length < page) return out
+    }
+  }
+  const copyableIds = copyable.map((i) => i.id)
+  const [checklist, assignments, predecessors] = await Promise.all([
+    fetchAllPages(
+      (from, to) =>
+        supabase
+          .from("todo_checklist_items")
+          .select(
+            "schedule_item_id, label, position, assignee_profile_id, assignee_company_id, assignee_role_id"
+          )
+          .in("schedule_item_id", copyableIds)
+          .order("position", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to),
+      "checklists"
+    ),
+    fetchAllPages(
+      (from, to) =>
+        supabase
+          .from("schedule_assignments")
+          .select("schedule_item_id, profile_id, company_id, role_id")
+          .in("schedule_item_id", copyableIds)
+          .order("id", { ascending: true })
+          .range(from, to),
+      "assignments"
+    ),
+    fetchAllPages(
+      (from, to) =>
+        supabase
+          .from("schedule_predecessors")
+          .select("item_id, predecessor_id, dep_type, lag_days")
+          .in("item_id", copyableIds)
+          .order("id", { ascending: true })
+          .range(from, to),
+      "predecessor links"
+    ),
+  ])
 
   // Pre-assign ids so relationships remap without relying on insert-return
   // order (same pattern as duplicateProject).
@@ -2666,10 +2704,11 @@ export async function bulkCopyScheduleItems(input: {
       const { error: clErr } = await supabase
         .from("todo_checklist_items")
         .insert(clRows)
+      // Loud failure: the items already landed, but the caller must know the
+      // copy is incomplete rather than seeing a clean success toast.
       if (clErr) {
-        console.warn(
-          "[bulkCopyScheduleItems] checklist copy failed:",
-          clErr.message
+        throw new Error(
+          `Items copied, but copying their checklists failed: ${clErr.message}`
         )
       }
     }
@@ -2693,9 +2732,8 @@ export async function bulkCopyScheduleItems(input: {
         .from("schedule_assignments")
         .insert(asRows)
       if (asErr) {
-        console.warn(
-          "[bulkCopyScheduleItems] assignment copy failed:",
-          asErr.message
+        throw new Error(
+          `Items copied, but copying their assignments failed: ${asErr.message}`
         )
       }
     }
@@ -2716,9 +2754,8 @@ export async function bulkCopyScheduleItems(input: {
         .from("schedule_predecessors")
         .insert(edgeRows)
       if (edgeErr) {
-        console.warn(
-          "[bulkCopyScheduleItems] predecessor copy failed:",
-          edgeErr.message
+        throw new Error(
+          `Items copied, but copying their predecessor links failed: ${edgeErr.message}`
         )
       }
     }

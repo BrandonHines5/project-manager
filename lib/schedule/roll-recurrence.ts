@@ -5,6 +5,17 @@ import { isRecurrenceRule, rollRecurrence } from "@/lib/schedule/recurrence"
 
 type Client = SupabaseClient<Database>
 
+// "Today" for the catch-up math in the COMPANY's timezone, not UTC — a daily
+// to-do completed at 9pm Eastern is still "today" there but already tomorrow
+// in UTC, and using the UTC date would skip the next occurrence. Hines Homes
+// operates in Indiana; a fixed zone beats guessing from the request. (The
+// en-CA locale formats as YYYY-MM-DD.)
+function companyTodayISO(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Indiana/Indianapolis",
+  }).format(new Date())
+}
+
 /**
  * Roll-on-complete for recurring to-dos. Call AFTER a to-do has been marked
  * complete: if it carries a recurrence_rule, the rule is stripped off the
@@ -42,14 +53,19 @@ export async function rollRecurringTodo(
     // A rule without a due date has no anchor to advance from — leave it be.
     if (!anchorDue) return null
 
-    const { error: stripErr } = await supabase
+    // Compare-and-swap strip: only the request that actually nulls the rule
+    // may create the next occurrence. A concurrent double-completion blocks on
+    // the row lock, re-evaluates the NOT NULL predicate after the winner
+    // commits, matches zero rows, and bails — so the series never forks.
+    const { data: stripped, error: stripErr } = await supabase
       .from("schedule_items")
       .update({ recurrence_rule: null })
       .eq("id", item.id)
-    if (stripErr) return null
+      .not("recurrence_rule", "is", null)
+      .select("id")
+    if (stripErr || (stripped ?? []).length !== 1) return null
 
-    const today = new Date().toISOString().slice(0, 10)
-    const rolled = rollRecurrence(rule, anchorDue, today)
+    const rolled = rollRecurrence(rule, anchorDue, companyTodayISO())
     if (!rolled) return null // series ended (count exhausted / past `until`)
 
     const [{ data: checklist }, { data: assignments }] = await Promise.all([

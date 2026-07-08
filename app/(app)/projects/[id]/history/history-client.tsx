@@ -163,19 +163,29 @@ export function HistoryClient({ rows }: { rows: HistoryRow[] }) {
     })
   }, [rows, entityType, action, query])
 
-  // Collapse consecutive rows from one transaction (same actor, entity type
-  // and action) into a single batch — a bulk shift touching 14 work items
-  // reads as one entry, not 14.
+  // Collapse consecutive rows by the same actor on the same entity type +
+  // action into a single batch — a bulk shift touching 14 work items reads as
+  // one entry, not 14. Same txid always groups; different txids still group
+  // when the rows landed within a short window, because the app's bulk loops
+  // (shift, cascade, duplicate) issue one PostgREST request — one transaction
+  // — per row, so txid alone would never collapse them.
   const batches = useMemo(() => {
+    const BATCH_WINDOW_MS = 15_000
     const out: HistoryRow[][] = []
     let sig: string | null = null
+    let prevAt = 0
     for (const r of filtered) {
-      const s = `${r.txid}|${r.actor_id ?? ""}|${r.entity_type}|${r.action}`
-      if (out.length > 0 && s === sig) out[out.length - 1].push(r)
-      else {
+      const at = new Date(r.created_at).getTime()
+      const s = `${r.actor_id ?? ""}|${r.entity_type}|${r.action}`
+      const prev = out.length > 0 ? out[out.length - 1] : null
+      const sameTx = prev != null && prev[prev.length - 1].txid === r.txid
+      if (prev && s === sig && (sameTx || Math.abs(prevAt - at) <= BATCH_WINDOW_MS)) {
+        prev.push(r)
+      } else {
         out.push([r])
         sig = s
       }
+      prevAt = at
     }
     return out
   }, [filtered])

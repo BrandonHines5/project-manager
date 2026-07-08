@@ -575,7 +575,10 @@ export function DecisionDrawer({
                   })),
               }))
           : [],
-      assignments,
+      // Selections only, matching choices above: a create-mode kind switch
+      // must not persist assignments (invisible on change orders, and they'd
+      // grant trades read access) — the server mirrors this gate.
+      assignments: kind === "selection" ? assignments : [],
     }
     startTransition(async () => {
       try {
