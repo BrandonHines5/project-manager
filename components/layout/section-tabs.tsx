@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import Link from "next/link"
 import { usePathname, useSearchParams } from "next/navigation"
 import { LayoutGrid } from "lucide-react"
@@ -79,12 +80,31 @@ export function SectionTabs({ role }: { role: UserRole }) {
     path === "/communications" || path.startsWith("/communications/")
   const inAllScope = onProjectsIndex || onAll || onComms
 
+  // Remember the last job the user was inside. Leaving a job for a global page
+  // (Settings, Companies, Reports, …) used to reset the section tabs to the
+  // all-jobs views, so clicking "Schedule" from Settings dumped the user in the
+  // all-jobs list instead of the job they were just working on. We stash the
+  // job id in state — updated during render (React's sanctioned derived-state
+  // pattern, same as schedule-client's ?open= sync) so there's no effect and no
+  // hydration mismatch — and, on those unscoped pages, point the tabs back at
+  // it. The layout stays mounted across client-side navigation, so the id
+  // survives the trip to Settings and back.
+  const [lastProjectId, setLastProjectId] = useState<string | null>(null)
+  if (projectId && projectId !== lastProjectId) {
+    setLastProjectId(projectId)
+  }
+
+  // On a job page use that job; on an intentional all-jobs page use none; on
+  // any other unscoped page fall back to the remembered job so the section bar
+  // keeps its job context.
+  const effectiveProjectId = projectId ?? (inAllScope ? null : lastProjectId)
+
   const visible = SECTIONS.filter((s) => !s.hideForRoles?.includes(role))
   const aggregateTabs = visible.filter(
     (s) =>
       s.aggregateHref && (!s.aggregateRoles || s.aggregateRoles.includes(role))
   )
-  const tabs = projectId ? visible : aggregateTabs
+  const tabs = effectiveProjectId ? visible : aggregateTabs
 
   const withIds = (href: string) =>
     ids && href.startsWith("/all/") ? `${href}?ids=${ids}` : href
@@ -122,11 +142,11 @@ export function SectionTabs({ role }: { role: UserRole }) {
         )}
         <div className="h-5 w-px bg-border mx-1 shrink-0" aria-hidden="true" />
         {tabs.map((t) => {
-          const href = projectId
-            ? `/projects/${projectId}/${t.slug}`
+          const href = effectiveProjectId
+            ? `/projects/${effectiveProjectId}/${t.slug}`
             : withIds(t.aggregateHref!)
-          const activePath = projectId
-            ? `/projects/${projectId}/${t.slug}`
+          const activePath = effectiveProjectId
+            ? `/projects/${effectiveProjectId}/${t.slug}`
             : t.aggregateHref!
           const active =
             path === activePath || path.startsWith(`${activePath}/`)

@@ -9,6 +9,12 @@ import {
   parseTagGroupConfig,
   type TemplateTagConfig,
 } from "@/lib/template-tags"
+import {
+  DELAY_REASONS_KEY,
+  parseDelayReasons,
+  slugifyReason,
+  type DelayReason,
+} from "@/lib/delays"
 
 // app_settings key for the template-tag registry + either/or groups
 // (migration 0077). The settings page reads app_settings directly with the
@@ -141,4 +147,91 @@ export async function saveTemplateTagConfig(input: {
   )
   if (error) return { ok: false, error: error.message }
   return { ok: true, stripped }
+}
+
+// ---------------------------------------------------------------------------
+// Delay reasons (Settings → Delay reasons)
+// ---------------------------------------------------------------------------
+
+/**
+ * The staff-editable list of schedule delay reasons. Read by the settings
+ * editor and the (staff-gated) Delay Report; the schedule page reads
+ * app_settings directly under the caller's session. Post-0079 the
+ * app_settings read policy is staff-only, so non-staff schedule viewers fall
+ * back to DEFAULT_DELAY_REASONS — harmless, since only staff ever log a delay
+ * or move a baselined item.
+ */
+export async function getDelayReasons(): Promise<DelayReason[]> {
+  await requireStaff()
+  const supabase = await createSupabaseServerClient()
+  const { data } = await supabase
+    .from("app_settings")
+    .select("value")
+    .eq("key", DELAY_REASONS_KEY)
+    .maybeSingle()
+  return parseDelayReasons(data?.value ?? null)
+}
+
+const DelayReasonsInput = z.object({
+  reasons: z
+    .array(
+      z.object({
+        value: z.string().max(60).optional(),
+        label: z.string().trim().min(1, "Every reason needs a name").max(60),
+      })
+    )
+    .min(1, "Keep at least one delay reason")
+    .max(50),
+})
+
+export type SaveDelayReasonsResult =
+  | { ok: true; reasons: DelayReason[] }
+  | { ok: false; error: string }
+
+/**
+ * Replace the whole delay-reason list. Each reason gets a stable slug `value`
+ * (kept as-is when provided, else derived from the label) so renaming a reason
+ * never orphans the historical schedule_delays rows that point at it.
+ */
+export async function saveDelayReasons(input: {
+  reasons: { value?: string; label: string }[]
+}): Promise<SaveDelayReasonsResult> {
+  const profile = await requireStaff()
+  const parsed = DelayReasonsInput.safeParse(input)
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid delay reasons",
+    }
+  }
+
+  const reasons: DelayReason[] = []
+  const seen = new Set<string>()
+  for (const r of parsed.data.reasons) {
+    const label = r.label.trim()
+    const value = slugifyReason(r.value?.trim() ? r.value : label)
+    if (!value) {
+      return {
+        ok: false,
+        error: `"${label}" needs at least one letter or number.`,
+      }
+    }
+    if (seen.has(value)) {
+      return { ok: false, error: `Two reasons resolve to the same id ("${value}").` }
+    }
+    seen.add(value)
+    reasons.push({ value, label })
+  }
+
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase.from("app_settings").upsert(
+    {
+      key: DELAY_REASONS_KEY,
+      value: JSON.stringify(reasons),
+      updated_by: profile.id,
+    },
+    { onConflict: "key" }
+  )
+  if (error) return { ok: false, error: error.message }
+  return { ok: true, reasons }
 }

@@ -47,6 +47,7 @@ import {
   type SchedulePredecessorDependent,
 } from "@/app/actions/schedule"
 import { CommentsThread } from "@/components/comms/comments-thread"
+import { delayReasonLabel, type DelayReason } from "@/lib/delays"
 import { MoveReasonDialog } from "./move-reason-dialog"
 import { DeleteWithDependentsDialog } from "./delete-with-dependents-dialog"
 import { CopyTodoDialog } from "./copy-todo-dialog"
@@ -830,6 +831,7 @@ export function ScheduleItemDialog({
                 <DelayLogInline
                   itemId={item.id}
                   projectId={data.project_id}
+                  reasons={data.delayReasons}
                   onLogged={() => {
                     setShowDelay(false)
                     router.refresh()
@@ -845,7 +847,8 @@ export function ScheduleItemDialog({
                     >
                       <div>
                         <Badge tone="warning">
-                          {d.delay_days}d · {d.reason_category}
+                          {d.delay_days}d ·{" "}
+                          {delayReasonLabel(d.reason_category, data.delayReasons)}
                         </Badge>
                         {d.notes && (
                           <span className="ml-2 text-muted text-xs">
@@ -934,6 +937,7 @@ export function ScheduleItemDialog({
       {pendingReasonSave && item && (
         <MoveReasonDialog
           open={true}
+          reasons={data.delayReasons}
           pending={pending}
           description={`${item.title}: ${formatDateRange(
             item.start_date,
@@ -1510,14 +1514,16 @@ function RecurrenceEditor({
 function DelayLogInline({
   itemId,
   projectId,
+  reasons,
   onLogged,
 }: {
   itemId: string
   projectId: string
+  reasons: DelayReason[]
   onLogged: () => void
 }) {
   const [days, setDays] = useState(1)
-  const [reason, setReason] = useState<Enums<"delay_reason">>("weather")
+  const [reason, setReason] = useState<string>(reasons[0]?.value ?? "other")
   const [notes, setNotes] = useState("")
   const [pushDates, setPushDates] = useState(true)
   const [pending, startTransition] = useTransition()
@@ -1554,16 +1560,12 @@ function DelayLogInline({
         />
       </Field>
       <Field label="Reason">
-        <Select
-          value={reason}
-          onChange={(e) => setReason(e.target.value as Enums<"delay_reason">)}
-        >
-          <option value="weather">Weather</option>
-          <option value="sub">Subcontractor</option>
-          <option value="material">Material</option>
-          <option value="owner_decision">Owner decision</option>
-          <option value="permit">Permit</option>
-          <option value="other">Other</option>
+        <Select value={reason} onChange={(e) => setReason(e.target.value)}>
+          {reasons.map((r) => (
+            <option key={r.value} value={r.value}>
+              {r.label}
+            </option>
+          ))}
         </Select>
       </Field>
       <Field label="Notes" className="sm:col-span-3">

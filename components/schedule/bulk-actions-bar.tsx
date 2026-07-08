@@ -22,9 +22,9 @@ import {
   bulkAssignRoleToScheduleItems,
   bulkUnassignRoleFromScheduleItems,
   bulkCopyScheduleItems,
-  type MoveReasonT,
 } from "@/app/actions/schedule"
 import { MOVE_REASON_OPTIONS } from "./move-reason-dialog"
+import type { DelayReason } from "@/lib/delays"
 
 type StatusValue = "not_started" | "in_progress" | "complete" | "delayed"
 
@@ -64,6 +64,7 @@ export function BulkActionsBar({
   profiles,
   roles,
   projects,
+  delayReasons,
   onClear,
   baselineSet,
   hasWorkSelected,
@@ -76,6 +77,8 @@ export function BulkActionsBar({
   roles: RoleOption[]
   // Copy-to-job destinations (current project excluded by the parent).
   projects: ProjectOption[]
+  // Staff-editable delay reasons for the shift-mode reason picker.
+  delayReasons: DelayReason[]
   onClear: () => void
   // Baseline is locked for this project — shifting work items then requires
   // a reason (rendered inline in shift mode).
@@ -84,14 +87,16 @@ export function BulkActionsBar({
   // without the baseline rules.
   hasWorkSelected: boolean
 }) {
+  const reasonOptions = delayReasons.length ? delayReasons : MOVE_REASON_OPTIONS
   const [pending, startTransition] = useTransition()
   const [mode, setMode] = useState<
     "none" | "shift" | "status" | "assign" | "unassign" | "copy"
   >("none")
   const [days, setDays] = useState("1")
   const [status, setStatus] = useState<StatusValue>("complete")
-  const [reason, setReason] =
-    useState<MoveReasonT["reason_category"]>("weather")
+  const [reason, setReason] = useState<string>(
+    reasonOptions[0]?.value ?? "other"
+  )
   const [reasonNotes, setReasonNotes] = useState("")
   // "p:<id>" for a person, "r:<id>" for a role.
   const [assignee, setAssignee] = useState<string>(
@@ -323,15 +328,11 @@ export function BulkActionsBar({
               <>
                 <Select
                   value={reason}
-                  onChange={(e) =>
-                    setReason(
-                      e.target.value as MoveReasonT["reason_category"]
-                    )
-                  }
+                  onChange={(e) => setReason(e.target.value)}
                   className="h-7 w-36 bg-surface text-foreground"
                   aria-label="Reason for the shift"
                 >
-                  {MOVE_REASON_OPTIONS.map((o) => (
+                  {reasonOptions.map((o) => (
                     <option key={o.value} value={o.value}>
                       {o.label}
                     </option>

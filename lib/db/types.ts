@@ -2649,7 +2649,7 @@ export type Database = {
           logged_at: string
           logged_by: string | null
           notes: string | null
-          reason_category: Database["public"]["Enums"]["delay_reason"]
+          reason_category: string
           schedule_item_id: string
         }
         Insert: {
@@ -2658,7 +2658,7 @@ export type Database = {
           logged_at?: string
           logged_by?: string | null
           notes?: string | null
-          reason_category: Database["public"]["Enums"]["delay_reason"]
+          reason_category: string
           schedule_item_id: string
         }
         Update: {
@@ -2667,7 +2667,7 @@ export type Database = {
           logged_at?: string
           logged_by?: string | null
           notes?: string | null
-          reason_category?: Database["public"]["Enums"]["delay_reason"]
+          reason_category?: string
           schedule_item_id?: string
         }
         Relationships: [

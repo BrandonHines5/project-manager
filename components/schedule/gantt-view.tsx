@@ -555,6 +555,7 @@ export function GanttView({
     {pendingMove && (
       <MoveReasonDialog
         open={true}
+        reasons={data.delayReasons}
         pending={pending}
         description={`${
           data.items.find((i) => i.id === pendingMove.itemId)?.title ?? "Item"

@@ -13,18 +13,12 @@ import {
 import { Field, Select, Textarea } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import type { MoveReasonT } from "@/app/actions/schedule"
+import { DEFAULT_DELAY_REASONS, type DelayReason } from "@/lib/delays"
 
-export const MOVE_REASON_OPTIONS: {
-  value: MoveReasonT["reason_category"]
-  label: string
-}[] = [
-  { value: "weather", label: "Weather" },
-  { value: "sub", label: "Subcontractor" },
-  { value: "material", label: "Material" },
-  { value: "owner_decision", label: "Owner decision" },
-  { value: "permit", label: "Permit" },
-  { value: "other", label: "Other" },
-]
+// Fallback list for callers that don't pass a configured set (e.g. the bulk
+// bar before its data loads). The real list is staff-editable in
+// Settings → Delay reasons and threaded in via the `reasons` prop.
+export const MOVE_REASON_OPTIONS: DelayReason[] = DEFAULT_DELAY_REASONS
 
 /**
  * Small blocking popup shown whenever a work item's dates change on a
@@ -37,6 +31,7 @@ export const MOVE_REASON_OPTIONS: {
 export function MoveReasonDialog({
   open,
   description,
+  reasons = MOVE_REASON_OPTIONS,
   pending,
   onConfirm,
   onCancel,
@@ -44,12 +39,15 @@ export function MoveReasonDialog({
   open: boolean
   /** What's moving, e.g. "Framing · Jul 10 – Jul 24 → Jul 17 – Jul 31". */
   description?: string | null
+  /** Staff-editable delay reasons (Settings → Delay reasons). */
+  reasons?: DelayReason[]
   pending?: boolean
   onConfirm: (reason: MoveReasonT) => void
   onCancel: () => void
 }) {
-  const [category, setCategory] =
-    useState<MoveReasonT["reason_category"]>("weather")
+  const [category, setCategory] = useState<string>(
+    reasons[0]?.value ?? "other"
+  )
   const [notes, setNotes] = useState("")
 
   return (
@@ -72,11 +70,9 @@ export function MoveReasonDialog({
           <Field label="Reason">
             <Select
               value={category}
-              onChange={(e) =>
-                setCategory(e.target.value as MoveReasonT["reason_category"])
-              }
+              onChange={(e) => setCategory(e.target.value)}
             >
-              {MOVE_REASON_OPTIONS.map((o) => (
+              {reasons.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
                 </option>

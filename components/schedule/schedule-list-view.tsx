@@ -348,6 +348,7 @@ export function ScheduleListView({
       <BulkActionsBar
         projectId={projectId}
         selectedIds={Array.from(selectedIds)}
+        delayReasons={data.delayReasons}
         baselineSet={!!data.baseline_set_at}
         hasWorkSelected={data.items.some(
           (i) => i.kind === "work" && selectedIds.has(i.id)

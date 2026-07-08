@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation"
 import {
   Bell,
   ChevronDown,
+  Clock,
   LogOut,
   MessageSquarePlus,
   Settings,
@@ -171,6 +172,16 @@ export function Topbar({
                   >
                     <Tags className="h-4 w-4 text-muted" />
                     Template tags
+                  </Link>
+                )}
+                {role === "staff" && (
+                  <Link
+                    href="/settings/delay-reasons"
+                    onClick={() => setMenuOpen(false)}
+                    className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-background cursor-pointer"
+                  >
+                    <Clock className="h-4 w-4 text-muted" />
+                    Delay reasons
                   </Link>
                 )}
                 <Link

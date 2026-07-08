@@ -568,7 +568,7 @@ const TOOLS: Anthropic.Messages.Tool[] = [
   {
     name: "list_schedule_delays",
     description:
-      "List logged schedule delays for a project (which item moved, delay_days, reason_category weather|sub|material|owner_decision|permit|other, notes, when). Use to explain why a project is behind.",
+      "List logged schedule delays for a project (which item moved, delay_days, reason_category — a staff-configured reason slug, notes, when). Use to explain why a project is behind.",
     input_schema: {
       type: "object",
       properties: { project_id: { type: "string" } },

@@ -33,6 +33,14 @@ export function ScheduleHealthBanner({ data }: { data: ScheduleData }) {
   const subComplete = data.items.find(
     (i) => i.milestone === "substantial_completion"
   )
+  // Resetting the baseline wipes slip tracking, so it's blocked until the job
+  // has real progress: at least one completed work item (the server enforces
+  // this too). The first lock is always allowed.
+  const hasCompletedWork = useMemo(
+    () =>
+      data.items.some((i) => i.kind === "work" && i.status === "complete"),
+    [data.items]
+  )
 
   function lockBaseline(isRebaseline: boolean) {
     if (
@@ -177,9 +185,13 @@ export function ScheduleHealthBanner({ data }: { data: ScheduleData }) {
           size="sm"
           variant="ghost"
           onClick={() => lockBaseline(true)}
-          disabled={pending}
+          disabled={pending || !hasCompletedWork}
           className="ml-auto text-muted hover:text-foreground"
-          title="Overwrite the baseline with the current schedule"
+          title={
+            hasCompletedWork
+              ? "Overwrite the baseline with the current schedule"
+              : "Available once at least one work item is marked complete"
+          }
         >
           <RefreshCw className="h-3.5 w-3.5" />
           Re-baseline
