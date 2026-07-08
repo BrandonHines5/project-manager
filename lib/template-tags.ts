@@ -28,24 +28,40 @@ export type TemplateTagGroup = {
   options: string[]
 }
 
-export type TemplateTagConfig = { groups: TemplateTagGroup[] }
+// `tags` is the explicitly-managed vocabulary (tags staff added in settings,
+// kept even when no item carries them yet). The settings screen displays the
+// UNION of this list, the tags actually in use on items, and group options —
+// so removing a tag here only makes it disappear once it's also stripped off
+// the items (see strip_template_tag / removeTemplateTag).
+export type TemplateTagConfig = { tags: string[]; groups: TemplateTagGroup[] }
 
 /** Defensive parse of the stored JSON config — never throws, drops junk. */
 export function parseTagGroupConfig(
   raw: string | null | undefined
 ): TemplateTagConfig {
-  if (!raw) return { groups: [] }
+  if (!raw) return { tags: [], groups: [] }
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
   } catch {
-    return { groups: [] }
+    return { tags: [], groups: [] }
   }
-  const groupsRaw =
+  const obj =
     parsed && typeof parsed === "object"
-      ? (parsed as { groups?: unknown }).groups
-      : null
-  if (!Array.isArray(groupsRaw)) return { groups: [] }
+      ? (parsed as { tags?: unknown; groups?: unknown })
+      : {}
+  const tags = Array.isArray(obj.tags)
+    ? [
+        ...new Set(
+          obj.tags
+            .filter((t): t is string => typeof t === "string")
+            .map((t) => baseTag(normalizeTag(t)))
+            .filter(Boolean)
+        ),
+      ]
+    : []
+  const groupsRaw = Array.isArray(obj.groups) ? obj.groups : null
+  if (!groupsRaw) return { tags, groups: [] }
   const groups: TemplateTagGroup[] = []
   for (const g of groupsRaw) {
     if (!g || typeof g !== "object") continue
@@ -68,7 +84,7 @@ export function parseTagGroupConfig(
     if (!id || !label || options.length === 0) continue
     groups.push({ id, label, required, options })
   }
-  return { groups }
+  return { tags, groups }
 }
 
 /**
