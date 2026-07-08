@@ -432,12 +432,19 @@ function ProjectFormFields({
           </Field>
           <Field
             label="Start date"
-            hint="Projected Start Date from the CRM. When copying a template, the Job Start milestone lands on this date and the rest of the schedule shifts with it."
+            hint="Projected Start Date from the CRM — edit it on the dashboard. When copying a template, the Job Start milestone lands on this date and the rest of the schedule shifts with it."
           >
             <Input
               name="start_date"
               type="date"
               defaultValue={picked?.start_date ?? ""}
+              // Read-only/grayed like the other dashboard-owned fields, but only
+              // once the CRM actually supplied the date — so it never becomes a
+              // dead grayed field when the projected start date is missing.
+              readOnly={locked && !!picked?.start_date}
+              className={cn(
+                locked && picked?.start_date && "bg-background/60 text-muted"
+              )}
             />
           </Field>
           <Field
