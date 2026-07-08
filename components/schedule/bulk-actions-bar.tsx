@@ -293,7 +293,7 @@ export function BulkActionsBar({
               aria-label={mode === "assign" ? "Person to assign" : "Person to unassign"}
             >
               {profiles.length === 0 ? (
-                <option value="">(no staff profiles)</option>
+                <option value="">(no team profiles)</option>
               ) : (
                 profiles.map((p) => (
                   <option key={p.id} value={p.id}>

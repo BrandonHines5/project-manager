@@ -133,7 +133,7 @@ function MembersDialog({
             <DialogTitle>Project members</DialogTitle>
             <DialogDescription>
               Add trades or clients here so they can see this project.
-              (Staff have access to all projects automatically.)
+              (Team members have access to all projects automatically.)
             </DialogDescription>
           </div>
         </DialogHeader>
@@ -233,7 +233,7 @@ function MembersDialog({
 }
 
 function RoleBadge({ role }: { role: "staff" | "trade" | "client" }) {
-  if (role === "staff") return <Badge tone="brand">Staff</Badge>
+  if (role === "staff") return <Badge tone="brand">Team</Badge>
   if (role === "trade") return <Badge tone="warning">Trade</Badge>
   return <Badge tone="info">Client</Badge>
 }

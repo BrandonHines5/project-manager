@@ -419,7 +419,7 @@ export function PoDrawer({
               </span>
               <span className="text-green-800/80">
                 {po.approved_at ? ` on ${formatDate(po.approved_at)}` : ""}
-                {po.approved_by_profile_id ? " (entered by staff)" : ""}
+                {po.approved_by_profile_id ? " (entered by team)" : ""}
               </span>
             </div>
           )}

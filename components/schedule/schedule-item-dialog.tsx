@@ -1061,12 +1061,19 @@ function AssignmentsEditor({
         <Select
           value=""
           onChange={(e) => addProfile(e.target.value)}
-          aria-label="Add staff or user"
+          aria-label="Add team member or user"
         >
-          <option value="">Add staff / user…</option>
+          <option value="">Add team / user…</option>
           {availableProfiles.map((p) => (
             <option key={p.id} value={p.id}>
-              {(p.full_name || p.email) + ` · ${p.role}`}
+              {(p.full_name || p.email) +
+                ` · ${
+                  p.role === "staff"
+                    ? "Team"
+                    : p.role === "trade"
+                      ? "Sub"
+                      : "Client"
+                }`}
             </option>
           ))}
         </Select>

@@ -595,7 +595,7 @@ async function resolveAssigneeName(
       .eq("id", profileId)
       .maybeSingle()
     if (!prof) return false
-    return prof.full_name || prof.email || "Staff member"
+    return prof.full_name || prof.email || "Team member"
   }
   if (companyId) {
     const { data: co } = await supabase

@@ -224,7 +224,7 @@ export async function deleteTeamMember(id: string) {
       .eq("role", "staff")
     if (countErr) throw new Error(countErr.message)
     if ((count ?? 0) <= 1) {
-      throw new Error("Refusing to delete the last remaining staff account.")
+      throw new Error("Refusing to delete the last remaining team member account.")
     }
   }
 

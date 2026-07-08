@@ -913,7 +913,7 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
     : "(unknown project)"
   const approver = d.client_approver?.full_name || d.client_approver?.email
     ? `${d.client_approver?.full_name ?? d.client_approver?.email} (client)`
-    : "Staff"
+    : "Team"
   const creatorLabel =
     d.creator?.full_name || d.creator?.email || "(unknown)"
 
