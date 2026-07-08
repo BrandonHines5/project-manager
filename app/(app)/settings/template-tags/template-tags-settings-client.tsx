@@ -53,6 +53,20 @@ export function TemplateTagsSettingsClient({
     return map
   }, [groups])
 
+  // Re-introducing a tag anywhere — as a vocabulary entry OR a group option —
+  // must cancel any pending strip and restore its usage count. Without this, a
+  // remove-then-re-add (e.g. deleting a tag, then fixing the now-1-option group
+  // by re-adding it) would still strip the tag off every item on save while the
+  // saved config keeps listing it, silently changing which items copy.
+  function reviveTag(tag: string) {
+    setStrip((cur) => cur.filter((t) => t !== tag))
+    setUsage((cur) =>
+      tag in cur || initialUsage[tag] == null
+        ? cur
+        : { ...cur, [tag]: initialUsage[tag] }
+    )
+  }
+
   function addTag(raw: string) {
     const tag = baseTag(normalizeTag(raw))
     if (!tag) return
@@ -62,11 +76,7 @@ export function TemplateTagsSettingsClient({
       return
     }
     setTags((cur) => [...cur, tag])
-    // Re-adding a tag queued for removal cancels the strip and restores count.
-    setStrip((cur) => cur.filter((t) => t !== tag))
-    if (initialUsage[tag] != null) {
-      setUsage((cur) => ({ ...cur, [tag]: initialUsage[tag] }))
-    }
+    reviveTag(tag)
   }
 
   function removeTag(tag: string) {
@@ -115,6 +125,8 @@ export function TemplateTagsSettingsClient({
       )
     )
     setDrafts((d) => ({ ...d, [id]: "" }))
+    // A group option is a tag too — un-queue any pending strip / restore usage.
+    reviveTag(tag)
   }
   function removeOption(id: string, tag: string) {
     setGroups((gs) =>
