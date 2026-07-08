@@ -200,7 +200,9 @@ function TemplateOptionsInner({
           <p className="text-xs text-muted mb-2">
             Pick one per row. Rows marked{" "}
             <span className="text-danger">*</span> are required — the project
-            can&apos;t be created until they&apos;re answered.
+            can&apos;t be created until they&apos;re answered. Your pick only
+            skips items tagged with the options you didn&apos;t choose;
+            untagged items always copy.
           </p>
           <div className="space-y-2.5">
             {shownGroups.map((g) => (

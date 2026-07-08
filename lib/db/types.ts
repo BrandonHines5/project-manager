@@ -3173,6 +3173,11 @@ export type Database = {
         Returns: number
       }
       set_schedule_baseline: { Args: { p_project: string }; Returns: undefined }
+      strip_template_tag: { Args: { p_tag: string }; Returns: number }
+      template_tag_usage: {
+        Args: never
+        Returns: { tag: string; uses: number }[]
+      }
       trade_sees_assignment_via_role: {
         Args: { p_item: string; p_role: string }
         Returns: boolean
