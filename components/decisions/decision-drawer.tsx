@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useTransition, useRef, useEffect, Fragment } from "react"
+import { useState, useTransition, useRef, useEffect, useMemo, Fragment } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import {
@@ -56,7 +56,8 @@ import {
   type CatalogItemHit,
 } from "@/app/actions/catalog"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
-import { formatTags, parseTagsInput } from "@/lib/template-tags"
+import { formatTags, parseTagsInput, collectBaseTags } from "@/lib/template-tags"
+import { TemplateTagsInput } from "@/components/template-tags-input"
 import {
   KindChip,
   StatusBadge,
@@ -155,6 +156,12 @@ export function DecisionDrawer({
   const [description, setDescription] = useState(decision?.description ?? "")
   const [templateTagsText, setTemplateTagsText] = useState(
     formatTags(decision?.template_tags)
+  )
+  // Existing template-tag vocabulary across this project's decisions, so the
+  // tags field can suggest reusing one instead of coining a variant.
+  const tagSuggestions = useMemo(
+    () => collectBaseTags(data.decisions.map((d) => d.template_tags)),
+    [data.decisions]
   )
   const [dueDate, setDueDate] = useState<string>(decision?.due_date ?? "")
   // Due-date link: instead of a fixed date, the due date can follow a
@@ -1121,9 +1128,10 @@ export function DecisionDrawer({
               label="Template tags"
               hint="Only matters on template projects. Comma-separated conditions, e.g. walkout, !walkout — this decision is copied to a new project only when every tag matches the house attributes answered at creation. Leave blank to always copy."
             >
-              <Input
+              <TemplateTagsInput
                 value={templateTagsText}
-                onChange={(e) => setTemplateTagsText(e.target.value)}
+                onChange={setTemplateTagsText}
+                suggestions={tagSuggestions}
                 placeholder="walkout, finished_basement"
               />
             </Field>

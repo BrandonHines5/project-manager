@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useTransition } from "react"
+import { useState, useTransition, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import {
@@ -59,7 +59,8 @@ import type {
   RecurrenceFreq,
 } from "@/lib/schedule/recurrence"
 import { isRecurrenceRule, describeRecurrence } from "@/lib/schedule/recurrence"
-import { formatTags, parseTagsInput } from "@/lib/template-tags"
+import { formatTags, parseTagsInput, collectBaseTags } from "@/lib/template-tags"
+import { TemplateTagsInput } from "@/components/template-tags-input"
 import type { Tables, Enums } from "@/lib/db/types"
 import type { ScheduleData } from "@/app/(app)/projects/[id]/schedule/schedule-client"
 import { checklistFor, predecessorsOf, delaysFor, resolveRoleLabel } from "./helpers"
@@ -109,6 +110,12 @@ export function ScheduleItemDialog({
   const [description, setDescription] = useState(item?.description ?? "")
   const [templateTagsText, setTemplateTagsText] = useState(
     formatTags(item?.template_tags)
+  )
+  // Existing template-tag vocabulary across this project's schedule items, so
+  // the tags field can suggest reusing one instead of coining a variant.
+  const tagSuggestions = useMemo(
+    () => collectBaseTags(data.items.map((i) => i.template_tags)),
+    [data.items]
   )
   const [startDate, setStartDate] = useState(item?.start_date ?? "")
   const [endDate, setEndDate] = useState(item?.end_date ?? "")
@@ -727,9 +734,10 @@ export function ScheduleItemDialog({
               className="sm:col-span-2"
               hint="Only matters on template projects. Comma-separated conditions, e.g. walkout, !walkout — this item is copied to a new project only when every tag matches the house attributes answered at creation. Leave blank to always copy."
             >
-              <Input
+              <TemplateTagsInput
                 value={templateTagsText}
-                onChange={(e) => setTemplateTagsText(e.target.value)}
+                onChange={setTemplateTagsText}
+                suggestions={tagSuggestions}
                 placeholder="walkout, finished_basement"
               />
             </Field>
