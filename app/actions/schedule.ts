@@ -124,6 +124,19 @@ function daysBetween(a: string, b: string) {
   )
 }
 
+// Job Start / Substantial Completion are single-day markers. Collapse a date
+// range to one day around the meaningful edge — Job Start keeps its start,
+// Substantial Completion its end — so the schedule-health math (Job Start start
+// → Substantial Completion end) is unchanged. Non-milestones pass through.
+function collapseMilestoneRange(
+  milestone: string | null,
+  start: string | null,
+  end: string | null
+): [string | null, string | null] {
+  if (!milestone || !start || !end || start === end) return [start, end]
+  return milestone === "substantial_completion" ? [end, end] : [start, start]
+}
+
 const BASELINE_COMPLETE_MSG =
   "Lock the schedule baseline before marking work items complete — use “Set baseline” at the top of the schedule. (To-dos can be completed anytime.)"
 const MOVE_REASON_MSG =
@@ -324,15 +337,8 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     if (startD && !endD) endD = startD
     else if (endD && !startD) startD = endD
   }
-  // Job Start / Substantial Completion are single-day markers. Whatever range
-  // the editor sends, collapse it to one day around the meaningful edge — Job
-  // Start keeps its start, Substantial Completion keeps its end — so these
-  // milestones always read as 1 day (and the health math, which uses Job
-  // Start's start and Substantial Completion's end, is unchanged).
-  if (oldRow?.milestone && startD && endD && startD !== endD) {
-    if (oldRow.milestone === "substantial_completion") startD = endD
-    else endD = startD
-  }
+  // Whatever range the editor sends for a milestone, collapse it to one day.
+  ;[startD, endD] = collapseMilestoneRange(oldRow?.milestone ?? null, startD, endD)
   const duration = startD && endD ? daysBetween(startD, endD) : null
 
   // Move-reason gate: once the baseline is locked, changing a work item's
@@ -1123,14 +1129,17 @@ export async function deleteScheduleItem(input: {
   revalidatePath(`/projects/${parsed.project_id}/schedule`)
 }
 
-export async function logDelay({
-  schedule_item_id,
-  project_id,
-  delay_days,
-  reason_category,
-  notes,
-  push_dates,
-}: {
+const LogDelayInput = z.object({
+  schedule_item_id: z.string(),
+  project_id: z.string(),
+  delay_days: z.coerce.number().int(),
+  // Free-form reason slug, validated against the configured list in the UI.
+  reason_category: z.string().min(1).max(60),
+  notes: z.string().max(2000).optional(),
+  push_dates: z.boolean().optional(),
+})
+
+export async function logDelay(input: {
   schedule_item_id: string
   project_id: string
   delay_days: number
@@ -1138,6 +1147,8 @@ export async function logDelay({
   notes?: string
   push_dates?: boolean
 }) {
+  const { schedule_item_id, project_id, delay_days, reason_category, notes, push_dates } =
+    LogDelayInput.parse(input)
   const profile = await requireStaff()
   const supabase = await createSupabaseServerClient()
   const { error } = await supabase.from("schedule_delays").insert({
@@ -1203,12 +1214,11 @@ export async function moveScheduleItem(input: {
   }
   // Milestones stay single-day markers even when dragged to a range on the
   // Gantt — collapse around the meaningful edge (see saveScheduleItem).
-  let newStart = parsed.start_date
-  let newEnd = parsed.end_date
-  if (item.milestone && newStart !== newEnd) {
-    if (item.milestone === "substantial_completion") newStart = newEnd
-    else newEnd = newStart
-  }
+  const [newStart, newEnd] = collapseMilestoneRange(
+    item.milestone,
+    parsed.start_date,
+    parsed.end_date
+  )
   const changed = item.start_date !== newStart || item.end_date !== newEnd
   let baselineSetAt: string | null = null
   if (item.kind === "work" && changed) {

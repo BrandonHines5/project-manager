@@ -1,5 +1,6 @@
 "use server"
 
+import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { requireStaff } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
@@ -233,5 +234,6 @@ export async function saveDelayReasons(input: {
     { onConflict: "key" }
   )
   if (error) return { ok: false, error: error.message }
+  revalidatePath("/settings/delay-reasons")
   return { ok: true, reasons }
 }

@@ -95,10 +95,11 @@ export default async function DelayReportPage({
   >()
   if (rowsTyped.length > 0) {
     const itemIds = [...new Set(rowsTyped.map((r) => r.schedule_items.id))]
-    const { data: assignRows } = await supabase
+    const { data: assignRows, error: assignErr } = await supabase
       .from("schedule_assignments")
       .select("schedule_item_id, profile_id, company_id, role_id")
       .in("schedule_item_id", itemIds)
+    if (assignErr) throw new Error(assignErr.message)
 
     const byItem = new Map<
       string,
@@ -119,21 +120,26 @@ export default async function DelayReportPage({
     // A valid-uuid sentinel that never matches — an empty .in() list is fine,
     // but a non-uuid placeholder ("-") would blow up the uuid cast.
     const NONE = "00000000-0000-0000-0000-000000000000"
-    const [{ data: aProfiles }, { data: aCompanies }, { data: aRoles }] =
-      await Promise.all([
-        supabase
-          .from("profiles")
-          .select("id, full_name, email")
-          .in("id", profileIds.size ? [...profileIds] : [NONE]),
-        supabase
-          .from("companies")
-          .select("id, name")
-          .in("id", companyIds.size ? [...companyIds] : [NONE]),
-        supabase
-          .from("roles")
-          .select("id, name")
-          .in("id", roleIds.size ? [...roleIds] : [NONE]),
-      ])
+    const [
+      { data: aProfiles, error: profilesErr },
+      { data: aCompanies, error: companiesErr },
+      { data: aRoles, error: rolesErr },
+    ] = await Promise.all([
+      supabase
+        .from("profiles")
+        .select("id, full_name, email")
+        .in("id", profileIds.size ? [...profileIds] : [NONE]),
+      supabase
+        .from("companies")
+        .select("id, name")
+        .in("id", companyIds.size ? [...companyIds] : [NONE]),
+      supabase
+        .from("roles")
+        .select("id, name")
+        .in("id", roleIds.size ? [...roleIds] : [NONE]),
+    ])
+    const lookupErr = profilesErr ?? companiesErr ?? rolesErr
+    if (lookupErr) throw new Error(lookupErr.message)
     const profileName = new Map(
       (aProfiles ?? []).map((p) => [p.id, p.full_name || p.email || "Staff"])
     )
