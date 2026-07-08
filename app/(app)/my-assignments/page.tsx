@@ -294,8 +294,11 @@ export default async function MyAssignmentsPage() {
     return aDate.localeCompare(bDate)
   })
 
-  const openCount = rows.filter((r) => r.status !== "complete").length
+  const openCount =
+    rows.filter((r) => r.status !== "complete").length +
+    selectionRows.filter((s) => s.status === "pending_client").length
   const delayedCount = rows.filter((r) => r.status === "delayed").length
+  const totalCount = rows.length + selectionRows.length
 
   return (
     <div className="max-w-5xl mx-auto px-4 md:px-6 py-6">
@@ -324,17 +327,17 @@ export default async function MyAssignmentsPage() {
         </div>
         <div>
           <div className="text-xs text-muted uppercase tracking-wide">Total</div>
-          <div className="text-xl font-semibold tabular-nums">{rows.length}</div>
+          <div className="text-xl font-semibold tabular-nums">{totalCount}</div>
         </div>
       </div>
 
-      {rows.length === 0 ? (
+      {rows.length === 0 && selectionRows.length === 0 ? (
         <EmptyState
           icon={<CalendarDays className="h-10 w-10" />}
           title="Nothing assigned yet"
           description="Items assigned to you will appear here as your projects schedule work."
         />
-      ) : (
+      ) : rows.length === 0 ? null : (
         <Card>
           <ul className="divide-y divide-border">
             {rows.map((r) => {

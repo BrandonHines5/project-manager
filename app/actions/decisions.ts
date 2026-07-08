@@ -2152,7 +2152,8 @@ export async function saveDecisionDisclaimer(input: {
     { onConflict: "key" }
   )
   if (error) return { ok: false, error: error.message }
-  // Every project's decisions tab shows it — revalidate lazily via the pages
-  // themselves (they re-read on navigation); no single path to revalidate.
+  // Every project's decisions tab renders the disclaimer — invalidate them
+  // all so the new text shows without waiting out the router cache.
+  revalidatePath("/projects/[id]/decisions", "page")
   return { ok: true }
 }

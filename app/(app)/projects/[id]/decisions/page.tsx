@@ -38,7 +38,7 @@ export default async function DecisionsPage({
     { data: choices },
     { data: workItems },
     { data: projects },
-    { data: assignments },
+    { data: assignments, error: assignmentsErr },
     { data: roles },
     { data: roleMembers },
     { data: disclaimerRow },
@@ -131,6 +131,11 @@ export default async function DecisionsPage({
       void _drop
       return rest
     })
+
+  // Fail closed: assignments round-trip through the drawer's save (wipe and
+  // reinsert), so a fetch failure must not masquerade as "no assignments" —
+  // saving from that state would silently clear them.
+  if (assignmentsErr) throw new Error(assignmentsErr.message)
 
   const cleanedAttachments = strip(attachments) as DecisionsData["attachments"]
   const signedUrls = await getSignedUrlsForDecisions(

@@ -3058,6 +3058,8 @@ export type Database = {
       }
       trade_sees_decision: { Args: { p_decision: string }; Returns: boolean }
       trade_sees_item_via_role: { Args: { p_item: string }; Returns: boolean }
+      // Hand-added: 0078 landed after the last regeneration. Keep on regen.
+      trade_sees_project: { Args: { p_project: string }; Returns: boolean }
       validate_media_tags: { Args: { p_tags: string[] }; Returns: undefined }
     }
     Enums: {

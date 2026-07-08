@@ -42,7 +42,7 @@ export async function rollRecurringTodo(
     const { data: item, error } = await supabase
       .from("schedule_items")
       .select(
-        "id, project_id, parent_id, kind, title, description, priority, due_date, recurrence_rule, created_by"
+        "id, project_id, parent_id, parent_anchor, parent_offset_days, kind, title, description, priority, due_date, recurrence_rule, created_by"
       )
       .eq("id", itemId)
       .maybeSingle()
@@ -87,6 +87,11 @@ export async function rollRecurringTodo(
       .insert({
         project_id: item.project_id,
         parent_id: item.parent_id,
+        // Anchored to-dos keep their anchor: the next occurrence starts at the
+        // rolled date, and if the parent work item later moves, the existing
+        // cascade re-derives due_date from it — same semantics as the source.
+        parent_anchor: item.parent_anchor,
+        parent_offset_days: item.parent_offset_days,
         kind: "todo",
         title: item.title,
         description: item.description,
@@ -98,7 +103,19 @@ export async function rollRecurringTodo(
       })
       .select("id")
       .single()
-    if (insErr || !next) return null
+    if (insErr || !next) {
+      // Compensating action for the non-transactional strip: put the rule
+      // back so a failed insert doesn't silently end the series. (A full
+      // strip+insert transaction would need the recurrence math ported into
+      // a SQL RPC; this covers the realistic failure without forking risk —
+      // the CAS strip above still guarantees at most one roller.)
+      await supabase
+        .from("schedule_items")
+        .update({ recurrence_rule: rule as unknown as Json })
+        .eq("id", item.id)
+        .is("recurrence_rule", null)
+      return null
+    }
 
     if (checklist?.length) {
       const { error: clErr } = await supabase.from("todo_checklist_items").insert(

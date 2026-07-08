@@ -217,6 +217,7 @@ export function HistoryClient({ rows }: { rows: HistoryRow[] }) {
             <button
               key={t}
               type="button"
+              aria-pressed={entityType === t}
               onClick={() => {
                 setEntityType(t)
                 setLimit(PAGE)

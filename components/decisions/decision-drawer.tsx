@@ -349,10 +349,13 @@ export function DecisionDrawer({
   const [copyOpen, setCopyOpen] = useState(false)
 
   // Staff can flip into a read-only "client preview" to sanity-check what the
-  // owner will see. Every isClient/canEdit branch below flows from these two
-  // derived values, so the whole drawer follows the toggle.
+  // owner will see. Every isClient/canEdit branch below flows from these
+  // derived values, so the whole drawer follows the toggle. actualClient stays
+  // separate: preview must render the client layout without granting the
+  // client's WRITE affordances (comment posting).
+  const actualClient = data.role === "client"
   const [previewAsClient, setPreviewAsClient] = useState(false)
-  const isClient = data.role === "client" || previewAsClient
+  const isClient = actualClient || previewAsClient
   const canEdit = data.role === "staff" && !previewAsClient
 
   // Past-due approval gate: the client_decide_decision RPC rejects approvals
@@ -1269,7 +1272,7 @@ export function DecisionDrawer({
             comments={myComments}
             profiles={data.profiles}
             meName={data.me_name}
-            canPost={!!decision && (canEdit || isClient)}
+            canPost={!!decision && (canEdit || actualClient)}
             isClient={isClient}
           />
 
