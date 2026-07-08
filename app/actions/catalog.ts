@@ -68,17 +68,21 @@ export async function searchCatalogItems(input: {
       .or(`code.ilike.${like},description.ilike.${like},vendor.ilike.${like}`)
       .order("code", { ascending: true })
       .limit(25)
-    if (error) return { ok: false, error: cleanCatalogError(error.message) }
+    if (error) {
+      // Keep the raw error server-side for debugging; only the sanitized hint
+      // reaches the picker.
+      console.error("[searchCatalogItems] supabase error:", error.message)
+      return { ok: false, error: cleanCatalogError(error.message) }
+    }
 
     return { ok: true, items: (data ?? []) as CatalogRow[] }
   } catch (e) {
     // A misconfigured URL (e.g. the SpecMagician app URL instead of the
     // Supabase project URL) makes supabase-js receive HTML and throw while
     // parsing it as JSON — surface a short hint, never the raw page.
-    return {
-      ok: false,
-      error: cleanCatalogError(e instanceof Error ? e.message : String(e)),
-    }
+    const raw = e instanceof Error ? e.message : String(e)
+    console.error("[searchCatalogItems] threw:", raw)
+    return { ok: false, error: cleanCatalogError(raw) }
   }
 }
 

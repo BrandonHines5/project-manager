@@ -467,10 +467,14 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     company_id?: string | null
     role_id?: string | null
   }) => `${a.profile_id ?? ""}|${a.company_id ?? ""}|${a.role_id ?? ""}`
-  const { data: oldAssignments } = await supabase
+  const { data: oldAssignments, error: oldAssignErr } = await supabase
     .from("schedule_assignments")
     .select("id, profile_id, company_id, role_id")
     .eq("schedule_item_id", id)
+  // Fail closed: a swallowed read error would make oldByKey empty, so every
+  // desired row would be treated as new and re-inserted, tripping the
+  // (schedule_item_id, profile_id, company_id, role_id) unique index.
+  if (oldAssignErr) throw new Error(oldAssignErr.message)
   const oldByKey = new Map(
     (oldAssignments ?? []).map((a) => [assignKey(a), a])
   )
