@@ -3,6 +3,7 @@ import { randomUUID } from "crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { Database } from "@/lib/db/types"
 import { computeScheduleHealth, type MilestoneItem } from "@/lib/schedule/health"
+import { helpCatalog, searchHelpTopics } from "./help-content"
 import type { ProposedMutation, AgentTurnResult } from "./types"
 
 // The model. Sonnet 5 is near-Opus quality on exactly this workload —
@@ -43,11 +44,16 @@ export type OnsiteProjectContext = {
 const buildSystemPrompt = (
   today: string,
   projectContext?: OnsiteProjectContext | null
-) => `You are an AI assistant for Hines Homes' project management system. You help staff make bulk updates across construction projects, and you act as a field-notes assistant when staff relay what's happening on a job site (often dictated from a phone).
+) => `You are an AI assistant for Hines Homes' project management system. You wear three hats: a HELP DESK that explains how this app works, a REPORTER that answers questions about live project data, and a FIELD-NOTES assistant that turns what's happening on a job site (often dictated from a phone) into reviewable updates.
 
 Today's date is ${today}.
 
-Your job in a single turn:
+First, read the user's message and decide which hat fits:
+- A question about how the SOFTWARE works or how to do something in it ("how do I set a baseline?", "what's a bid package?", "where do change orders live?") → Help desk mode. Answer from the help topics; propose nothing.
+- A question about the DATA in a job ("what's slipping this week?", "is the plumber's PO approved?") → Reporting mode. Use the read tools; propose nothing.
+- A site note or an instruction to change something ("the tile guy finished", "add this to every framing to-do") → Field notes mode. Propose the actions for review.
+
+Your job in a field-notes turn:
 1. Use the read tools to understand what the user wants and find the relevant rows.
 2. Call the propose_* tools to RECORD intended mutations. These do NOT execute immediately — they're queued for the user to review and approve in a separate step.
 3. End with a short text summary describing what you queued and why.
@@ -58,7 +64,7 @@ Capability map — what you CAN propose:
 - Communication: send an SMS text message to a sub/vendor company that has a phone number on file (find them with list_companies); send a bid reminder to the recipients of a bid package who were invited but haven't responded (find the package with list_bid_packages / get_bid_package).
 - Daily logs: append a note to a project's daily log for a given date (creates the log if none exists yet), optionally recording which subs/vendors were on site.
 
-Read-only tools for answering questions (they change nothing): list_projects, list_schedule_items, get_schedule_item, list_decisions, get_decision, list_companies, list_staff, get_schedule_health, list_schedule_delays, list_daily_logs, list_bid_packages, get_bid_package, list_purchase_orders.
+Read-only tools for answering questions (they change nothing): search_help_topics (how the app works), list_projects, list_schedule_items, get_schedule_item, list_decisions, get_decision, list_companies, list_staff, get_schedule_health, list_schedule_delays, list_daily_logs, list_bid_packages, get_bid_package, list_purchase_orders.
 
 What you CANNOT do (don't pretend you can):
 - Delete or archive anything.
@@ -67,7 +73,16 @@ What you CANNOT do (don't pretend you can):
 - Touch files, payments, or edit companies.
 - See or report dollar amounts on purchase orders — list_purchase_orders returns status only, never costs.
 
-Reporting mode — when the user asks a QUESTION rather than relaying site notes (e.g. "what's slipping this week?", "which open projects are out of buffer?", "who hasn't bid on the framing package?", "is ABC's workers comp current?", "is the plumber's PO approved?"):
+Help desk mode — when the user asks how the SOFTWARE works or how to accomplish something in it (as opposed to asking about a specific job's data). This is a first-class job: staff use you to learn the product. Examples: "how do I set a baseline?", "what's the difference between a change order and a selection?", "how does a sub submit a bid?", "who can see daily logs?", "what does the health banner mean?".
+- Call search_help_topics to pull the relevant help topic(s), then answer in your own words: concise, plain English, staff-facing. Say where in the app to go (the tab or page) and the steps to take.
+- The full help catalog is listed below so you know exactly which topics exist — pass the best topic ids and/or a keyword query to search_help_topics. If the first search misses, refine the query or request other ids by id.
+- Answer ONLY from the help topics and these instructions — do not invent features, buttons, or settings that aren't described. If the topics don't cover the question, say what the app does around that area and suggest the closest real feature rather than guessing. If the user is really asking to DO the thing (not learn how), switch to the matching mode instead.
+- Help desk answers change nothing: do NOT propose any mutations and do NOT append a daily log.
+
+Help topic catalog (ids you can request from search_help_topics):
+${helpCatalog()}
+
+Reporting mode — when the user asks a QUESTION about a job's live DATA rather than relaying site notes (e.g. "what's slipping this week?", "which open projects are out of buffer?", "who hasn't bid on the framing package?", "is ABC's workers comp current?", "is the plumber's PO approved?"):
 - Use the read-only tools to gather the answer, then reply with a concise plain-text answer. Cite the projects/items by name.
 - Do NOT propose any mutations for a pure question, and do NOT append a daily log — a question is not a site note.
 - get_schedule_health returns whether a project is in its buffer, days late, and the projected finish; list_schedule_delays explains logged slippage; list_purchase_orders reports PO status (no dollar amounts).
@@ -133,6 +148,27 @@ Rules:
 type SupabaseTyped = SupabaseClient<Database>
 
 const TOOLS: Anthropic.Messages.Tool[] = [
+  {
+    name: "search_help_topics",
+    description:
+      "Look up how THIS APP works, to answer a staff 'how does X work?' / 'how do I do Y?' question (help desk mode). Returns the full text of the matching help topics (what a feature does, where it lives, the workflow). Pass topic_ids (from the catalog in the system prompt) for an exact lookup, and/or a plain-language query to search across all topics. This is documentation about the product's own features — it does NOT read any project's live data (use the list_*/get_* tools for that). Changes nothing.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description:
+            "Plain-language description of what the user wants to understand (e.g. 'set schedule baseline', 'award a bid'). Matched against every help topic.",
+        },
+        topic_ids: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Exact help topic ids to fetch (from the catalog in the system prompt), e.g. ['baseline-health','decisions']. Use when you already know which topics you need.",
+        },
+      },
+    },
+  },
   {
     name: "list_projects",
     description:
@@ -637,6 +673,29 @@ async function executeTool({
   today: string
 }): Promise<string> {
   switch (name) {
+    case "search_help_topics": {
+      const query = (input.query as string | undefined) ?? null
+      const topicIds = Array.isArray(input.topic_ids)
+        ? (input.topic_ids as unknown[]).filter(
+            (v): v is string => typeof v === "string"
+          )
+        : null
+      const topics = searchHelpTopics({ query, topicIds })
+      if (topics.length === 0) {
+        return JSON.stringify({
+          topics: [],
+          note: "No help topic matched. Answer from the catalog summaries in the system prompt, or tell the user this app doesn't appear to cover that.",
+        })
+      }
+      return JSON.stringify({
+        topics: topics.map((t) => ({
+          id: t.id,
+          title: t.title,
+          body: t.body,
+        })),
+      })
+    }
+
     case "list_projects": {
       const statuses = (input.statuses as string[] | undefined) ?? null
       let q = supabase
@@ -1599,7 +1658,7 @@ export async function runAgentTurn({
   // Build the system prompt once per turn. It's byte-stable across the loop's
   // iterations (today + projectContext don't change mid-turn), so caching the
   // tools + system prefix is a clean win: render order is tools → system, so
-  // one cache_control breakpoint on the system block caches the ~17-tool
+  // one cache_control breakpoint on the system block caches the full tool
   // schema array AND the system prompt together. Every iteration then reads
   // that prefix at ~0.1x input price instead of re-paying it in full.
   const systemBlocks: Anthropic.Messages.TextBlockParam[] = [
