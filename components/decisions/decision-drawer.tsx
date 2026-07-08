@@ -351,6 +351,14 @@ export function DecisionDrawer({
   const [clientSelectedChoiceKey, setClientSelectedChoiceKey] = useState<
     string | null
   >(decision?.selected_choice_id ?? null)
+  // Staff-only: which choice they're approving on the client's behalf. Drives
+  // both the "Chosen" badge and the cost that flows to billing. Defaults to
+  // the client's/prior pick (a saved choice's client_key equals its id). A
+  // lone-choice selection is auto-selected server-side, so a click is only
+  // required when there's more than one option.
+  const [staffSelectedChoiceKey, setStaffSelectedChoiceKey] = useState<
+    string | null
+  >(decision?.selected_choice_id ?? null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [copyOpen, setCopyOpen] = useState(false)
@@ -472,6 +480,16 @@ export function DecisionDrawer({
         return
       }
     }
+    // Approving a selection bills the chosen option's cost. A lone choice is
+    // auto-selected server-side, but with two or more options staff must say
+    // which one is being approved (the client's own pick pre-fills this).
+    if (kind === "selection" && (overrideStatus ?? status) === "approved") {
+      const namedChoices = choices.filter((c) => c.title.trim() !== "")
+      if (namedChoices.length > 1 && !staffSelectedChoiceKey) {
+        toast.error("Tap “Choose” on the option being approved so its cost bills correctly.")
+        return
+      }
+    }
     const payload: DecisionInputT = {
       id: decision?.id,
       project_id: data.project_id,
@@ -585,6 +603,10 @@ export function DecisionDrawer({
                   })),
               }))
           : [],
+      // Which choice staff is approving (client_key). Server auto-selects a
+      // lone choice and otherwise falls back to the client's own pick, so this
+      // only needs to carry a value for multi-choice staff approvals.
+      selected_choice_key: kind === "selection" ? staffSelectedChoiceKey : null,
       // Selections only, matching choices above: a create-mode kind switch
       // must not persist assignments (invisible on change orders, and they'd
       // grant trades read access) — the server mirrors this gate.
@@ -1165,9 +1187,12 @@ export function DecisionDrawer({
                   setAttachments((current) =>
                     current.filter((a) => a.choice_id !== key)
                   )
+                  // Don't leave the "Chosen" pick pointing at a removed option.
+                  setStaffSelectedChoiceKey((cur) => (cur === key ? null : cur))
                 }}
                 uploading={uploading}
-                selectedChoiceId={decision?.selected_choice_id ?? null}
+                selectedChoiceKey={staffSelectedChoiceKey}
+                onSelectChoice={setStaffSelectedChoiceKey}
                 allowance={allowanceNum}
                 markupPercent={markupNum}
                 markupPercentText={markupPercent}
@@ -1458,7 +1483,8 @@ function ChoicesEditor({
   onRemoveAttachment,
   onRemoveChoice,
   uploading,
-  selectedChoiceId,
+  selectedChoiceKey,
+  onSelectChoice,
   allowance,
   markupPercent,
   markupPercentText,
@@ -1475,7 +1501,10 @@ function ChoicesEditor({
   // referencing a key the server can't resolve. Lifted into the parent.
   onRemoveChoice: (key: string) => void
   uploading: boolean
-  selectedChoiceId: string | null
+  // client_key of the choice staff is approving (matches the client's pick
+  // when re-opening an approved selection). Null = nothing chosen yet.
+  selectedChoiceKey: string | null
+  onSelectChoice: (key: string) => void
   // When non-null we're in the allowance flow: per-choice prices become
   // absolute costs and we surface a variance preview against this amount.
   allowance: number | null
@@ -1536,7 +1565,7 @@ function ChoicesEditor({
       <ul className="space-y-3">
         {value.map((c, i) => {
           const photos = attachmentsForChoice(c.client_key)
-          const isSelected = !!(c.id && selectedChoiceId && c.id === selectedChoiceId)
+          const isSelected = c.client_key === selectedChoiceKey
           const price = effectivePrice(c)
           const variance =
             hasAllowance && price != null ? price - (allowance ?? 0) : null
@@ -1593,11 +1622,24 @@ function ChoicesEditor({
                     }
                   />
                 </div>
-                {isSelected && (
-                  <Badge tone="success" className="mt-1.5">
-                    <CheckCircle2 className="h-3 w-3" /> Picked
-                  </Badge>
-                )}
+                <button
+                  type="button"
+                  onClick={() => onSelectChoice(c.client_key)}
+                  className={cn(
+                    "mt-1.5 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] whitespace-nowrap cursor-pointer transition-colors",
+                    isSelected
+                      ? "border-green-500 bg-green-50 text-green-700"
+                      : "border-border text-muted hover:border-green-500 hover:text-green-700"
+                  )}
+                  title="Mark this as the chosen option — its cost bills to the client on approval"
+                >
+                  {isSelected ? (
+                    <CheckCircle2 className="h-3 w-3" />
+                  ) : (
+                    <Circle className="h-3 w-3" />
+                  )}
+                  {isSelected ? "Chosen" : "Choose"}
+                </button>
                 <button
                   type="button"
                   onClick={() => onRemoveChoice(c.client_key)}
