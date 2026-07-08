@@ -88,3 +88,66 @@ export function collectBaseTags(tagLists: (string[] | null | undefined)[]): stri
   }
   return [...set].sort()
 }
+
+// ---- Tag auto-suggest ------------------------------------------------------
+// Surfacing existing tags similar to what's being typed keeps the vocabulary
+// from drifting into near-duplicates (spec vs spec_home, in_city vs
+// in_city_limits) — the exact mess a manual tag review has to clean up later.
+
+/** The in-progress (last, comma-delimited) token in a tags editor string. */
+export function currentTagToken(input: string): string {
+  return (input.split(",").pop() ?? "").trim()
+}
+
+function sharedPrefix(a: string, b: string): number {
+  let i = 0
+  while (i < a.length && i < b.length && a[i] === b[i]) i++
+  return i
+}
+
+// Higher = more similar; 0 = not worth suggesting.
+function similarityScore(a: string, b: string): number {
+  if (a === b) return 0
+  if (b.startsWith(a) || a.startsWith(b)) return 100 + sharedPrefix(a, b)
+  if (b.includes(a) || a.includes(b)) return 60
+  const sp = sharedPrefix(a, b)
+  return sp >= 3 ? 30 + sp : 0
+}
+
+/**
+ * Existing base tags similar to the token currently being typed in `input`,
+ * so the user can reuse one instead of coining a variant. Excludes tags
+ * already present in the input and the exact token being typed. With nothing
+ * typed yet, returns the existing vocabulary (so it's discoverable).
+ */
+export function suggestSimilarTags(
+  input: string,
+  existing: string[],
+  limit = 6
+): string[] {
+  const present = new Set(parseTagsInput(input).map(baseTag))
+  const tokenBase = baseTag(normalizeTag(currentTagToken(input)))
+  const pool = [...new Set(existing.map(baseTag).filter(Boolean))].filter(
+    (t) => t !== tokenBase && !present.has(t)
+  )
+  if (!tokenBase) return pool.sort().slice(0, limit)
+  return pool
+    .map((t) => ({ t, s: similarityScore(tokenBase, t) }))
+    .filter((x) => x.s > 0)
+    .sort((a, b) => b.s - a.s || a.t.localeCompare(b.t))
+    .slice(0, limit)
+    .map((x) => x.t)
+}
+
+/**
+ * Replace the in-progress token in `input` with `tag` (preserving a leading
+ * "!" negation the user already typed) and leave a trailing ", " so they can
+ * keep going.
+ */
+export function applyTagSuggestion(input: string, tag: string): string {
+  const negated = currentTagToken(input).startsWith("!")
+  const chosen = (negated ? "!" : "") + tag
+  const lastComma = input.lastIndexOf(",")
+  const head = lastComma >= 0 ? `${input.slice(0, lastComma + 1)} ` : ""
+  return `${head}${chosen}, `
+}
