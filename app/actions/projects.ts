@@ -951,6 +951,17 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     const firstPass = keptItems.map((it) => {
       const newId = crypto.randomUUID()
       idMap.set(it.id, newId)
+      let sStart = shift(it.start_date)
+      let sEnd = shift(it.end_date)
+      let dur = it.duration_days
+      // Milestones copy as single-day markers (Job Start keeps its start,
+      // Substantial Completion its end) so the target job's milestones match
+      // the "1 day" rule enforced everywhere else.
+      if (it.milestone && sStart && sEnd && sStart !== sEnd) {
+        if (it.milestone === "substantial_completion") sStart = sEnd
+        else sEnd = sStart
+      }
+      if (it.milestone && sStart && sEnd) dur = 1
       return {
         id: newId,
         project_id: newProject.id,
@@ -958,10 +969,10 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
         kind: it.kind,
         title: it.title,
         description: it.description,
-        start_date: shift(it.start_date),
-        end_date: shift(it.end_date),
+        start_date: sStart,
+        end_date: sEnd,
         due_date: shift(it.due_date),
-        duration_days: it.duration_days,
+        duration_days: dur,
         status: "not_started" as const,
         position: it.position,
         recurrence_rule: it.recurrence_rule,

@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireSession } from "@/lib/auth"
+import { parseDelayReasons, DELAY_REASONS_KEY } from "@/lib/delays"
 import { ScheduleClient } from "./schedule-client"
 import type { ScheduleData } from "./schedule-client"
 
@@ -38,6 +39,7 @@ export default async function SchedulePage({
     { data: roleMembers },
     { data: comments },
     { data: allProjects },
+    { data: delayReasonsSetting },
   ] = await Promise.all([
     supabase
       .from("schedule_items")
@@ -94,6 +96,11 @@ export default async function SchedulePage({
       .from("projects")
       .select("id, name, project_number")
       .order("project_number", { ascending: true }),
+    supabase
+      .from("app_settings")
+      .select("value")
+      .eq("key", DELAY_REASONS_KEY)
+      .maybeSingle(),
   ])
 
   const strip = <T extends { schedule_items?: unknown }>(rows: T[] | null) =>
@@ -127,6 +134,7 @@ export default async function SchedulePage({
     predecessors: strip(predecessors) as ScheduleData["predecessors"],
     checklist: strip(checklist) as ScheduleData["checklist"],
     delays: strip(delays) as ScheduleData["delays"],
+    delayReasons: parseDelayReasons(delayReasonsSetting?.value ?? null),
     attachments: cleanedAttachments,
     signed_urls: signedUrls,
     profiles: profiles ?? [],

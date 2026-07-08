@@ -6,17 +6,13 @@ import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card"
 import { EmptyState } from "@/components/ui/empty"
 import { Badge } from "@/components/ui/badge"
 import { formatDate } from "@/lib/utils"
+import {
+  DELAY_REASONS_KEY,
+  parseDelayReasons,
+  delayReasonLabel,
+} from "@/lib/delays"
 
 export const metadata = { title: "Delay Report — Hines Homes" }
-
-const REASON_LABEL: Record<string, string> = {
-  weather: "Weather",
-  sub: "Subcontractor",
-  material: "Material",
-  owner_decision: "Owner decision",
-  permit: "Permit",
-  other: "Other",
-}
 
 export default async function DelayReportPage({
   searchParams,
@@ -56,6 +52,15 @@ export default async function DelayReportPage({
 
   const rowsTyped = (rows ?? []) as unknown as Row[]
 
+  // Configured (staff-editable) delay reasons, for labels.
+  const { data: reasonSetting } = await supabase
+    .from("app_settings")
+    .select("value")
+    .eq("key", DELAY_REASONS_KEY)
+    .maybeSingle()
+  const delayReasons = parseDelayReasons(reasonSetting?.value ?? null)
+  const reasonLabel = (value: string) => delayReasonLabel(value, delayReasons)
+
   // Aggregations
   const totalDays = rowsTyped.reduce((s, r) => s + (r.delay_days ?? 0), 0)
   const byCategory = new Map<string, { count: number; days: number }>()
@@ -78,6 +83,107 @@ export default async function DelayReportPage({
     p.count++
     p.days += r.delay_days ?? 0
     byProject.set(r.schedule_items.project_id, p)
+  }
+
+  // By assigned person / role. Each delay is attributed to every party assigned
+  // to its schedule item (a delay with two assignees counts toward both), so
+  // the days column can exceed the total. Delays on unassigned items land in an
+  // "Unassigned" bucket. Names resolve from profiles / companies / roles.
+  const byAssignee = new Map<
+    string,
+    { label: string; kind: string; count: number; days: number }
+  >()
+  if (rowsTyped.length > 0) {
+    const itemIds = [...new Set(rowsTyped.map((r) => r.schedule_items.id))]
+    const { data: assignRows, error: assignErr } = await supabase
+      .from("schedule_assignments")
+      .select("schedule_item_id, profile_id, company_id, role_id")
+      .in("schedule_item_id", itemIds)
+    if (assignErr) throw new Error(assignErr.message)
+
+    const byItem = new Map<
+      string,
+      { profile_id: string | null; company_id: string | null; role_id: string | null }[]
+    >()
+    const profileIds = new Set<string>()
+    const companyIds = new Set<string>()
+    const roleIds = new Set<string>()
+    for (const a of assignRows ?? []) {
+      const list = byItem.get(a.schedule_item_id) ?? []
+      list.push(a)
+      byItem.set(a.schedule_item_id, list)
+      if (a.profile_id) profileIds.add(a.profile_id)
+      if (a.company_id) companyIds.add(a.company_id)
+      if (a.role_id) roleIds.add(a.role_id)
+    }
+
+    // A valid-uuid sentinel that never matches — an empty .in() list is fine,
+    // but a non-uuid placeholder ("-") would blow up the uuid cast.
+    const NONE = "00000000-0000-0000-0000-000000000000"
+    const [
+      { data: aProfiles, error: profilesErr },
+      { data: aCompanies, error: companiesErr },
+      { data: aRoles, error: rolesErr },
+    ] = await Promise.all([
+      supabase
+        .from("profiles")
+        .select("id, full_name, email")
+        .in("id", profileIds.size ? [...profileIds] : [NONE]),
+      supabase
+        .from("companies")
+        .select("id, name")
+        .in("id", companyIds.size ? [...companyIds] : [NONE]),
+      supabase
+        .from("roles")
+        .select("id, name")
+        .in("id", roleIds.size ? [...roleIds] : [NONE]),
+    ])
+    const lookupErr = profilesErr ?? companiesErr ?? rolesErr
+    if (lookupErr) throw new Error(lookupErr.message)
+    const profileName = new Map(
+      (aProfiles ?? []).map((p) => [p.id, p.full_name || p.email || "Staff"])
+    )
+    const companyName = new Map((aCompanies ?? []).map((c) => [c.id, c.name]))
+    const roleName = new Map((aRoles ?? []).map((r) => [r.id, r.name]))
+
+    const bump = (key: string, label: string, kind: string, days: number) => {
+      const v = byAssignee.get(key) ?? { label, kind, count: 0, days: 0 }
+      v.count++
+      v.days += days
+      byAssignee.set(key, v)
+    }
+    for (const r of rowsTyped) {
+      const days = r.delay_days ?? 0
+      const assignees = byItem.get(r.schedule_items.id) ?? []
+      if (assignees.length === 0) {
+        bump("unassigned", "Unassigned", "unassigned", days)
+        continue
+      }
+      for (const a of assignees) {
+        if (a.profile_id) {
+          bump(
+            `p:${a.profile_id}`,
+            profileName.get(a.profile_id) ?? "Staff",
+            "Person",
+            days
+          )
+        } else if (a.company_id) {
+          bump(
+            `c:${a.company_id}`,
+            companyName.get(a.company_id) ?? "Company",
+            "Sub / vendor",
+            days
+          )
+        } else if (a.role_id) {
+          bump(
+            `r:${a.role_id}`,
+            roleName.get(a.role_id) ?? "Role",
+            "Role",
+            days
+          )
+        }
+      }
+    }
   }
 
   const { data: projects } = await supabase
@@ -182,7 +288,44 @@ export default async function DelayReportPage({
                   .sort((a, b) => b[1].days - a[1].days)
                   .map(([cat, v]) => (
                     <tr key={cat}>
-                      <td className="px-4 py-2">{REASON_LABEL[cat] ?? cat}</td>
+                      <td className="px-4 py-2">{reasonLabel(cat)}</td>
+                      <td className="px-4 py-2 text-right tabular-nums">
+                        {v.count}
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums">
+                        {v.days}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </Card>
+
+          {/* By assigned person / role */}
+          <Card>
+            <CardHeader>
+              <CardTitle>By assigned person / role</CardTitle>
+            </CardHeader>
+            <p className="px-4 pt-1 pb-2 text-xs text-muted">
+              Each delay counts toward every party assigned to its work item, so
+              totals here can exceed the overall delay days.
+            </p>
+            <table className="w-full text-sm">
+              <thead className="bg-background/60 text-xs uppercase text-muted">
+                <tr>
+                  <th className="text-left px-4 py-2.5">Assigned to</th>
+                  <th className="text-left px-4 py-2.5 w-32">Type</th>
+                  <th className="text-right px-4 py-2.5 w-24">Entries</th>
+                  <th className="text-right px-4 py-2.5 w-24">Days</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {Array.from(byAssignee.entries())
+                  .sort((a, b) => b[1].days - a[1].days)
+                  .map(([key, v]) => (
+                    <tr key={key}>
+                      <td className="px-4 py-2">{v.label}</td>
+                      <td className="px-4 py-2 text-muted">{v.kind}</td>
                       <td className="px-4 py-2 text-right tabular-nums">
                         {v.count}
                       </td>
@@ -269,7 +412,7 @@ export default async function DelayReportPage({
                     </td>
                     <td className="px-4 py-2">
                       <Badge tone="warning">
-                        {REASON_LABEL[r.reason_category] ?? r.reason_category}
+                        {reasonLabel(r.reason_category)}
                       </Badge>
                     </td>
                     <td className="px-4 py-2 text-right tabular-nums">

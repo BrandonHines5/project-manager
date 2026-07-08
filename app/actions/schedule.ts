@@ -62,15 +62,12 @@ const Predecessor = z.object({
 // Why a date move happened. Required (and logged to schedule_delays) whenever
 // a work item's dates change after the project baseline is locked; free-form
 // moves need no reason while the schedule is still being drafted.
+//
+// reason_category is a free-form slug validated against the staff-editable
+// list in Settings → Delay reasons (app_settings key `delay_reasons`). It used
+// to be a fixed enum; the column is now text (migration 0083).
 const MoveReason = z.object({
-  reason_category: z.enum([
-    "weather",
-    "sub",
-    "material",
-    "owner_decision",
-    "permit",
-    "other",
-  ]),
+  reason_category: z.string().min(1).max(60),
   notes: optStr,
 })
 export type MoveReasonT = z.infer<typeof MoveReason>
@@ -125,6 +122,19 @@ function daysBetween(a: string, b: string) {
   return (
     Math.round((new Date(b).getTime() - new Date(a).getTime()) / 86400000) + 1
   )
+}
+
+// Job Start / Substantial Completion are single-day markers. Collapse a date
+// range to one day around the meaningful edge — Job Start keeps its start,
+// Substantial Completion its end — so the schedule-health math (Job Start start
+// → Substantial Completion end) is unchanged. Non-milestones pass through.
+function collapseMilestoneRange(
+  milestone: string | null,
+  start: string | null,
+  end: string | null
+): [string | null, string | null] {
+  if (!milestone || !start || !end || start === end) return [start, end]
+  return milestone === "substantial_completion" ? [end, end] : [start, start]
 }
 
 const BASELINE_COMPLETE_MSG =
@@ -327,6 +337,8 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
     if (startD && !endD) endD = startD
     else if (endD && !startD) startD = endD
   }
+  // Whatever range the editor sends for a milestone, collapse it to one day.
+  ;[startD, endD] = collapseMilestoneRange(oldRow?.milestone ?? null, startD, endD)
   const duration = startD && endD ? daysBetween(startD, endD) : null
 
   // Move-reason gate: once the baseline is locked, changing a work item's
@@ -1117,21 +1129,26 @@ export async function deleteScheduleItem(input: {
   revalidatePath(`/projects/${parsed.project_id}/schedule`)
 }
 
-export async function logDelay({
-  schedule_item_id,
-  project_id,
-  delay_days,
-  reason_category,
-  notes,
-  push_dates,
-}: {
+const LogDelayInput = z.object({
+  schedule_item_id: z.string(),
+  project_id: z.string(),
+  delay_days: z.coerce.number().int(),
+  // Free-form reason slug, validated against the configured list in the UI.
+  reason_category: z.string().min(1).max(60),
+  notes: z.string().max(2000).optional(),
+  push_dates: z.boolean().optional(),
+})
+
+export async function logDelay(input: {
   schedule_item_id: string
   project_id: string
   delay_days: number
-  reason_category: "weather" | "sub" | "material" | "owner_decision" | "permit" | "other"
+  reason_category: string
   notes?: string
   push_dates?: boolean
 }) {
+  const { schedule_item_id, project_id, delay_days, reason_category, notes, push_dates } =
+    LogDelayInput.parse(input)
   const profile = await requireStaff()
   const supabase = await createSupabaseServerClient()
   const { error } = await supabase.from("schedule_delays").insert({
@@ -1188,15 +1205,21 @@ export async function moveScheduleItem(input: {
 
   const { data: item, error: itemErr } = await supabase
     .from("schedule_items")
-    .select("kind, start_date, end_date, project_id")
+    .select("kind, start_date, end_date, project_id, milestone")
     .eq("id", parsed.id)
     .maybeSingle()
   if (itemErr) throw new Error(itemErr.message)
   if (!item || item.project_id !== parsed.project_id) {
     throw new Error("Schedule item not found in this project.")
   }
-  const changed =
-    item.start_date !== parsed.start_date || item.end_date !== parsed.end_date
+  // Milestones stay single-day markers even when dragged to a range on the
+  // Gantt — collapse around the meaningful edge (see saveScheduleItem).
+  const [newStart, newEnd] = collapseMilestoneRange(
+    item.milestone,
+    parsed.start_date,
+    parsed.end_date
+  )
+  const changed = item.start_date !== newStart || item.end_date !== newEnd
   let baselineSetAt: string | null = null
   if (item.kind === "work" && changed) {
     baselineSetAt = await getBaselineSetAt(supabase, parsed.project_id)
@@ -1207,7 +1230,7 @@ export async function moveScheduleItem(input: {
 
   const { error } = await supabase
     .from("schedule_items")
-    .update({ start_date: parsed.start_date, end_date: parsed.end_date })
+    .update({ start_date: newStart, end_date: newEnd })
     .eq("id", parsed.id)
   if (error) throw new Error(error.message)
   if (item.kind === "work" && changed && baselineSetAt && parsed.move_reason) {
@@ -1217,8 +1240,8 @@ export async function moveScheduleItem(input: {
         delay_days: dateShiftDays(
           item.start_date,
           item.end_date,
-          parsed.start_date,
-          parsed.end_date
+          newStart,
+          newEnd
         ),
         reason_category: parsed.move_reason.reason_category,
         notes: nz(parsed.move_reason.notes),
@@ -2826,6 +2849,28 @@ export async function setScheduleBaseline(input: {
   await requireStaff()
   const parsed = z.object({ project_id: z.string().uuid() }).parse(input)
   const supabase = await createSupabaseServerClient()
+
+  // Re-baselining overwrites the locked plan and resets slip tracking to zero,
+  // so it's only allowed once the job has real progress: at least one work
+  // item marked complete. The FIRST baseline lock is exempt (work items can't
+  // even be completed until a baseline exists).
+  const existingBaselineSetAt = await getBaselineSetAt(supabase, parsed.project_id)
+  if (existingBaselineSetAt) {
+    const { count, error: cErr } = await supabase
+      .from("schedule_items")
+      .select("id", { count: "exact", head: true })
+      .eq("project_id", parsed.project_id)
+      .eq("kind", "work")
+      .eq("status", "complete")
+    if (cErr) return { ok: false, error: cErr.message }
+    if (!count) {
+      return {
+        ok: false,
+        error:
+          "The baseline can only be reset after at least one work item is marked complete.",
+      }
+    }
+  }
 
   const { data: markers, error: mErr } = await supabase
     .from("schedule_items")

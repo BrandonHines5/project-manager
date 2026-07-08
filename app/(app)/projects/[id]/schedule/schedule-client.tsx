@@ -12,6 +12,7 @@ import { TodosView } from "@/components/schedule/todos-view"
 import { TodosSheet } from "@/components/schedule/todos-sheet"
 import { ScheduleItemDialog } from "@/components/schedule/schedule-item-dialog"
 import { ScheduleHealthBanner } from "@/components/schedule/health-banner"
+import type { DelayReason } from "@/lib/delays"
 
 export type ScheduleData = {
   project_id: string
@@ -29,6 +30,9 @@ export type ScheduleData = {
   predecessors: Tables<"schedule_predecessors">[]
   checklist: Tables<"todo_checklist_items">[]
   delays: Tables<"schedule_delays">[]
+  // Staff-editable delay reasons (Settings → Delay reasons); drives the
+  // move-reason popup and the inline delay log.
+  delayReasons: DelayReason[]
   attachments: Tables<"schedule_item_attachments">[]
   signed_urls: Record<string, string>
   profiles: Pick<Tables<"profiles">, "id" | "full_name" | "email" | "role" | "company_id">[]
