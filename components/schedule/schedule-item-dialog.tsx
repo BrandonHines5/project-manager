@@ -706,10 +706,7 @@ export function ScheduleItemDialog({
                             <option value="end">Parent end</option>
                           </Select>
                         </Field>
-                        <Field
-                          label="Offset (days)"
-                          hint="negative = before, positive = after"
-                        >
+                        <Field label="Offset (days)">
                           <Input
                             type="number"
                             step={1}
@@ -717,6 +714,15 @@ export function ScheduleItemDialog({
                             onChange={(e) => setAnchorOffset(e.target.value)}
                           />
                         </Field>
+                        {/* Hint lives in the third grid column, to the right of
+                            the input rather than below it, so the Anchor and
+                            Offset controls stay bottom-aligned (the below-hint
+                            was making the Offset field taller). h-9 +
+                            items-center matches the input height so the text
+                            lines up with the field. */}
+                        <p className="h-9 flex items-center text-xs text-muted leading-tight">
+                          negative = before, positive = after
+                        </p>
                       </div>
                     )}
                   </div>
