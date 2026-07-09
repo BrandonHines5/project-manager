@@ -16,6 +16,19 @@ type CrmProjectRow = {
   qb_job_name: string | null
   buildertrend_job_name: string | null
   street_address: string | null
+  // FKs into the CRM `clients` table for the (up to two) clients on a job.
+  // Resolved to name/email/phone in a follow-up batched read.
+  client_id: string | null
+  client_id_2: string | null
+}
+
+// A CRM `clients` row — the source of truth for a client's contact info. The
+// CRM keeps each person (both spouses of a couple) as their own row.
+type CrmClientRow = {
+  id: string
+  name: string | null
+  email: string | null
+  phone: string | null
 }
 
 // Local project we might sync — only the columns the sync reads/writes.
@@ -26,6 +39,12 @@ type LocalProject = {
   status: Enums<"project_status">
   crm_status: string | null
   is_template: boolean
+  client_name: string | null
+  client_email: string | null
+  client_phone: string | null
+  client_name_2: string | null
+  client_email_2: string | null
+  client_phone_2: string | null
 }
 
 export type SyncFromCrmResult =
@@ -34,6 +53,7 @@ export type SyncFromCrmResult =
       matched: number
       statusChanged: number
       nameChanged: number
+      contactsChanged: number
       unmatched: string[]
     }
   | { ok: false; error: string }
@@ -60,9 +80,13 @@ function canonicalCrmName(row: CrmProjectRow): string | null {
  *
  * For every matched project we store the CRM's `project_status` verbatim in
  * `crm_status` (what the badge shows), map it back onto PM's `status` enum
- * (what the Open/Active/Warranty/Closed filter + warranty page run off), and
- * set `name` to the CRM's official short name. Templates are skipped; project
- * numbers with no CRM row are returned as `unmatched` for transparency.
+ * (what the Open/Active/Warranty/Closed filter + warranty page run off), set
+ * `name` to the CRM's official short name, and pull each client's contact info
+ * (name/email/phone for both client slots) from the CRM `clients` table so the
+ * Clients directory + portal invites have real contacts. Contact fields are
+ * filled only when the CRM has a value — a sync never blanks out what PM has.
+ * Templates are skipped; project numbers with no CRM row are returned as
+ * `unmatched` for transparency.
  *
  * Returns a typed result rather than throwing — Next masks thrown messages in
  * production, and "CRM not configured" needs to reach the user verbatim.
@@ -82,7 +106,9 @@ export async function syncProjectsFromCrm(): Promise<SyncFromCrmResult> {
   const supabase = await createSupabaseServerClient()
   const { data: localRows, error: localErr } = await supabase
     .from("projects")
-    .select("id, project_number, name, status, crm_status, is_template")
+    .select(
+      "id, project_number, name, status, crm_status, is_template, client_name, client_email, client_phone, client_name_2, client_email_2, client_phone_2"
+    )
   if (localErr) return { ok: false, error: localErr.message }
 
   // Only real jobs sync — templates (and the "TEMPLATE-*" naming convention)
@@ -93,14 +119,21 @@ export async function syncProjectsFromCrm(): Promise<SyncFromCrmResult> {
       !p.project_number.toUpperCase().startsWith("TEMPLATE")
   )
   if (locals.length === 0) {
-    return { ok: true, matched: 0, statusChanged: 0, nameChanged: 0, unmatched: [] }
+    return {
+      ok: true,
+      matched: 0,
+      statusChanged: 0,
+      nameChanged: 0,
+      contactsChanged: 0,
+      unmatched: [],
+    }
   }
 
   const numbers = locals.map((p) => p.project_number)
   const { data: crmRows, error: crmErr } = await crm
     .from("projects")
     .select(
-      "project_number, project_status, qb_job_name, buildertrend_job_name, street_address"
+      "project_number, project_status, qb_job_name, buildertrend_job_name, street_address, client_id, client_id_2"
     )
     .in("project_number", numbers)
   if (crmErr) return { ok: false, error: crmErr.message }
@@ -110,10 +143,32 @@ export async function syncProjectsFromCrm(): Promise<SyncFromCrmResult> {
     if (r.project_number) crmByNumber.set(r.project_number, r)
   }
 
+  // Resolve the client FKs to contact rows in one batched read.
+  const clientIds = Array.from(
+    new Set(
+      (crmRows ?? [])
+        .flatMap((r) => [
+          (r as CrmProjectRow).client_id,
+          (r as CrmProjectRow).client_id_2,
+        ])
+        .filter((id): id is string => typeof id === "string" && id.length > 0)
+    )
+  )
+  const clientById = new Map<string, CrmClientRow>()
+  if (clientIds.length > 0) {
+    const { data: clientRows, error: clientErr } = await crm
+      .from("clients")
+      .select("id, name, email, phone")
+      .in("id", clientIds)
+    if (clientErr) return { ok: false, error: clientErr.message }
+    for (const c of (clientRows ?? []) as CrmClientRow[]) clientById.set(c.id, c)
+  }
+
   const nowIso = new Date().toISOString()
   const unmatched: string[] = []
   let statusChanged = 0
   let nameChanged = 0
+  let contactsChanged = 0
 
   const updates: Array<{ id: string; patch: TablesUpdate<"projects"> }> = []
   for (const p of locals) {
@@ -142,6 +197,29 @@ export async function syncProjectsFromCrm(): Promise<SyncFromCrmResult> {
       patch.name = canonical
       nameChanged += 1
     }
+
+    // Pull each client's contact info from the CRM `clients` rows, mirroring
+    // the CRM's structure (slot 1 = first client, slot 2 = second — a couple is
+    // two rows there). Only fill a field when the CRM has a value; a sync never
+    // blanks out PM data.
+    const c1 = crmRow.client_id ? clientById.get(crmRow.client_id) : undefined
+    const c2 = crmRow.client_id_2 ? clientById.get(crmRow.client_id_2) : undefined
+    const beforeKeys = Object.keys(patch).length
+    const c1name = c1?.name?.trim()
+    const c1email = c1?.email?.trim()
+    const c1phone = c1?.phone?.trim()
+    const c2name = c2?.name?.trim()
+    const c2email = c2?.email?.trim()
+    const c2phone = c2?.phone?.trim()
+    if (c1name && c1name !== (p.client_name ?? "")) patch.client_name = c1name
+    if (c1email && c1email !== (p.client_email ?? "")) patch.client_email = c1email
+    if (c1phone && c1phone !== (p.client_phone ?? "")) patch.client_phone = c1phone
+    if (c2name && c2name !== (p.client_name_2 ?? "")) patch.client_name_2 = c2name
+    if (c2email && c2email !== (p.client_email_2 ?? ""))
+      patch.client_email_2 = c2email
+    if (c2phone && c2phone !== (p.client_phone_2 ?? ""))
+      patch.client_phone_2 = c2phone
+    if (Object.keys(patch).length > beforeKeys) contactsChanged += 1
 
     updates.push({ id: p.id, patch })
   }
@@ -183,6 +261,7 @@ export async function syncProjectsFromCrm(): Promise<SyncFromCrmResult> {
     matched: updates.length,
     statusChanged,
     nameChanged,
+    contactsChanged,
     unmatched,
   }
 }
