@@ -33,6 +33,21 @@ type TokenResponse = {
   token_type?: string
 }
 
+type RefreshedTokens = {
+  access_token: string
+  refresh_token: string
+  access_token_expires_at: string
+  refresh_token_expires_at: string
+}
+
+// De-dupe concurrent refreshes of the same connection: Intuit invalidates a
+// refresh token the moment it's used, so two overlapping refresh calls with the
+// same token race and the loser gets invalid_grant. Callers keyed by realm_id
+// share one in-flight refresh promise. (Single-instance only — serverless can
+// still run parallel instances; the DB always holds the latest rotated token,
+// which is the ultimate guard.)
+const inFlightRefresh = new Map<string, Promise<RefreshedTokens | null>>()
+
 /** Build the Intuit consent URL the staffer is redirected to. */
 export function buildAuthorizeUrl(state: string): string | null {
   const cfg = qboConfig()
@@ -47,6 +62,7 @@ export function buildAuthorizeUrl(state: string): string | null {
   return `${QBO_AUTHORIZE_URL}?${params.toString()}`
 }
 
+/** Absolute ISO expiry timestamps from a token response's relative lifetimes. */
 function expiryTimestamps(tok: TokenResponse) {
   const now = Date.now()
   return {
@@ -60,12 +76,9 @@ function expiryTimestamps(tok: TokenResponse) {
 }
 
 /** Exchange the authorization code for tokens (callback route). */
-export async function exchangeCodeForTokens(code: string): Promise<{
-  access_token: string
-  refresh_token: string
-  access_token_expires_at: string
-  refresh_token_expires_at: string
-} | null> {
+export async function exchangeCodeForTokens(
+  code: string
+): Promise<RefreshedTokens | null> {
   const cfg = qboConfig()
   if (!cfg) return null
   const res = await fetch(QBO_TOKEN_URL, {
@@ -96,12 +109,9 @@ export async function exchangeCodeForTokens(code: string): Promise<{
 }
 
 /** Refresh the access token; returns the rotated token set. */
-async function refreshTokens(refreshToken: string): Promise<{
-  access_token: string
-  refresh_token: string
-  access_token_expires_at: string
-  refresh_token_expires_at: string
-} | null> {
+async function refreshTokens(
+  refreshToken: string
+): Promise<RefreshedTokens | null> {
   const cfg = qboConfig()
   if (!cfg) return null
   const res = await fetch(QBO_TOKEN_URL, {
@@ -149,13 +159,34 @@ export async function getValidAccessToken(
     return { accessToken: conn.access_token, realmId: conn.realm_id, connection: conn }
   }
 
-  const refreshed = await refreshTokens(conn.refresh_token)
+  const refreshed = await refreshAndPersist(conn)
   if (!refreshed) return null
-  await updateQboTokens(conn.realm_id, refreshed)
   return {
     accessToken: refreshed.access_token,
     realmId: conn.realm_id,
     connection: { ...conn, ...refreshed },
+  }
+}
+
+/**
+ * Refresh + persist for one connection, serialized per realm so concurrent
+ * callers await a single in-flight refresh instead of racing the refresh token.
+ */
+async function refreshAndPersist(
+  conn: QboConnection
+): Promise<RefreshedTokens | null> {
+  const existing = inFlightRefresh.get(conn.realm_id)
+  if (existing) return existing
+  const p = (async () => {
+    const refreshed = await refreshTokens(conn.refresh_token)
+    if (refreshed) await updateQboTokens(conn.realm_id, refreshed)
+    return refreshed
+  })()
+  inFlightRefresh.set(conn.realm_id, p)
+  try {
+    return await p
+  } finally {
+    inFlightRefresh.delete(conn.realm_id)
   }
 }
 

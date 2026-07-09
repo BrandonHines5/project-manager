@@ -17,10 +17,12 @@ import "server-only"
 
 export type QboEnvironment = "production" | "sandbox"
 
+/** The configured QBO environment; defaults to production. */
 export function qboEnvironment(): QboEnvironment {
   return process.env.QBO_ENVIRONMENT === "sandbox" ? "sandbox" : "production"
 }
 
+/** Resolved OAuth credentials, or null when any required env var is unset. */
 export function qboConfig() {
   const clientId = process.env.QBO_CLIENT_ID
   const clientSecret = process.env.QBO_CLIENT_SECRET
@@ -29,6 +31,7 @@ export function qboConfig() {
   return { clientId, clientSecret, redirectUri, environment: qboEnvironment() }
 }
 
+/** Whether the QuickBooks integration has its credentials configured. */
 export function qboConfigured(): boolean {
   return qboConfig() !== null
 }

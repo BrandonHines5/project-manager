@@ -1,5 +1,6 @@
 "use server"
 
+import { z } from "zod"
 import { revalidatePath } from "next/cache"
 import { requireStaff } from "@/lib/auth"
 import {
@@ -38,14 +39,20 @@ export type QboDiagnosticResult =
  * how the connected file structures a PO before building the push (Phase 2).
  * `exampleDocNumber` targets a specific PO (e.g. the manually-created "1001").
  */
+// DocNumber is capped at 21 chars by QBO; validate the free-text input before
+// it reaches the query builder.
+const diagnosticInputSchema = z.string().trim().max(21).optional()
+
 export async function runQboDiagnosticAction(
   exampleDocNumber?: string
 ): Promise<QboDiagnosticResult> {
   await requireStaff()
+  const parsed = diagnosticInputSchema.safeParse(exampleDocNumber)
+  if (!parsed.success) return { ok: false, error: "Invalid document number." }
   const conn = await getQboConnection()
   if (!conn) return { ok: false, error: "QuickBooks is not connected." }
   try {
-    const snapshot = await fetchDiagnosticSnapshot(exampleDocNumber?.trim() || undefined)
+    const snapshot = await fetchDiagnosticSnapshot(parsed.data || undefined)
     return { ok: true, snapshot }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }

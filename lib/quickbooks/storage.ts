@@ -34,13 +34,24 @@ export type QboConnectionStatus = {
   refresh_token_expires_at: string
 }
 
-function qboStore() {
+function makeQboStore() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!url || !serviceKey) return null
   return createClient(url, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   })
+}
+
+// Memoized so the several storage helpers that can run in one request (e.g.
+// getValidAccessToken → getQboConnection → updateQboTokens) reuse one client
+// instead of re-constructing it each call. `undefined` = not yet resolved.
+let cachedStore: ReturnType<typeof makeQboStore> | undefined
+
+/** The service-role client for qbo_connection, or null if env is unset. */
+function qboStore() {
+  if (cachedStore === undefined) cachedStore = makeQboStore()
+  return cachedStore
 }
 
 /** The current connection (v1 stores a single row), or null if not connected. */

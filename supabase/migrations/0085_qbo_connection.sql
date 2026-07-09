@@ -17,7 +17,9 @@
 
 create table if not exists public.qbo_connection (
   realm_id text primary key,
-  environment text not null default 'production', -- 'production' | 'sandbox'
+  environment text not null default 'production'
+    constraint qbo_connection_environment_check
+    check (environment in ('production', 'sandbox')),
   access_token text not null,
   refresh_token text not null,
   access_token_expires_at timestamptz not null,

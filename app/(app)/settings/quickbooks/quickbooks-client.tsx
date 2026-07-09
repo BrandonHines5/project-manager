@@ -17,6 +17,8 @@ const ERROR_LABELS: Record<string, string> = {
   state_mismatch: "The connection attempt expired or didn't match. Please try again.",
   token_exchange_failed: "QuickBooks rejected the authorization. Check the app's keys and redirect URI, then retry.",
   save_failed: "Connected to QuickBooks, but couldn't store the connection. Try again.",
+  not_configured: "QuickBooks isn't configured yet. Set the QBO_* environment variables, then retry.",
+  authorize_url_failed: "Couldn't build the QuickBooks authorization link. Check the app configuration.",
 }
 
 export function QuickBooksSettingsClient({

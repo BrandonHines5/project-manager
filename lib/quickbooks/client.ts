@@ -13,6 +13,7 @@ import { getValidAccessToken } from "./oauth"
  * in Phase 2 once we've inspected how the connected file structures its POs.
  */
 
+/** A non-2xx response from the QBO API, carrying the status, body, and tid. */
 export class QboApiError extends Error {
   status: number
   body: string
@@ -31,6 +32,7 @@ export class QboApiError extends Error {
   }
 }
 
+/** Thrown when an API call is attempted with no stored QBO connection. */
 export class QboNotConnectedError extends Error {
   constructor() {
     super("QuickBooks is not connected")
@@ -38,6 +40,7 @@ export class QboNotConnectedError extends Error {
   }
 }
 
+/** Authenticated request to `/v3/company/{realm}/{path}`, retrying once on 401. */
 async function qboRequest(
   path: string,
   init: RequestInit,
@@ -151,8 +154,10 @@ export async function fetchDiagnosticSnapshot(exampleDocNumber?: string): Promis
   const examplePurchaseOrder = await safe(
     "purchaseOrder",
     async () => {
+      // QBO query literals escape with a backslash (\' ), NOT SQL-style
+      // doubling ('') — escape backslashes first, then apostrophes.
       const where = exampleDocNumber
-        ? ` WHERE DocNumber = '${exampleDocNumber.replace(/'/g, "''")}'`
+        ? ` WHERE DocNumber = '${exampleDocNumber.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`
         : ""
       const json = (await qboQuery(
         `SELECT * FROM PurchaseOrder${where} MAXRESULTS 1`

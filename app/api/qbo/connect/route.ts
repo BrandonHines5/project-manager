@@ -15,22 +15,26 @@ export const runtime = "nodejs"
 
 const STATE_COOKIE = "qbo_oauth_state"
 
-export async function GET() {
+export async function GET(req: Request) {
   // requireStaff() redirects non-staff to /projects; belt-and-suspenders since
   // this route mutates an external connection.
   await requireStaff()
 
+  // On failure, bounce back to the settings page with a friendly ?error banner
+  // (the route is hit via a plain <a> link, so a raw JSON 500 would render an
+  // unstyled blob) — matching the callback route's behavior.
+  const settingsUrl = new URL("/settings/quickbooks", req.url)
+
   if (!qboConfigured()) {
-    return NextResponse.json(
-      { ok: false, error: "QuickBooks is not configured (QBO_CLIENT_ID / SECRET / REDIRECT_URI unset)." },
-      { status: 500 }
-    )
+    settingsUrl.searchParams.set("error", "not_configured")
+    return NextResponse.redirect(settingsUrl)
   }
 
   const state = crypto.randomUUID()
   const url = buildAuthorizeUrl(state)
   if (!url) {
-    return NextResponse.json({ ok: false, error: "Could not build authorize URL" }, { status: 500 })
+    settingsUrl.searchParams.set("error", "authorize_url_failed")
+    return NextResponse.redirect(settingsUrl)
   }
 
   const jar = await cookies()
