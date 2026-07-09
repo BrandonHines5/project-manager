@@ -222,6 +222,14 @@ function UnfiledActions({
           <FolderOpen className="h-3 w-3" />
           File to job
         </button>
+        <button
+          type="button"
+          onClick={dismiss}
+          disabled={pending}
+          className="hover:text-foreground hover:underline cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          Dismiss
+        </button>
       </div>
     )
   }
