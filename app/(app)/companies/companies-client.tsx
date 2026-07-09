@@ -75,7 +75,7 @@ export function CompaniesClient({
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Companies</h1>
           <p className="text-sm text-muted">
-            Subcontractors, vendors, and client households.
+            Subcontractors and vendors.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -89,7 +89,6 @@ export function CompaniesClient({
             <option value="all">All types</option>
             <option value="sub">Subcontractors</option>
             <option value="vendor">Vendors</option>
-            <option value="client">Clients</option>
           </Select>
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted" />

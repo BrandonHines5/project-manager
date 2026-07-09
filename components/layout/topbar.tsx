@@ -47,16 +47,17 @@ function menusFor(role: UserRole): MenuEntry[] {
     return [
       { label: "Projects", href: "/projects" },
       {
-        label: "Companies",
+        label: "People",
         items: [
           { href: "/companies", label: "Companies" },
-          { href: "/companies/insurance", label: "Insurance" },
+          { href: "/clients", label: "Clients" },
           { href: "/team", label: "Team" },
         ],
       },
       {
         label: "Operations",
         items: [
+          { href: "/companies/insurance", label: "Insurance" },
           { href: "/warranty", label: "Warranty / Rental" },
           { href: "/utilities", label: "Initiate Utilities" },
         ],
