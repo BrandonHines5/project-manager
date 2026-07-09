@@ -280,9 +280,12 @@ export function ScheduleItemDialog({
     }
   }
 
-  const workItemOptions = data.items.filter(
-    (i) => i.kind === "work" && i.id !== item?.id
-  )
+  // Sorted alphabetically by title so the "Parent work item" picker is easy
+  // to scan on jobs with a long schedule (matches the predecessor picker).
+  // filter() returns a fresh array, so the sort doesn't mutate data.items.
+  const workItemOptions = data.items
+    .filter((i) => i.kind === "work" && i.id !== item?.id)
+    .sort((a, b) => a.title.localeCompare(b.title))
   const itemsForPredecessors = data.items.filter(
     (i) => i.kind === "work" && i.id !== item?.id
   )
