@@ -12,8 +12,10 @@ const AssignInput = z.object({
 })
 
 /**
- * Attach an unmatched (needs_review) communication to a project. Staff-only —
- * RLS backs this up (comms_staff_all is the only write policy).
+ * Optionally file a communication to a project from the global hub. Nothing
+ * requires this — unfiled calls/texts just live in the searchable global log —
+ * but staff can attach one to a job when it's worth keeping on that record.
+ * Staff-only; RLS backs this up (comms_staff_all is the only write policy).
  */
 export async function assignCommunication(input: {
   communication_id: string
@@ -31,7 +33,7 @@ export async function assignCommunication(input: {
   revalidatePath(`/projects/${parsed.project_id}/communications`)
 }
 
-/** Dismiss an unmatched communication (wrong number, spam, personal). */
+/** Dismiss a communication (wrong number, spam, personal) — hides it from the hub. */
 export async function ignoreCommunication(input: { communication_id: string }) {
   await requireStaff()
   const id = z.string().min(1).parse(input.communication_id)
