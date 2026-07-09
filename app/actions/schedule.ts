@@ -1370,21 +1370,34 @@ export async function updateScheduleItemFields(
   revalidatePath(`/projects/${project_id}/schedule`)
 }
 
-const SendSubTextInput = z.object({
-  schedule_item_id: z.string(),
-  company_id: z.string(),
-  message: z.string().min(1).max(1600),
-})
+const SendSubTextInput = z
+  .object({
+    schedule_item_id: z.string(),
+    // Text a directly-assigned company, OR the sub/vendor filling a role
+    // that's assigned to the item. Exactly one of the two must be given.
+    company_id: z.string().optional(),
+    role_id: z.string().optional(),
+    message: z.string().min(1).max(1600),
+  })
+  .refine((v) => (v.company_id ? 1 : 0) + (v.role_id ? 1 : 0) === 1, {
+    message: "Provide exactly one of company_id or role_id.",
+  })
 
 export type SendQuoTextResult =
   | { ok: true; to: string; company_name: string }
   | { ok: false; error: string }
 
 /**
- * Sends an SMS via Quo to a subcontractor company that's assigned to the
- * given schedule item. Verifies the assignment server-side (defense in
- * depth — the client picks the recipient, but we never trust that on its
- * own) and that the company actually has a phone number on file.
+ * Sends an SMS via Quo to a subcontractor assigned to the given schedule
+ * item — either a directly-assigned company, or (when `role_id` is given)
+ * the sub/vendor currently filling that role on the item's project. The
+ * role→company resolution happens here, server-side, so the client never
+ * gets to text an arbitrary number: it can only reach a company that a
+ * saved assignment (direct or via a role member) actually points to.
+ *
+ * Verifies the assignment server-side (defense in depth — the client picks
+ * the recipient, but we never trust that on its own) and that the company
+ * actually has a phone number on file.
  *
  * Returns a typed result instead of throwing on user-facing failures
  * (missing assignment, missing phone, Quo API error) — Next.js masks
@@ -1395,20 +1408,24 @@ export type SendQuoTextResult =
  */
 export async function sendQuoTextToSub(input: {
   schedule_item_id: string
-  company_id: string
+  company_id?: string
+  role_id?: string
   message: string
 }): Promise<SendQuoTextResult> {
   const profile = await requireStaff()
   const parsed = SendSubTextInput.parse(input)
   const supabase = await createSupabaseServerClient()
 
-  // Verify the company is actually assigned to this schedule item.
-  const { data: assignment, error: aErr } = await supabase
+  // Verify the recipient is actually assigned to this schedule item, and
+  // capture the item's project (needed to resolve a role's member).
+  let assignmentQuery = supabase
     .from("schedule_assignments")
     .select("id, schedule_items!inner(project_id)")
     .eq("schedule_item_id", parsed.schedule_item_id)
-    .eq("company_id", parsed.company_id)
-    .maybeSingle()
+  assignmentQuery = parsed.company_id
+    ? assignmentQuery.eq("company_id", parsed.company_id)
+    : assignmentQuery.eq("role_id", parsed.role_id!)
+  const { data: assignment, error: aErr } = await assignmentQuery.maybeSingle()
   if (aErr) {
     console.error("[sendQuoTextToSub] assignment lookup failed:", aErr)
     return { ok: false, error: "Couldn't verify the assignment. Try again." }
@@ -1416,21 +1433,63 @@ export async function sendQuoTextToSub(input: {
   if (!assignment) {
     return {
       ok: false,
-      error:
-        "That sub isn't saved on this schedule item yet. Click Save first, then send.",
+      error: parsed.role_id
+        ? "That role isn't saved on this schedule item yet. Click Save first, then send."
+        : "That sub isn't saved on this schedule item yet. Click Save first, then send.",
     }
   }
+  const projectId =
+    (assignment as unknown as { schedule_items: { project_id: string } | null })
+      .schedule_items?.project_id ?? null
+
+  // Resolve the target company: direct for a company assignment, or the
+  // sub/vendor filling the role on this project for a role assignment.
+  let companyId = parsed.company_id ?? null
+  if (parsed.role_id) {
+    if (!projectId) {
+      return { ok: false, error: "Couldn't resolve the role's project. Try again." }
+    }
+    const { data: member, error: mErr } = await supabase
+      .from("project_role_members")
+      .select("company_id")
+      .eq("project_id", projectId)
+      .eq("role_id", parsed.role_id)
+      .maybeSingle()
+    if (mErr) {
+      console.error("[sendQuoTextToSub] role member lookup failed:", mErr)
+      return { ok: false, error: "Couldn't resolve the role. Try again." }
+    }
+    if (!member?.company_id) {
+      return {
+        ok: false,
+        error:
+          "This role isn't filled by a sub/vendor on this job, so there's no one to text. Assign a company to the role in the Roles tab first.",
+      }
+    }
+    companyId = member.company_id
+  }
+  if (!companyId) return { ok: false, error: "No recipient resolved." }
 
   const { data: company, error: cErr } = await supabase
     .from("companies")
-    .select("name, phone")
-    .eq("id", parsed.company_id)
+    .select("name, phone, type")
+    .eq("id", companyId)
     .maybeSingle()
   if (cErr) {
     console.error("[sendQuoTextToSub] company lookup failed:", cErr)
     return { ok: false, error: "Couldn't load the company. Try again." }
   }
   if (!company) return { ok: false, error: "Company not found." }
+  // Never text a client contact from the sub-notify flow — the UI already
+  // excludes client companies from both direct and role-resolved recipients,
+  // but a role could be filled by a client company in the Roles tab, so guard
+  // server-side too (parity with the client filter).
+  if (company.type === "client") {
+    return {
+      ok: false,
+      error: "That contact is a client, not a sub/vendor — can't text them here.",
+    }
+  }
   if (!company.phone) {
     return { ok: false, error: `${company.name} has no phone number on file.` }
   }
@@ -1446,10 +1505,8 @@ export async function sendQuoTextToSub(input: {
     to: normalized,
     content: parsed.message,
     log: {
-      project_id:
-        (assignment as unknown as { schedule_items: { project_id: string } | null })
-          .schedule_items?.project_id ?? null,
-      company_id: parsed.company_id,
+      project_id: projectId,
+      company_id: companyId,
       sent_by: profile.id,
       kind: "manual_sms",
       counterparty_name: company.name,
@@ -1458,6 +1515,9 @@ export async function sendQuoTextToSub(input: {
   if (!result.sent) {
     return { ok: false, error: result.reason ?? "Failed to send text." }
   }
+  // Surface the just-logged text in the comms feeds without a manual refresh.
+  if (projectId) revalidatePath(`/projects/${projectId}/communications`)
+  revalidatePath("/communications")
   return { ok: true, to: normalized, company_name: company.name }
 }
 
