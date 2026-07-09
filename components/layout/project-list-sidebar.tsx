@@ -324,6 +324,10 @@ export function ProjectListSidebar({
           bits.push(`${res.statusChanged} status${res.statusChanged === 1 ? "" : "es"} updated`)
         if (res.nameChanged > 0)
           bits.push(`${res.nameChanged} name${res.nameChanged === 1 ? "" : "s"} updated`)
+        if (res.contactsChanged > 0)
+          bits.push(
+            `${res.contactsChanged} contact${res.contactsChanged === 1 ? "" : "s"} updated`
+          )
         if (res.unmatched.length > 0)
           bits.push(`${res.unmatched.length} not found in CRM`)
         toast.success(bits.join(" · "))
