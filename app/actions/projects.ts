@@ -577,6 +577,69 @@ export async function updateProject(
 }
 
 // ---------------------------------------------------------------------------
+// Delete project (header edit dialog — danger zone)
+// ---------------------------------------------------------------------------
+
+const DeleteProjectInput = z.object({
+  // Same UUID-shape validation as the edit action (z.guid, not z.uuid — see
+  // ProjectEditInput for why).
+  project_id: z.guid(),
+})
+
+export type DeleteProjectResult =
+  | { ok: true }
+  | { ok: false; error: string }
+
+/**
+ * Permanently delete a project and everything hanging off it. Every
+ * per-project table FKs `projects(id) ON DELETE CASCADE` (schedule items +
+ * checklists + predecessors + assignments, decisions + choices/cost items/
+ * followups/attachments, daily logs, files, payments, bids, POs, members,
+ * roles, portal invites), so a single row delete cascades the whole job.
+ * `communications` FKs `ON DELETE SET NULL`, so channel history survives
+ * un-filed. `project_history` is a bare uuid (no FK), so its rows are simply
+ * orphaned (unreachable from the UI). The protected milestone rows delete
+ * cleanly here: `protect_schedule_milestones` only blocks a milestone delete
+ * while its project still exists, and during this cascade the project row is
+ * already gone (see migration 0069).
+ *
+ * Runs under the caller's session, so RLS (`projects_staff_all`) gates it to
+ * staff. We do NOT notify the dashboard/CRM — that's the source of truth for
+ * jobs, and this only removes the PM-side mirror.
+ *
+ * Note: Storage objects (files, decision/daily-log attachments) are NOT
+ * removed — the private-bucket blobs are left orphaned, matching the v1
+ * policy for unreferenced objects elsewhere in the app.
+ */
+export async function deleteProject(
+  input: z.input<typeof DeleteProjectInput>
+): Promise<DeleteProjectResult> {
+  await requireStaff()
+  const parsed = DeleteProjectInput.safeParse(input)
+  if (!parsed.success) return { ok: false, error: "Invalid project." }
+  const supabase = await createSupabaseServerClient()
+
+  // .select() forces the delete to return the matched row so we can tell a
+  // silent zero-rows case (wrong id, or RLS hid it) apart from a real delete.
+  const { data, error } = await supabase
+    .from("projects")
+    .delete()
+    .eq("id", parsed.data.project_id)
+    .select("id")
+    .maybeSingle()
+  if (error) return { ok: false, error: error.message }
+  if (!data) {
+    return {
+      ok: false,
+      error: "Project not found, or you don't have permission to delete it.",
+    }
+  }
+
+  revalidatePath("/projects")
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
 // Labels
 // ---------------------------------------------------------------------------
 

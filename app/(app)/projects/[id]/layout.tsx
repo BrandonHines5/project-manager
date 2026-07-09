@@ -195,6 +195,7 @@ export default async function ProjectDetailLayout({
                 <EditProjectButton
                   project={{
                     id: project.id,
+                    project_number: project.project_number,
                     name: project.name,
                     address: project.address,
                     status: project.status,
