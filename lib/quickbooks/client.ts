@@ -86,6 +86,95 @@ export function qboQuery(query: string): Promise<unknown> {
   return qboGet(`query?query=${encodeURIComponent(query)}`)
 }
 
+/** POST a body to a QBO entity path (create/update). */
+export function qboPost(path: string, body: unknown): Promise<unknown> {
+  return qboRequest(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
+/** A picklist entry (id + label) for the push-defaults dropdowns. */
+export type QboOption = { id: string; name: string }
+
+type QboNamedRow = {
+  Id?: string
+  Name?: string
+  DisplayName?: string
+  FullyQualifiedName?: string
+}
+
+// QBO returns query rows under a key equal to the entity name
+// (QueryResponse.Item / .Customer / .Class). Pages via STARTPOSITION/MAXRESULTS
+// so a company with >1000 active rows isn't silently truncated.
+async function queryOptions(entity: string): Promise<QboOption[]> {
+  const out: QboOption[] = []
+  const pageSize = 1000
+  const maxPages = 20 // 20k active rows is far beyond any real picklist
+  for (let page = 0; page < maxPages; page++) {
+    const start = page * pageSize + 1
+    const json = (await qboQuery(
+      `SELECT * FROM ${entity} WHERE Active = true STARTPOSITION ${start} MAXRESULTS ${pageSize}`
+    )) as { QueryResponse?: Record<string, QboNamedRow[]> }
+    const rows = json?.QueryResponse?.[entity] ?? []
+    for (const r of rows) {
+      if (r.Id) {
+        out.push({
+          id: r.Id,
+          name: r.FullyQualifiedName || r.DisplayName || r.Name || r.Id,
+        })
+      }
+    }
+    if (rows.length < pageSize) break
+  }
+  return out
+}
+
+/** Active Items (Products/Services) — the cost-code analog for PO lines. */
+export function listItems(): Promise<QboOption[]> {
+  return queryOptions("Item")
+}
+
+/** Active Customers (jobs) for the default CustomerRef. */
+export function listCustomers(): Promise<QboOption[]> {
+  return queryOptions("Customer")
+}
+
+/** Active Classes for the default ClassRef. */
+export function listClasses(): Promise<QboOption[]> {
+  return queryOptions("Class")
+}
+
+/** The Accounts Payable account id (target of a PO's APAccountRef). */
+export async function getApAccountId(): Promise<string | null> {
+  const json = (await qboQuery(
+    "SELECT * FROM Account WHERE AccountType = 'Accounts Payable' MAXRESULTS 1"
+  )) as { QueryResponse?: { Account?: Array<{ Id?: string }> } }
+  return json?.QueryResponse?.Account?.[0]?.Id ?? null
+}
+
+/** Resolve a QBO Vendor id by exact DisplayName (case-insensitive). */
+export async function findVendorIdByName(name: string): Promise<string | null> {
+  const escaped = name.replace(/\\/g, "\\\\").replace(/'/g, "\\'")
+  const json = (await qboQuery(
+    `SELECT * FROM Vendor WHERE DisplayName = '${escaped}'`
+  )) as { QueryResponse?: { Vendor?: Array<{ Id?: string }> } }
+  return json?.QueryResponse?.Vendor?.[0]?.Id ?? null
+}
+
+/** Look up an existing PurchaseOrder by DocNumber (idempotency check). */
+export async function findPurchaseOrderByDocNumber(
+  docNumber: string
+): Promise<{ Id: string; SyncToken: string } | null> {
+  const escaped = docNumber.replace(/\\/g, "\\\\").replace(/'/g, "\\'")
+  const json = (await qboQuery(
+    `SELECT * FROM PurchaseOrder WHERE DocNumber = '${escaped}' MAXRESULTS 1`
+  )) as { QueryResponse?: { PurchaseOrder?: Array<{ Id?: string; SyncToken?: string }> } }
+  const po = json?.QueryResponse?.PurchaseOrder?.[0]
+  return po?.Id ? { Id: po.Id, SyncToken: po.SyncToken ?? "0" } : null
+}
+
 export type QboRef = { value?: string; name?: string }
 
 export type QboCompanyInfo = {

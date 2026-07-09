@@ -46,6 +46,7 @@ import {
   copyPurchaseOrder,
   type PurchaseOrderInputT,
 } from "@/app/actions/purchase-orders"
+import { pushPurchaseOrderToQbo } from "@/app/actions/quickbooks"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
 import { PoStatusBadge } from "@/app/(app)/projects/[id]/purchase-orders/purchase-orders-client"
 import type { Tables } from "@/lib/db/types"
@@ -370,6 +371,30 @@ export function PoDrawer({
         onClose()
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Update failed")
+      }
+    })
+  }
+
+  function handlePushToQbo() {
+    if (!po) return
+    startTransition(async () => {
+      try {
+        const res = await pushPurchaseOrderToQbo({
+          id: po.id,
+          project_id: data.project_id,
+        })
+        if (res.ok) {
+          toast.success(
+            res.already_existed
+              ? `Already in QuickBooks (PO ${res.doc_number})`
+              : `Pushed to QuickBooks (PO ${res.doc_number})`
+          )
+          router.refresh()
+        } else {
+          toast.error(res.error)
+        }
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Push failed")
       }
     })
   }
@@ -807,6 +832,14 @@ export function PoDrawer({
                   {po.work_complete
                     ? "Un-mark work complete"
                     : "Mark work complete"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={handlePushToQbo}
+                  disabled={pending}
+                >
+                  <Upload className="h-4 w-4" /> Push to QuickBooks
                 </Button>
               </>
             )}

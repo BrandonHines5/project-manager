@@ -6,9 +6,13 @@ import { Button, buttonVariants } from "@/components/ui/button"
 import {
   disconnectQboAction,
   runQboDiagnosticAction,
+  getQboLists,
+  saveQboPushDefaults,
   type QboDiagnosticResult,
+  type QboLists,
 } from "@/app/actions/quickbooks"
 import type { QboConnectionStatus } from "@/lib/quickbooks/storage"
+import type { PushDefaults } from "@/lib/quickbooks/purchase-orders"
 
 // Human-readable messages for the ?error reasons the callback can redirect with.
 const ERROR_LABELS: Record<string, string> = {
@@ -24,11 +28,13 @@ const ERROR_LABELS: Record<string, string> = {
 export function QuickBooksSettingsClient({
   configured,
   status,
+  pushDefaults,
   justConnected,
   errorReason,
 }: {
   configured: boolean
   status: QboConnectionStatus | null
+  pushDefaults: PushDefaults | null
   justConnected: boolean
   errorReason: string | null
 }) {
@@ -37,6 +43,33 @@ export function QuickBooksSettingsClient({
   const [docNumber, setDocNumber] = useState("1001")
   const [diagnostic, setDiagnostic] = useState<QboDiagnosticResult | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+
+  // Push-defaults state.
+  const [lists, setLists] = useState<QboLists | null>(null)
+  const [defaults, setDefaults] = useState<PushDefaults>(
+    pushDefaults ?? { item_id: "", customer_id: null, class_id: null }
+  )
+  const [defaultsMsg, setDefaultsMsg] = useState<string | null>(null)
+  // Note: this component is remounted (keyed on the connected realm in the
+  // parent page) when the company changes, so the initial state above is always
+  // re-derived from the new pushDefaults — no stale IDs from a prior company.
+
+  function handleLoadLists() {
+    setDefaultsMsg(null)
+    startTransition(async () => {
+      const res = await getQboLists()
+      if (res.ok) setLists(res.lists)
+      else setDefaultsMsg(res.error)
+    })
+  }
+
+  function handleSaveDefaults() {
+    startTransition(async () => {
+      const res = await saveQboPushDefaults(defaults)
+      setDefaultsMsg(res.ok ? "Push defaults saved." : res.error ?? "Save failed.")
+      if (res.ok) router.refresh()
+    })
+  }
 
   function handleDisconnect() {
     if (!confirm("Disconnect QuickBooks? This revokes access and removes the stored tokens.")) return
@@ -175,6 +208,69 @@ export function QuickBooksSettingsClient({
         </section>
       )}
 
+      {/* Push defaults — the Item/Customer/Class used on pushed PO lines */}
+      {configured && status && (
+        <section className="mt-6 rounded-lg border border-border bg-surface p-5">
+          <div className="font-medium text-sm">Push defaults</div>
+          <p className="mt-1 text-sm text-muted">
+            Approved POs are pushed as Item-based purchase orders. Pick the default
+            Item, Customer (job), and Class applied to each line — mirroring how the
+            connected file structures a PO. (The vendor comes from the PO&rsquo;s company,
+            matched by name.)
+          </p>
+          {!lists ? (
+            <div className="mt-3 space-y-2">
+              <Button variant="secondary" size="sm" onClick={handleLoadLists} disabled={pending}>
+                {pending ? "Loading…" : "Load QuickBooks options"}
+              </Button>
+              {defaults.item_id && (
+                <p className="text-xs text-muted">
+                  Current default Item id: <code>{defaults.item_id}</code>
+                  {defaults.customer_id ? ` · Customer ${defaults.customer_id}` : ""}
+                  {defaults.class_id ? ` · Class ${defaults.class_id}` : ""}
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="mt-3 space-y-3">
+              <SelectField
+                label="Default Item (required)"
+                value={defaults.item_id}
+                options={lists.items}
+                onChange={(v) => setDefaults((d) => ({ ...d, item_id: v }))}
+              />
+              <SelectField
+                label="Default Customer / job"
+                value={defaults.customer_id ?? ""}
+                options={lists.customers}
+                allowNone
+                onChange={(v) => setDefaults((d) => ({ ...d, customer_id: v || null }))}
+              />
+              <SelectField
+                label="Default Class"
+                value={defaults.class_id ?? ""}
+                options={lists.classes}
+                allowNone
+                onChange={(v) => setDefaults((d) => ({ ...d, class_id: v || null }))}
+              />
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleSaveDefaults}
+                disabled={pending || !defaults.item_id}
+              >
+                {pending ? "Saving…" : "Save push defaults"}
+              </Button>
+            </div>
+          )}
+          {defaultsMsg && (
+            <div className="mt-3 rounded-md border border-border-strong bg-background px-4 py-2 text-sm">
+              {defaultsMsg}
+            </div>
+          )}
+        </section>
+      )}
+
       <p className="mt-6 text-xs text-muted">
         Need help with this integration? Contact{" "}
         <a className="text-brand-600 underline" href="mailto:brandon@hineshomes.com">
@@ -183,5 +279,37 @@ export function QuickBooksSettingsClient({
         .
       </p>
     </div>
+  )
+}
+
+function SelectField({
+  label,
+  value,
+  options,
+  onChange,
+  allowNone,
+}: {
+  label: string
+  value: string
+  options: { id: string; name: string }[]
+  onChange: (value: string) => void
+  allowNone?: boolean
+}) {
+  return (
+    <label className="block text-xs text-muted">
+      {label}
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="mt-1 block h-9 w-full max-w-md rounded-md border border-border-strong bg-background px-2 text-sm text-foreground"
+      >
+        <option value="">{allowNone ? "— None —" : "— Select —"}</option>
+        {options.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.name} (#{o.id})
+          </option>
+        ))}
+      </select>
+    </label>
   )
 }
