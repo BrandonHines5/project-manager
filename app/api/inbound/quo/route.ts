@@ -70,7 +70,12 @@ export async function POST(req: NextRequest) {
           {
             channel: "sms",
             direction: inbound ? "inbound" : "outbound",
-            status: match.status,
+            // Quo texts are never queued for manual placement — they always
+            // land in the global Communications log, auto-filed to a job only
+            // when the matcher is confident (project_id set below). A shared
+            // conversation can span jobs, so an unmatched text just stays
+            // global and searchable; staff can optionally file it later.
+            status: "logged",
             project_id: match.project_id,
             company_id: match.company_id,
             profile_id: match.profile_id,
@@ -133,7 +138,9 @@ export async function POST(req: NextRequest) {
           {
             channel: "call",
             direction: inbound ? "inbound" : "outbound",
-            status: match.status,
+            // Same as texts: calls are never queued for manual placement. They
+            // stay in the global log, auto-filed to a job only when confident.
+            status: "logged",
             project_id: match.project_id,
             company_id: match.company_id,
             profile_id: match.profile_id,
