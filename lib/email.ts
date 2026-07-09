@@ -209,14 +209,19 @@ async function resolveSenderMailbox(
  * Rebuild a Resend "from" so it presents under `name` while keeping the
  * verified sending address (SPF/DKIM are tied to the address, not the display
  * name, so this is deliverability-safe). Accepts the env value in either
- * `"Name <addr>"` or bare `"addr"` form. Strips characters that can't appear
- * in a display name; if nothing sane remains, returns the original.
+ * `"Name <addr>"` or bare `"addr"` form. Strips line breaks (header
+ * injection), then wraps the display name in an RFC 5322 quoted-string so any
+ * specials in it (comma, semicolon, parentheses) can't be misread as an
+ * address list — escaping embedded quotes/backslashes. Falls back to the
+ * original `from` if nothing usable remains.
  */
 function applyFromName(from: string, name: string): string {
   const match = from.match(/<([^>]+)>/)
   const address = (match ? match[1] : from).trim()
-  const display = name.replace(/["<>\r\n]/g, "").trim()
-  return display && address ? `${display} <${address}>` : from
+  const display = name.replace(/[\r\n]/g, "").trim()
+  return display && address
+    ? `"${display.replace(/["\\]/g, "\\$&")}" <${address}>`
+    : from
 }
 
 export function appUrl(path: string = "/"): string {
