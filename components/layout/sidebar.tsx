@@ -8,6 +8,7 @@ import {
   Building2,
   BarChart3,
   Users,
+  Contact,
   Hammer,
   MessageSquarePlus,
   MessagesSquare,
@@ -46,13 +47,14 @@ const ITEMS: Item[] = [
   },
   { href: "/notifications", label: "Notifications", icon: Bell },
   { href: "/companies", label: "Companies", icon: Building2, roles: ["staff"] },
+  { href: "/clients", label: "Clients", icon: Contact, roles: ["staff"] },
+  { href: "/team", label: "Team", icon: Users, roles: ["staff"] },
   {
     href: "/companies/insurance",
     label: "Insurance",
     icon: FileBadge,
     roles: ["staff"],
   },
-  { href: "/team", label: "Team", icon: Users, roles: ["staff"] },
   {
     href: "/warranty",
     label: "Warranty / Rental",
