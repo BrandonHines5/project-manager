@@ -14,7 +14,8 @@ create table if not exists public.qbo_po_sync (
   qbo_po_id text,                 -- QBO PurchaseOrder.Id once created
   doc_number text,                -- DocNumber we pushed (Adaptive matches on this)
   sync_token text,                -- QBO SyncToken for future updates
-  status text not null default 'synced', -- 'synced' | 'error'
+  status text not null default 'synced'
+    constraint qbo_po_sync_status_check check (status in ('synced', 'error')),
   last_error text,
   synced_at timestamptz,
   created_at timestamptz not null default now(),

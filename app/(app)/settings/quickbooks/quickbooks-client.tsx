@@ -50,6 +50,9 @@ export function QuickBooksSettingsClient({
     pushDefaults ?? { item_id: "", customer_id: null, class_id: null }
   )
   const [defaultsMsg, setDefaultsMsg] = useState<string | null>(null)
+  // Note: this component is remounted (keyed on the connected realm in the
+  // parent page) when the company changes, so the initial state above is always
+  // re-derived from the new pushDefaults — no stale IDs from a prior company.
 
   function handleLoadLists() {
     setDefaultsMsg(null)

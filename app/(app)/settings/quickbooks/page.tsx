@@ -24,6 +24,9 @@ export default async function QuickBooksSettingsPage({
 
   return (
     <QuickBooksSettingsClient
+      // Remount on company change so local push-defaults state is re-derived
+      // from the new connection (avoids carrying a prior company's IDs).
+      key={status?.realm_id ?? "disconnected"}
       configured={qboConfigured()}
       status={status}
       pushDefaults={pushDefaults}

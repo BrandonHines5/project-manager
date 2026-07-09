@@ -80,12 +80,17 @@ export function buildPurchaseOrderPayload(po: PoInput, defaults: PushDefaults) {
           },
         ]
       : po.lines.map((l) => {
-          const amount = round2(l.quantity * l.unit_cost)
+          // Round the unit price first, then derive Amount from it. QBO
+          // recomputes Amount = Qty × UnitPrice and ignores a supplied Amount,
+          // so deriving both from the same rounded UnitPrice keeps our line
+          // total identical to what QBO stores (no ±1¢ drift).
+          const unitPrice = round2(l.unit_cost)
+          const amount = round2(l.quantity * unitPrice)
           return {
             DetailType: "ItemBasedExpenseLineDetail" as const,
             Amount: amount,
             Description: l.description,
-            ItemBasedExpenseLineDetail: lineDetail(defaults, l.quantity, round2(l.unit_cost)),
+            ItemBasedExpenseLineDetail: lineDetail(defaults, l.quantity, unitPrice),
           }
         })
 

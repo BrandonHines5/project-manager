@@ -106,18 +106,29 @@ type QboNamedRow = {
 }
 
 // QBO returns query rows under a key equal to the entity name
-// (QueryResponse.Item / .Customer / .Class).
+// (QueryResponse.Item / .Customer / .Class). Pages via STARTPOSITION/MAXRESULTS
+// so a company with >1000 active rows isn't silently truncated.
 async function queryOptions(entity: string): Promise<QboOption[]> {
-  const json = (await qboQuery(
-    `SELECT * FROM ${entity} WHERE Active = true MAXRESULTS 1000`
-  )) as { QueryResponse?: Record<string, QboNamedRow[]> }
-  const rows = json?.QueryResponse?.[entity] ?? []
-  return rows
-    .filter((r) => r.Id)
-    .map((r) => ({
-      id: r.Id as string,
-      name: r.FullyQualifiedName || r.DisplayName || r.Name || (r.Id as string),
-    }))
+  const out: QboOption[] = []
+  const pageSize = 1000
+  const maxPages = 20 // 20k active rows is far beyond any real picklist
+  for (let page = 0; page < maxPages; page++) {
+    const start = page * pageSize + 1
+    const json = (await qboQuery(
+      `SELECT * FROM ${entity} WHERE Active = true STARTPOSITION ${start} MAXRESULTS ${pageSize}`
+    )) as { QueryResponse?: Record<string, QboNamedRow[]> }
+    const rows = json?.QueryResponse?.[entity] ?? []
+    for (const r of rows) {
+      if (r.Id) {
+        out.push({
+          id: r.Id,
+          name: r.FullyQualifiedName || r.DisplayName || r.Name || r.Id,
+        })
+      }
+    }
+    if (rows.length < pageSize) break
+  }
+  return out
 }
 
 /** Active Items (Products/Services) — the cost-code analog for PO lines. */

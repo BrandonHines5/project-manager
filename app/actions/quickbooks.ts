@@ -212,11 +212,17 @@ export async function pushPurchaseOrderToQbo(input: {
     .maybeSingle()
   if (!company?.name) return { ok: false, error: "Vendor company not found." }
 
-  const { data: lineRows } = await supabase
+  const { data: lineRows, error: lineErr } = await supabase
     .from("po_line_items")
     .select("description, quantity, unit_cost, position")
     .eq("purchase_order_id", po.id)
     .order("position", { ascending: true })
+  if (lineErr) return { ok: false, error: "Could not load the PO line items." }
+  // A non-flat PO with no lines would serialize as a $0 order — refuse it
+  // rather than pushing a meaningless PO into QuickBooks.
+  if (!po.flat_fee && (lineRows ?? []).length === 0) {
+    return { ok: false, error: "This purchase order has no line items to push." }
+  }
 
   try {
     const vendorId = await findVendorIdByName(company.name)
@@ -273,6 +279,7 @@ export async function pushPurchaseOrderToQbo(input: {
       status: "error",
       last_error: msg,
     })
+    revalidatePath(`/projects/${input.project_id}/purchase-orders`)
     return { ok: false, error: msg }
   }
 }

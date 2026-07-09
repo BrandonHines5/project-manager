@@ -378,19 +378,23 @@ export function PoDrawer({
   function handlePushToQbo() {
     if (!po) return
     startTransition(async () => {
-      const res = await pushPurchaseOrderToQbo({
-        id: po.id,
-        project_id: data.project_id,
-      })
-      if (res.ok) {
-        toast.success(
-          res.already_existed
-            ? `Already in QuickBooks (PO ${res.doc_number})`
-            : `Pushed to QuickBooks (PO ${res.doc_number})`
-        )
-        router.refresh()
-      } else {
-        toast.error(res.error)
+      try {
+        const res = await pushPurchaseOrderToQbo({
+          id: po.id,
+          project_id: data.project_id,
+        })
+        if (res.ok) {
+          toast.success(
+            res.already_existed
+              ? `Already in QuickBooks (PO ${res.doc_number})`
+              : `Pushed to QuickBooks (PO ${res.doc_number})`
+          )
+          router.refresh()
+        } else {
+          toast.error(res.error)
+        }
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Push failed")
       }
     })
   }
