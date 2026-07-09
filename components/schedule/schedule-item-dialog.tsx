@@ -1851,8 +1851,9 @@ function SendTextToSubSection({
           {skippedRoles > 0 && (
             <p className="text-[11px] text-muted">
               {skippedRoles === 1 ? "1 role" : `${skippedRoles} roles`} on this
-              item {skippedRoles === 1 ? "isn't" : "aren't"} filled by a sub with
-              a phone, so {skippedRoles === 1 ? "it's" : "they're"} not listed.
+              item {skippedRoles === 1 ? "isn't" : "aren't"} filled by a
+              sub/vendor, so {skippedRoles === 1 ? "it's" : "they're"} not
+              listed.
             </p>
           )}
           <div className="flex items-center justify-end gap-2">

@@ -1472,7 +1472,7 @@ export async function sendQuoTextToSub(input: {
 
   const { data: company, error: cErr } = await supabase
     .from("companies")
-    .select("name, phone")
+    .select("name, phone, type")
     .eq("id", companyId)
     .maybeSingle()
   if (cErr) {
@@ -1480,6 +1480,16 @@ export async function sendQuoTextToSub(input: {
     return { ok: false, error: "Couldn't load the company. Try again." }
   }
   if (!company) return { ok: false, error: "Company not found." }
+  // Never text a client contact from the sub-notify flow — the UI already
+  // excludes client companies from both direct and role-resolved recipients,
+  // but a role could be filled by a client company in the Roles tab, so guard
+  // server-side too (parity with the client filter).
+  if (company.type === "client") {
+    return {
+      ok: false,
+      error: "That contact is a client, not a sub/vendor — can't text them here.",
+    }
+  }
   if (!company.phone) {
     return { ok: false, error: `${company.name} has no phone number on file.` }
   }
