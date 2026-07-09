@@ -36,9 +36,11 @@ export const HINES_HOMES: Brand = {
 export const MJV_BUILDING_GROUP: Brand = {
   key: "mjv",
   name: "MJV Building Group",
-  mark: "/brand/mjv-mark.svg",
+  // The real logo is square and self-contained (full color on white), so the
+  // nav mark and the light-background logo are the same asset.
+  mark: "/brand/mjv-logo.svg",
   logo: "/brand/mjv-logo.svg",
-  // Square MJV mark on white, generated from the real logo (see mjv-logo.svg).
+  // 512px raster of the same logo — link-preview crawlers need a PNG, not SVG.
   icon: "/brand/mjv-icon.png",
 }
 
