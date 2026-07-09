@@ -1,8 +1,10 @@
 import type { Metadata } from "next"
+import { cache } from "react"
 import { notFound } from "next/navigation"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { ACCESS_TOKEN_RE } from "@/lib/tokens"
-import { brandForProjectType } from "@/lib/brand"
+import { brandForProjectType, HINES_HOMES } from "@/lib/brand"
+import { appUrl } from "@/lib/email"
 import type { Enums } from "@/lib/db/types"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card"
@@ -14,9 +16,66 @@ import { PoApprovalForm } from "./po-approval-form"
 // PO tables have no anon RLS policies.
 export const dynamic = "force-dynamic"
 
-export const metadata: Metadata = {
-  title: "Purchase order — Hines Homes",
-  robots: { index: false },
+// One DB read per request, shared by generateMetadata and the page body via
+// React's request-scoped cache(): both run in the same request, so the PO row
+// is fetched once. Uses the full projection so the page body reads from the
+// same memoized promise instead of re-querying; generateMetadata just needs
+// project_type off it. Service-role client because PO tables have no anon RLS.
+const loadPurchaseOrder = cache(async (token: string) => {
+  const admin = createSupabaseAdminClient()
+  if (!admin) return { admin: null, data: null, error: null }
+  const { data, error } = await admin
+    .from("purchase_orders")
+    .select(
+      `id, number, custom_number, title, scope, status, approval_deadline,
+       flat_fee, flat_total, approved_at, approved_signature, declined_at,
+       decline_reason, project_id,
+       projects:project_id(name, project_type),
+       companies:company_id(name),
+       po_line_items(id, description, quantity, unit, unit_cost, position,
+         cost_codes:cost_code_id(code, name)),
+       po_attachments(id, file_name, storage_path, caption, position),
+       po_comments(id, author_name, author_profile_id, body, created_at)`
+    )
+    .eq("token", token)
+    .maybeSingle()
+  return { admin, data, error }
+})
+
+// Brand the link preview (title + favicon + og:image) by the PO's job type,
+// so an MJV job's approval link texted to a sub previews as MJV — not the
+// app's default Hines favicon. Any miss falls back to the default house brand
+// rather than leaking that the token is invalid.
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ token: string }>
+}): Promise<Metadata> {
+  const { token } = await params
+  let brand = HINES_HOMES
+  if (ACCESS_TOKEN_RE.test(token)) {
+    const { data } = await loadPurchaseOrder(token)
+    const projectType = (
+      data as unknown as {
+        projects: { project_type: Enums<"project_type"> | null } | null
+      } | null
+    )?.projects?.project_type
+    brand = brandForProjectType(projectType)
+  }
+  const title = `Purchase order — ${brand.name}`
+  const image = appUrl(brand.icon)
+  return {
+    title,
+    robots: { index: false },
+    icons: { icon: brand.icon, shortcut: brand.icon, apple: brand.icon },
+    openGraph: {
+      title,
+      siteName: brand.name,
+      type: "website",
+      images: [{ url: image }],
+    },
+    twitter: { card: "summary", title, images: [image] },
+  }
 }
 
 type PageData = {
@@ -104,24 +163,8 @@ export default async function PoTokenPage({
   const { token } = await params
   if (!ACCESS_TOKEN_RE.test(token)) notFound()
 
-  const admin = createSupabaseAdminClient()
+  const { admin, data, error } = await loadPurchaseOrder(token)
   if (!admin) return <Unavailable />
-
-  const { data, error } = await admin
-    .from("purchase_orders")
-    .select(
-      `id, number, custom_number, title, scope, status, approval_deadline,
-       flat_fee, flat_total, approved_at, approved_signature, declined_at,
-       decline_reason, project_id,
-       projects:project_id(name, project_type),
-       companies:company_id(name),
-       po_line_items(id, description, quantity, unit, unit_cost, position,
-         cost_codes:cost_code_id(code, name)),
-       po_attachments(id, file_name, storage_path, caption, position),
-       po_comments(id, author_name, author_profile_id, body, created_at)`
-    )
-    .eq("token", token)
-    .maybeSingle()
   if (error) {
     console.warn("[po page] lookup failed:", error.message)
     return <Unavailable />

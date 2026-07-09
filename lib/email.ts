@@ -30,6 +30,12 @@ export async function sendEmail(opts: {
   subject: string
   text: string
   html?: string
+  // Optional sender display name. When set, the Resend "from" keeps its
+  // verified sending address but presents under this name (e.g. an MJV job's
+  // PO email shows "MJV Building Group" instead of the default house brand).
+  // No effect on the Graph transport, which always sends from — and presents
+  // as — the acting staffer's own mailbox.
+  fromName?: string
   // Optional file attachments. `content` is base64-encoded bytes — the shape
   // both Resend and Graph accept. Existing callers that omit this are unaffected.
   attachments?: { filename: string; content: string }[]
@@ -123,10 +129,12 @@ export async function sendEmail(opts: {
     }
   }
 
+  const fromLine = opts.fromName ? applyFromName(from, opts.fromName) : from
+
   const resend = new Resend(key)
   try {
     const { data, error } = await resend.emails.send({
-      from,
+      from: fromLine,
       to: opts.to,
       ...(opts.cc ? { cc: opts.cc } : {}),
       ...(replyTo ? { replyTo } : {}),
@@ -152,7 +160,7 @@ export async function sendEmail(opts: {
         company_id: opts.log.company_id,
         profile_id: opts.log.profile_id,
         sent_by: opts.log.sent_by,
-        from_address: from,
+        from_address: fromLine,
         to_address: toList.join(", "),
         counterparty_name: opts.log.counterparty_name,
         subject: opts.subject,
@@ -195,6 +203,25 @@ async function resolveSenderMailbox(
     }
   }
   return process.env.MS_SYSTEM_MAILBOX || null
+}
+
+/**
+ * Rebuild a Resend "from" so it presents under `name` while keeping the
+ * verified sending address (SPF/DKIM are tied to the address, not the display
+ * name, so this is deliverability-safe). Accepts the env value in either
+ * `"Name <addr>"` or bare `"addr"` form. Strips line breaks (header
+ * injection), then wraps the display name in an RFC 5322 quoted-string so any
+ * specials in it (comma, semicolon, parentheses) can't be misread as an
+ * address list — escaping embedded quotes/backslashes. Falls back to the
+ * original `from` if nothing usable remains.
+ */
+function applyFromName(from: string, name: string): string {
+  const match = from.match(/<([^>]+)>/)
+  const address = (match ? match[1] : from).trim()
+  const display = name.replace(/[\r\n]/g, "").trim()
+  return display && address
+    ? `"${display.replace(/["\\]/g, "\\$&")}" <${address}>`
+    : from
 }
 
 export function appUrl(path: string = "/"): string {

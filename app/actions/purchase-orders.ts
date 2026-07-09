@@ -10,6 +10,8 @@ import { isChannelEnabled } from "@/lib/notifications/preferences"
 import { generateAccessToken } from "@/lib/tokens"
 import { formatDate } from "@/lib/utils"
 import { notifyCommentPosted } from "@/lib/comms/notify"
+import { brandForProjectType } from "@/lib/brand"
+import type { Enums } from "@/lib/db/types"
 
 const optStr = z.string().nullish()
 
@@ -376,7 +378,7 @@ export async function releasePurchaseOrder({
   const { data: po, error: poErr } = await supabase
     .from("purchase_orders")
     .select(
-      "id, number, title, approval_deadline, status, company_id, companies:company_id(name, email, phone, notifications_enabled), projects:project_id(name)"
+      "id, number, title, approval_deadline, status, company_id, companies:company_id(name, email, phone, notifications_enabled), projects:project_id(name, project_type)"
     )
     .eq("id", id)
     .maybeSingle()
@@ -407,8 +409,15 @@ export async function releasePurchaseOrder({
       } | null
     }
   ).companies
-  const projectName =
-    (po as unknown as { projects: { name: string } | null }).projects?.name ?? "our project"
+  const project = (
+    po as unknown as {
+      projects: { name: string; project_type: Enums<"project_type"> | null } | null
+    }
+  ).projects
+  const projectName = project?.name ?? "our project"
+  // Client-/sub-facing brand for this job: commercial → MJV Building Group,
+  // otherwise the default house brand (Hines Homes).
+  const brand = brandForProjectType(project?.project_type)
 
   if (company?.notifications_enabled) {
     const link = appUrl(`/po/${token}`)
@@ -436,7 +445,8 @@ export async function releasePurchaseOrder({
         sendEmail({
           to: [company.email],
           subject: `Purchase order PO-${po.number}: ${po.title} — ${projectName}`,
-          text: `Hines Homes has issued you a purchase order for "${po.title}" on ${projectName}.${deadlineLine}\n\nReview and approve or decline here (no login needed):\n${link}`,
+          text: `${brand.name} has issued you a purchase order for "${po.title}" on ${projectName}.${deadlineLine}\n\nReview and approve or decline here (no login needed):\n${link}`,
+          fromName: brand.name,
           log,
         }).catch((e) => console.warn("[releasePurchaseOrder] email failed:", e))
       )
@@ -454,7 +464,7 @@ export async function releasePurchaseOrder({
       sendJobs.push(
         sendQuoSms({
           to: e164,
-          content: `Hines Homes purchase order PO-${po.number} "${po.title}" on ${projectName}.${deadlineLine} Review & approve: ${link}`,
+          content: `${brand.name} purchase order PO-${po.number} "${po.title}" on ${projectName}.${deadlineLine} Review & approve: ${link}`,
           log,
         }).catch((e) => console.warn("[releasePurchaseOrder] SMS failed:", e))
       )
@@ -658,7 +668,7 @@ export async function postPoCommentStaff({
   const { data: po } = await supabase
     .from("purchase_orders")
     .select(
-      "number, title, token, company_id, companies:company_id(name, email, notifications_enabled), projects:project_id(name)"
+      "number, title, token, company_id, companies:company_id(name, email, notifications_enabled), projects:project_id(name, project_type)"
     )
     .eq("id", purchase_order_id)
     .maybeSingle()
@@ -672,13 +682,15 @@ export async function postPoCommentStaff({
       email: string | null
       notifications_enabled: boolean
     } | null
-    projects: { name: string } | null
+    projects: { name: string; project_type: Enums<"project_type"> | null } | null
   } | null
   if (info?.token && info.companies?.email && info.companies.notifications_enabled) {
+    const brand = brandForProjectType(info.projects?.project_type)
     await sendEmail({
       to: [info.companies.email],
       subject: `New message on PO-${info.number}: ${info.title}`,
-      text: `${profile.full_name ?? "Hines Homes"} wrote:\n\n${body.trim()}\n\nView and reply: ${appUrl(`/po/${info.token}`)}`,
+      text: `${profile.full_name ?? brand.name} wrote:\n\n${body.trim()}\n\nView and reply: ${appUrl(`/po/${info.token}`)}`,
+      fromName: brand.name,
       log: {
         project_id,
         company_id: info.company_id,
