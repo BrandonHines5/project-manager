@@ -1515,6 +1515,9 @@ export async function sendQuoTextToSub(input: {
   if (!result.sent) {
     return { ok: false, error: result.reason ?? "Failed to send text." }
   }
+  // Surface the just-logged text in the comms feeds without a manual refresh.
+  if (projectId) revalidatePath(`/projects/${projectId}/communications`)
+  revalidatePath("/communications")
   return { ok: true, to: normalized, company_name: company.name }
 }
 
