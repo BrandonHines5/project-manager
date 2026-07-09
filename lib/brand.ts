@@ -14,6 +14,14 @@ export type Brand = {
   mark: string
   /** Full-color logo for light backgrounds (PDF header, etc.). */
   logo: string
+  /**
+   * Square PNG used as the favicon + link-preview (og:image) on the public
+   * tokenized pages (PO / bid). Kept a raster PNG on purpose: link-preview
+   * crawlers (iMessage, WhatsApp, etc.) frequently refuse to render an SVG
+   * og:image, so a real square PNG is what makes the sub's text preview show
+   * the right brand instead of the app's default favicon.
+   */
+  icon: string
 }
 
 export const HINES_HOMES: Brand = {
@@ -21,6 +29,8 @@ export const HINES_HOMES: Brand = {
   name: "Hines Homes",
   mark: "/brand/hines-mark.svg",
   logo: "/brand/hines-logo.svg",
+  // The 512px navy-fence favicon that already ships as the app icon.
+  icon: "/icon-512.png",
 }
 
 export const MJV_BUILDING_GROUP: Brand = {
@@ -28,6 +38,8 @@ export const MJV_BUILDING_GROUP: Brand = {
   name: "MJV Building Group",
   mark: "/brand/mjv-mark.svg",
   logo: "/brand/mjv-logo.svg",
+  // Square MJV mark on white, generated from the real logo (see mjv-logo.svg).
+  icon: "/brand/mjv-icon.png",
 }
 
 export const PROJECT_TYPE_LABEL: Record<Enums<"project_type">, string> = {

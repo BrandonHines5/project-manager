@@ -2,7 +2,8 @@ import type { Metadata } from "next"
 import { notFound } from "next/navigation"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { ACCESS_TOKEN_RE } from "@/lib/tokens"
-import { brandForProjectType } from "@/lib/brand"
+import { brandForProjectType, HINES_HOMES } from "@/lib/brand"
+import { appUrl } from "@/lib/email"
 import type { Enums } from "@/lib/db/types"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card"
@@ -14,9 +15,48 @@ import { PoApprovalForm } from "./po-approval-form"
 // PO tables have no anon RLS policies.
 export const dynamic = "force-dynamic"
 
-export const metadata: Metadata = {
-  title: "Purchase order — Hines Homes",
-  robots: { index: false },
+// Brand the link preview (title + favicon + og:image) by the PO's job type,
+// so an MJV job's approval link texted to a sub previews as MJV — not the
+// app's default Hines favicon. The token is the credential; look it up with
+// the service-role client, same as the page body. Any miss falls back to the
+// default house brand rather than leaking that the token is invalid.
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ token: string }>
+}): Promise<Metadata> {
+  const { token } = await params
+  let brand = HINES_HOMES
+  if (ACCESS_TOKEN_RE.test(token)) {
+    const admin = createSupabaseAdminClient()
+    if (admin) {
+      const { data } = await admin
+        .from("purchase_orders")
+        .select("projects:project_id(project_type)")
+        .eq("token", token)
+        .maybeSingle()
+      const projectType = (
+        data as unknown as {
+          projects: { project_type: Enums<"project_type"> | null } | null
+        } | null
+      )?.projects?.project_type
+      brand = brandForProjectType(projectType)
+    }
+  }
+  const title = `Purchase order — ${brand.name}`
+  const image = appUrl(brand.icon)
+  return {
+    title,
+    robots: { index: false },
+    icons: { icon: brand.icon, shortcut: brand.icon, apple: brand.icon },
+    openGraph: {
+      title,
+      siteName: brand.name,
+      type: "website",
+      images: [{ url: image }],
+    },
+    twitter: { card: "summary", title, images: [image] },
+  }
 }
 
 type PageData = {
