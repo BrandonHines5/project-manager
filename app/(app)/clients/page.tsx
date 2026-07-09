@@ -23,8 +23,33 @@ export default async function ClientsPage() {
     .order("project_number")
   if (error) throw new Error(error.message)
 
+  // A person listed with only a name on one job and with name+email on another
+  // would split into two rows if we keyed naively on `email || name`. Pre-scan
+  // every job to learn each name's email, then key name-only contacts on that
+  // email so they collapse with their email-bearing self. Only applied when a
+  // name maps to exactly one email — an ambiguous name (two different emails,
+  // i.e. two people) stays keyed by name.
+  const emailsByName = new Map<string, Set<string>>()
+  const noteAlias = (name: string | null, email: string | null) => {
+    const n = name?.trim().toLowerCase()
+    const e = email?.trim().toLowerCase()
+    if (!n || !e) return
+    const set = emailsByName.get(n) ?? new Set<string>()
+    set.add(e)
+    emailsByName.set(n, set)
+  }
+  for (const p of projects ?? []) {
+    noteAlias(p.client_name, p.client_email)
+    noteAlias(p.client_name_2, p.client_email_2)
+  }
+  const canonicalEmailForName = (name: string): string | null => {
+    const set = emailsByName.get(name.toLowerCase())
+    return set && set.size === 1 ? [...set][0] : null
+  }
+
   // Group contacts across jobs. Key on email when present (so the same person
-  // on two jobs collapses to one row), else on name.
+  // on two jobs collapses to one row), else on the name's canonical email, else
+  // on the name itself.
   const byKey = new Map<string, ClientRow>()
   const addContact = (
     name: string | null,
@@ -36,7 +61,9 @@ export default async function ClientsPage() {
     const cleanEmail = email?.trim() ?? ""
     const cleanPhone = phone?.trim() ?? ""
     if (!cleanName && !cleanEmail) return
-    const key = (cleanEmail || cleanName).toLowerCase()
+    const key = cleanEmail
+      ? cleanEmail.toLowerCase()
+      : (canonicalEmailForName(cleanName) ?? cleanName.toLowerCase())
     let row = byKey.get(key)
     if (!row) {
       row = {
