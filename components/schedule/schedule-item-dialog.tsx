@@ -1176,9 +1176,12 @@ function PredecessorsEditor({
     onChange(value.filter((_, i) => i !== idx))
   }
 
-  const available = items.filter(
-    (it) => !value.some((p) => p.predecessor_id === it.id)
-  )
+  // Sorted alphabetically by title so the "Choose work item…" picker is easy
+  // to scan on jobs with a long schedule. filter() returns a fresh array, so
+  // the sort doesn't mutate the caller's `items`.
+  const available = items
+    .filter((it) => !value.some((p) => p.predecessor_id === it.id))
+    .sort((a, b) => a.title.localeCompare(b.title))
 
   return (
     <div>
