@@ -2,7 +2,8 @@
 
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
-import { Pencil } from "lucide-react"
+import { toast } from "sonner"
+import { Pencil, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -14,12 +15,13 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog"
 import { Field, Input, Select, Textarea } from "@/components/ui/input"
-import { updateProject } from "@/app/actions/projects"
+import { deleteProject, updateProject } from "@/app/actions/projects"
 import { cn } from "@/lib/utils"
 import type { Enums } from "@/lib/db/types"
 
 type EditableProject = {
   id: string
+  project_number: string
   name: string
   address: string | null
   status: Enums<"project_status">
@@ -70,6 +72,34 @@ function EditProjectDialog({
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  // Delete flow lives in its own danger zone at the bottom of the dialog.
+  // Opening it reveals a typed-confirmation gate (the job number must match)
+  // because deleting a job cascades every child record — there's no undo.
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [confirmText, setConfirmText] = useState("")
+  const [deleting, startDelete] = useTransition()
+
+  const busy = pending || deleting
+
+  function onDelete() {
+    if (confirmText.trim() !== project.project_number) return
+    setError(null)
+    startDelete(async () => {
+      try {
+        const res = await deleteProject({ project_id: project.id })
+        if (!res.ok) {
+          setError(res.error)
+          return
+        }
+        toast.success(`Deleted ${project.name}`)
+        // The current project page is gone — leave it before it 404s.
+        router.push("/projects")
+        router.refresh()
+      } catch {
+        setError("Couldn't delete this job. Please try again.")
+      }
+    })
+  }
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -116,9 +146,9 @@ function EditProjectDialog({
     <Dialog
       open
       onOpenChange={(v) => {
-        // Don't let backdrop/Escape close while the save is in flight —
+        // Don't let backdrop/Escape close while a save or delete is in flight —
         // the user would miss field errors that come back from the action.
-        if (!v && !pending) onClose()
+        if (!v && !busy) onClose()
       }}
     >
       <DialogContent size="lg">
@@ -303,22 +333,83 @@ function EditProjectDialog({
                 defaultValue={project.notes ?? ""}
               />
             </Field>
+            {confirmingDelete && (
+              <div className="sm:col-span-2 rounded-md border border-danger/40 bg-danger/5 px-3 py-2.5 text-sm space-y-2">
+                <p className="font-medium text-foreground">
+                  Delete this job permanently?
+                </p>
+                <p className="text-muted text-xs">
+                  This removes <span className="font-medium">{project.name}</span>{" "}
+                  (#{project.project_number}) and everything in it — schedule,
+                  to-dos, decisions, job logs, bids, POs, files, payments,
+                  members, and history. This cannot be undone.
+                </p>
+                <Field
+                  label={`Type the job number ${project.project_number} to confirm`}
+                >
+                  <Input
+                    value={confirmText}
+                    onChange={(e) => setConfirmText(e.target.value)}
+                    placeholder={project.project_number}
+                    autoFocus
+                    disabled={deleting}
+                  />
+                </Field>
+              </div>
+            )}
             {error && (
               <p className="sm:col-span-2 text-sm text-danger">{error}</p>
             )}
           </DialogBody>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={onClose}
-              disabled={pending}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={pending}>
-              {pending ? "Saving…" : "Save changes"}
-            </Button>
+          <DialogFooter className="justify-between">
+            {confirmingDelete ? (
+              <Button
+                type="button"
+                variant="danger"
+                onClick={onDelete}
+                disabled={
+                  deleting || confirmText.trim() !== project.project_number
+                }
+              >
+                <Trash2 className="h-4 w-4" />
+                {deleting ? "Deleting…" : "Delete job"}
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setError(null)
+                  setConfirmingDelete(true)
+                }}
+                disabled={busy}
+                className="text-danger hover:bg-danger/10"
+              >
+                <Trash2 className="h-4 w-4" />
+                Delete job
+              </Button>
+            )}
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={
+                  confirmingDelete
+                    ? () => {
+                        setConfirmingDelete(false)
+                        setConfirmText("")
+                        setError(null)
+                      }
+                    : onClose
+                }
+                disabled={busy}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={busy || confirmingDelete}>
+                {pending ? "Saving…" : "Save changes"}
+              </Button>
+            </div>
           </DialogFooter>
         </form>
       </DialogContent>
