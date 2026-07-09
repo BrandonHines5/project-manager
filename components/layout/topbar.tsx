@@ -9,6 +9,7 @@ import {
   Clock,
   LogOut,
   MessageSquarePlus,
+  Plug,
   Settings,
   Tags,
 } from "lucide-react"
@@ -182,6 +183,16 @@ export function Topbar({
                   >
                     <Clock className="h-4 w-4 text-muted" />
                     Delay reasons
+                  </Link>
+                )}
+                {role === "staff" && (
+                  <Link
+                    href="/settings/quickbooks"
+                    onClick={() => setMenuOpen(false)}
+                    className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-background cursor-pointer"
+                  >
+                    <Plug className="h-4 w-4 text-muted" />
+                    QuickBooks
                   </Link>
                 )}
                 <Link
