@@ -820,6 +820,8 @@ export function ScheduleItemDialog({
                 (a) => a.schedule_item_id === item.id
               )}
               companies={data.companies}
+              roles={data.roles}
+              roleMembers={data.roleMembers}
             />
           )}
 
@@ -1659,48 +1661,95 @@ function buildSubTextMessage(opts: {
   return `Hi ${opts.companyName} — ${address} is ${status}. Let me know if you have any questions.`
 }
 
+type TextRecipient = {
+  key: string
+  label: string
+  company: { id: string; name: string; phone: string | null }
+  target: { kind: "company"; company_id: string } | { kind: "role"; role_id: string }
+}
+
 function SendTextToSubSection({
   scheduleItemId,
   readyDate,
   projectAddress,
   persistedAssignments,
   companies,
+  roles,
+  roleMembers,
 }: {
   scheduleItemId: string
   readyDate: string
   projectAddress: string | null
   persistedAssignments: Tables<"schedule_assignments">[]
   companies: ScheduleData["companies"]
+  roles: ScheduleData["roles"]
+  roleMembers: ScheduleData["roleMembers"]
 }) {
-  const subAssignees = persistedAssignments
-    .map((a) => {
-      if (!a.company_id) return null
-      const c = companies.find((x) => x.id === a.company_id)
-      if (!c || c.type === "client") return null
-      return c
+  // Textable recipients = subs/vendors reachable from this item's SAVED
+  // assignments. A direct company assignment is textable as-is; a ROLE
+  // assignment is textable when the role is filled by a company on this job
+  // (resolved through roleMembers) — so "text whoever holds the role" works.
+  // The server re-resolves and re-verifies everything; this list is just UX.
+  const recipients: TextRecipient[] = []
+  const seenCompanyIds = new Set<string>()
+  let skippedRoles = 0
+  // Direct company assignments first — they win the dedupe against a role
+  // that resolves to the same company.
+  for (const a of persistedAssignments) {
+    if (!a.company_id) continue
+    const c = companies.find((x) => x.id === a.company_id)
+    if (!c || c.type === "client" || seenCompanyIds.has(c.id)) continue
+    seenCompanyIds.add(c.id)
+    recipients.push({
+      key: `company:${c.id}`,
+      label: c.name,
+      company: { id: c.id, name: c.name, phone: c.phone },
+      target: { kind: "company", company_id: c.id },
     })
-    .filter((c): c is NonNullable<typeof c> => c !== null)
+  }
+  // Role assignments resolved to the sub/vendor filling them on this job.
+  for (const a of persistedAssignments) {
+    if (!a.role_id) continue
+    const member = roleMembers.find((m) => m.role_id === a.role_id)
+    const c = member?.company_id
+      ? companies.find((x) => x.id === member.company_id)
+      : undefined
+    if (!c || c.type === "client") {
+      // Role is unfilled or filled by a staff member — no SMS target.
+      skippedRoles++
+      continue
+    }
+    if (seenCompanyIds.has(c.id)) continue
+    seenCompanyIds.add(c.id)
+    const roleName = roles.find((r) => r.id === a.role_id)?.name ?? "Role"
+    recipients.push({
+      key: `role:${a.role_id}`,
+      label: `${c.name} · ${roleName}`,
+      company: { id: c.id, name: c.name, phone: c.phone },
+      target: { kind: "role", role_id: a.role_id },
+    })
+  }
 
   const [open, setOpen] = useState(false)
-  const [companyId, setCompanyId] = useState<string>(
-    subAssignees[0]?.id ?? ""
+  const [recipientKey, setRecipientKey] = useState<string>(
+    recipients[0]?.key ?? ""
   )
   const [message, setMessage] = useState("")
   const [pending, startTransition] = useTransition()
 
   // Keep the picker in sync if the user adds/removes assignees while the
-  // dialog is open. Also reset the message whenever the picked company
+  // dialog is open. Also reset the message whenever the picked recipient
   // changes so the preview reflects the new recipient name.
-  const selectedCompany =
-    subAssignees.find((c) => c.id === companyId) ?? subAssignees[0] ?? null
+  const selected =
+    recipients.find((r) => r.key === recipientKey) ?? recipients[0] ?? null
 
   function openPanel() {
-    const co = selectedCompany ?? subAssignees[0]
-    if (!co) return
-    setCompanyId(co.id)
+    const r = selected ?? recipients[0]
+    if (!r) return
+    setRecipientKey(r.key)
     setMessage(
       buildSubTextMessage({
-        companyName: co.name,
+        companyName: r.company.name,
         projectAddress,
         readyDate,
       })
@@ -1708,13 +1757,13 @@ function SendTextToSubSection({
     setOpen(true)
   }
 
-  function pickCompany(id: string) {
-    setCompanyId(id)
-    const co = subAssignees.find((c) => c.id === id)
-    if (co) {
+  function pickRecipient(key: string) {
+    setRecipientKey(key)
+    const r = recipients.find((x) => x.key === key)
+    if (r) {
       setMessage(
         buildSubTextMessage({
-          companyName: co.name,
+          companyName: r.company.name,
           projectAddress,
           readyDate,
         })
@@ -1723,7 +1772,7 @@ function SendTextToSubSection({
   }
 
   function send() {
-    if (!selectedCompany) return
+    if (!selected) return
     if (!message.trim()) {
       toast.error("Message is empty")
       return
@@ -1732,8 +1781,10 @@ function SendTextToSubSection({
       try {
         const res = await sendQuoTextToSub({
           schedule_item_id: scheduleItemId,
-          company_id: selectedCompany.id,
           message: message.trim(),
+          ...(selected.target.kind === "company"
+            ? { company_id: selected.target.company_id }
+            : { role_id: selected.target.role_id }),
         })
         if (res.ok) {
           toast.success(`Text sent to ${res.company_name}`)
@@ -1752,7 +1803,7 @@ function SendTextToSubSection({
     })
   }
 
-  if (subAssignees.length === 0) return null
+  if (recipients.length === 0) return null
 
   return (
     <div>
@@ -1767,26 +1818,26 @@ function SendTextToSubSection({
           {open ? "Cancel" : "Send text to sub"}
         </button>
       </div>
-      {open && selectedCompany && (
+      {open && selected && (
         <div className="mt-2 p-3 bg-brand-50/60 border border-brand-200 rounded-md space-y-2">
-          {subAssignees.length > 1 && (
+          {recipients.length > 1 && (
             <Field label="Recipient">
               <Select
-                value={companyId}
-                onChange={(e) => pickCompany(e.target.value)}
+                value={recipientKey}
+                onChange={(e) => pickRecipient(e.target.value)}
               >
-                {subAssignees.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                    {c.phone ? "" : " (no phone on file)"}
+                {recipients.map((r) => (
+                  <option key={r.key} value={r.key}>
+                    {r.label}
+                    {r.company.phone ? "" : " (no phone on file)"}
                   </option>
                 ))}
               </Select>
             </Field>
           )}
-          {!selectedCompany.phone && (
+          {!selected.company.phone && (
             <p className="text-xs text-danger">
-              {selectedCompany.name} has no phone number on file. Add one on the
+              {selected.company.name} has no phone number on file. Add one on the
               company profile before sending.
             </p>
           )}
@@ -1797,6 +1848,13 @@ function SendTextToSubSection({
               rows={4}
             />
           </Field>
+          {skippedRoles > 0 && (
+            <p className="text-[11px] text-muted">
+              {skippedRoles === 1 ? "1 role" : `${skippedRoles} roles`} on this
+              item {skippedRoles === 1 ? "isn't" : "aren't"} filled by a sub with
+              a phone, so {skippedRoles === 1 ? "it's" : "they're"} not listed.
+            </p>
+          )}
           <div className="flex items-center justify-end gap-2">
             <Button
               type="button"
@@ -1811,7 +1869,7 @@ function SendTextToSubSection({
               type="button"
               size="sm"
               onClick={send}
-              disabled={pending || !selectedCompany.phone}
+              disabled={pending || !selected.company.phone}
             >
               {pending ? "Sending…" : "Send text"}
             </Button>
