@@ -11,15 +11,16 @@ export const OPEN_STATUSES: ReadonlyArray<Enums<"project_status">> = [
   "paused",
 ]
 
-// Every project status, in the CRM dropdown's order. The enum mirrors the
-// Hines Homes CRM's statuses 1:1, so filter UIs list these exact words.
+// Every project status, in the order filter UIs list them: the live ones
+// first (mirroring OPEN_STATUSES), then the closed ones. The enum mirrors
+// the Hines Homes CRM's statuses 1:1, so the words themselves are the CRM's.
 export const ALL_STATUSES: ReadonlyArray<Enums<"project_status">> = [
   "upcoming",
   "in_work",
-  "complete",
-  "warranty",
   "inventory",
   "paused",
+  "warranty",
+  "complete",
   "cancelled",
 ]
 
