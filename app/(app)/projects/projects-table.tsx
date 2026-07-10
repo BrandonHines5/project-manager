@@ -87,8 +87,10 @@ export function ProjectsTable({
   financialAccess: boolean
 }) {
   const [query, setQuery] = useState("")
-  // Either a ProjectStatusFilter or a "label:<name>" string.
-  const [filter, setFilter] = useState<string>("all")
+  // Either a ProjectStatusFilter or a "label:<name>" string. Defaults to the
+  // Open group (upcoming / in work / inventory / paused) so the list opens on
+  // live jobs; All is one tap away.
+  const [filter, setFilter] = useState<string>("open")
 
   // Count per status filter so each chip can show how many jobs it holds —
   // the search box narrows the visible rows but not these headline counts.
