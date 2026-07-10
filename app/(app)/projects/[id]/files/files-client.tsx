@@ -96,9 +96,6 @@ export function FilesClient({ data }: { data: FilesData }) {
     null
   )
   const [search, setSearch] = useState("")
-  const [sourceFilter, setSourceFilter] = useState<
-    "all" | "plan" | "daily-log" | "decision"
-  >("all")
   const [tagFilter, setTagFilter] = useState<string | null>(null)
   const [lightbox, setLightbox] = useState<Media | null>(null)
   // When set, render the in-browser document viewer for this plan.
@@ -131,7 +128,6 @@ export function FilesClient({ data }: { data: FilesData }) {
     const q = search.trim().toLowerCase()
     return data.media
       .filter((m) => m.file_type?.startsWith("image/") || m.file_type?.startsWith("video/"))
-      .filter((m) => sourceFilter === "all" || m.source === sourceFilter)
       .filter((m) => !tagFilter || m.tags.includes(tagFilter))
       .filter((m) => {
         if (!q) return true
@@ -143,7 +139,7 @@ export function FilesClient({ data }: { data: FilesData }) {
         )
       })
       .sort((a, b) => b.source_date.localeCompare(a.source_date))
-  }, [data.media, search, sourceFilter, tagFilter])
+  }, [data.media, search, tagFilter])
 
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-6 py-5 space-y-8">
@@ -243,23 +239,11 @@ export function FilesClient({ data }: { data: FilesData }) {
           <div>
             <h2 className="text-base font-semibold">Project gallery</h2>
             <p className="text-xs text-muted">
-              All photos and videos from job logs, decisions, and uploaded plans.
-              Search by name, caption, or source.
+              All photos and videos from job logs. Search by name, caption, or
+              date.
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Select
-              value={sourceFilter}
-              onChange={(e) =>
-                setSourceFilter(e.target.value as typeof sourceFilter)
-              }
-              className="w-auto"
-            >
-              <option value="all">All sources</option>
-              <option value="daily-log">Job logs</option>
-              <option value="decision">Decisions</option>
-              <option value="plan">Plans &amp; docs</option>
-            </Select>
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted" />
               <Input
@@ -313,8 +297,8 @@ export function FilesClient({ data }: { data: FilesData }) {
             title={search ? "No matches" : "No media yet"}
             description={
               search
-                ? "Try different search terms or change the source filter."
-                : "Photos uploaded to job logs, decisions, or here will appear in this gallery."
+                ? "Try different search terms."
+                : "Photos added to job logs will appear in this gallery."
             }
           />
         ) : (

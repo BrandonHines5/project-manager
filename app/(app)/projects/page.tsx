@@ -2,10 +2,10 @@ import Link from "next/link"
 import {
   Plus,
   FolderKanban,
-  Activity,
   AlertTriangle,
-  CheckCircle2,
-  TrendingUp,
+  Hammer,
+  ShieldCheck,
+  CalendarClock,
 } from "lucide-react"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireSession } from "@/lib/auth"
@@ -14,7 +14,8 @@ import { EmptyState } from "@/components/ui/empty"
 import { Card, CardBody } from "@/components/ui/card"
 import { FeedbackNotification } from "@/components/feedback/feedback-notification"
 import { MyFeedbackNotification } from "@/components/feedback/my-feedback-notification"
-import { cn, formatCurrency } from "@/lib/utils"
+import { cn } from "@/lib/utils"
+import { OPEN_STATUSES } from "@/lib/project-status"
 import { ProjectsTable, type ProjectRow } from "./projects-table"
 import type { Enums } from "@/lib/db/types"
 
@@ -60,10 +61,21 @@ export default async function ProjectsPage() {
             .eq("status", "approved"),
         ])
 
+  // Headline-card scope: templates aren't real jobs, so they never count
+  // toward the status cards, and late to-dos only count against open jobs so
+  // a closed job's stale checklist doesn't inflate the card forever.
+  const realProjects = (projects ?? []).filter((p) => !p.is_template)
+  const openProjectIds = new Set(
+    realProjects
+      .filter((p) => OPEN_STATUSES.includes(p.status))
+      .map((p) => p.id)
+  )
+
   // Roll up per-project metrics in one pass over the schedule rows.
   const metricsByProject = new Map<string, ProjectMetrics>()
   const today = new Date()
   today.setUTCHours(0, 0, 0, 0)
+  let lateTodos = 0
   for (const it of items ?? []) {
     const m = metricsByProject.get(it.project_id) ?? blankMetrics()
     m.total += 1
@@ -74,7 +86,12 @@ export default async function ProjectsPage() {
     const dateStr = it.end_date ?? it.due_date
     if (dateStr && it.status !== "complete") {
       const d = new Date(dateStr + "T00:00:00Z")
-      if (d.getTime() < today.getTime()) m.pastDue += 1
+      if (d.getTime() < today.getTime()) {
+        m.pastDue += 1
+        if (it.kind === "todo" && openProjectIds.has(it.project_id)) {
+          lateTodos += 1
+        }
+      }
     }
     metricsByProject.set(it.project_id, m)
   }
@@ -87,31 +104,18 @@ export default async function ProjectsPage() {
     )
   }
 
-  // Portfolio aggregates. Only active-for-health projects contribute to the
-  // headline counters; the contract / changes totals span every visible
-  // project so a PM closing the books on a recently-completed job still
-  // sees its cost growth here.
+  // Portfolio headline counts, by project status.
   const visibleProjects = projects ?? []
   const activeProjects = visibleProjects.filter((p) =>
     PORTFOLIO_ACTIVE.includes(p.status)
   )
-  let activeOnTrack = 0
-  let activeDelayed = 0
-  for (const p of activeProjects) {
-    const m = metricsByProject.get(p.id) ?? blankMetrics()
-    if (m.delayed > 0 || m.pastDue > 0) activeDelayed += 1
-    else activeOnTrack += 1
-  }
-  const totalContract = visibleProjects.reduce(
-    (sum, p) => sum + Number(p.contract_price ?? 0),
-    0
-  )
-  const totalApprovedDelta = Array.from(approvedDeltaByProject.values()).reduce(
-    (sum, n) => sum + n,
-    0
-  )
-  const growthPct =
-    totalContract > 0 ? (totalApprovedDelta / totalContract) * 100 : 0
+  const inWorkCount = realProjects.filter((p) => p.status === "in_work").length
+  const warrantyCount = realProjects.filter(
+    (p) => p.status === "warranty"
+  ).length
+  const upcomingCount = realProjects.filter(
+    (p) => p.status === "upcoming"
+  ).length
 
   // Serializable rows for the client filter/table. Metrics are pre-rolled on
   // the server so the client component stays purely presentational.
@@ -155,53 +159,33 @@ export default async function ProjectsPage() {
         )}
       </div>
 
-      {activeProjects.length > 0 && (
-        <div
-          className={cn(
-            "grid gap-3 mb-6",
-            profile.financial_access
-              ? "grid-cols-2 md:grid-cols-4"
-              : "grid-cols-2"
-          )}
-        >
+      {visibleProjects.length > 0 && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
           <PortfolioStat
-            icon={<CheckCircle2 className="h-4 w-4" />}
-            label="On track"
-            value={String(activeOnTrack)}
-            sub={`of ${activeProjects.length} active`}
-            tone={activeOnTrack === activeProjects.length ? "success" : undefined}
+            icon={<Hammer className="h-4 w-4" />}
+            label="In Work"
+            value={String(inWorkCount)}
+            sub="projects in work"
+          />
+          <PortfolioStat
+            icon={<ShieldCheck className="h-4 w-4" />}
+            label="Warranty"
+            value={String(warrantyCount)}
+            sub="projects in warranty"
+          />
+          <PortfolioStat
+            icon={<CalendarClock className="h-4 w-4" />}
+            label="Upcoming"
+            value={String(upcomingCount)}
+            sub="projects upcoming"
           />
           <PortfolioStat
             icon={<AlertTriangle className="h-4 w-4" />}
-            label="Behind"
-            value={String(activeDelayed)}
-            sub={activeDelayed > 0 ? "delayed or past due" : "none — nice"}
-            tone={activeDelayed > 0 ? "danger" : "success"}
+            label="Late To-Dos"
+            value={String(lateTodos)}
+            sub={lateTodos > 0 ? "past due on open jobs" : "none — nice"}
+            tone={lateTodos > 0 ? "danger" : "success"}
           />
-          {profile.financial_access && (
-          <PortfolioStat
-            icon={<Activity className="h-4 w-4" />}
-            label="Contract value"
-            value={formatCurrency(totalContract)}
-            sub="across all projects"
-          />
-          )}
-          {profile.financial_access && (
-          <PortfolioStat
-            icon={<TrendingUp className="h-4 w-4" />}
-            label="Cost growth"
-            value={
-              (totalApprovedDelta >= 0 ? "+" : "") +
-              formatCurrency(totalApprovedDelta)
-            }
-            sub={
-              totalContract > 0
-                ? `${growthPct >= 0 ? "+" : ""}${growthPct.toFixed(1)}% of contract`
-                : "no contract value"
-            }
-            tone={totalApprovedDelta > 0 ? "warning" : undefined}
-          />
-          )}
         </div>
       )}
 
