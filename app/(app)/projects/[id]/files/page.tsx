@@ -23,11 +23,7 @@ export default async function FilesPage({
     .maybeSingle()
   if (!project) notFound()
 
-  const [
-    { data: plans },
-    { data: logAttachments },
-    { data: decisionAttachments },
-  ] = await Promise.all([
+  const [{ data: plans }, { data: logAttachments }] = await Promise.all([
     // Plans gallery shows only the current revision of each chain — historic
     // versions remain accessible via the per-file "History" affordance.
     supabase
@@ -40,16 +36,13 @@ export default async function FilesPage({
       .from("daily_log_attachments")
       .select("*, daily_logs!inner(project_id, log_date)")
       .eq("daily_logs.project_id", projectId),
-    supabase
-      .from("decision_attachments")
-      .select("*, decisions!inner(project_id, number, title)")
-      .eq("decisions.project_id", projectId),
   ])
 
-  // Build a unified list of all media for the gallery. `source_id` carries
-  // the row's real id (decoupled from the synthetic Media.id used as a React
-  // key) so the gallery's tag editor can dispatch back to setMediaTags
-  // without parsing the prefix again.
+  // Gallery media = job-log photos only. Plans live in their own section
+  // above and decision attachments stay on the decisions page. `source_id`
+  // carries the row's real id (decoupled from the synthetic Media.id used as
+  // a React key) so the gallery's tag editor can dispatch back to
+  // setMediaTags without parsing the prefix again.
   type Media = {
     id: string
     source_id: string
@@ -65,23 +58,6 @@ export default async function FilesPage({
 
   const media: Media[] = []
 
-  for (const p of plans ?? []) {
-    // Archived plans drop out of the shared gallery — they live only in the
-    // "Archived" folder on the files page.
-    if (p.archived_at) continue
-    media.push({
-      id: `pf:${p.id}`,
-      source_id: p.id,
-      storage_path: p.storage_path,
-      file_name: p.file_name,
-      file_type: p.file_type,
-      caption: p.title,
-      source: "plan",
-      source_label: categoryLabel(p.category),
-      source_date: p.created_at,
-      tags: p.tags ?? [],
-    })
-  }
   for (const a of logAttachments ?? []) {
     const dl = (a as unknown as { daily_logs: { log_date: string } }).daily_logs
     media.push({
@@ -97,26 +73,9 @@ export default async function FilesPage({
       tags: a.tags ?? [],
     })
   }
-  for (const a of decisionAttachments ?? []) {
-    const d = (a as unknown as { decisions: { number: number; title: string } })
-      .decisions
-    media.push({
-      id: `dec:${a.id}`,
-      source_id: a.id,
-      storage_path: a.storage_path,
-      file_name: a.file_name,
-      file_type: a.file_type,
-      caption: a.caption,
-      source: "decision",
-      source_label: `Decision #${d.number} · ${d.title}`,
-      source_date: a.created_at,
-      tags: a.tags ?? [],
-    })
-  }
-
-  // Include every plan (archived ones too) so the Archived folder's cards and
-  // the DocViewer can still preview/download — `media` deliberately omits
-  // archived plans, so derive paths from the full plans list as well.
+  // Include every plan (archived ones too) so the plan cards, Archived
+  // folder, and DocViewer can still preview/download — plans no longer feed
+  // the gallery, so their paths come from the plans list alone.
   const allPaths = [
     ...new Set([
       ...(plans ?? []).map((p) => p.storage_path),
@@ -134,16 +93,4 @@ export default async function FilesPage({
   }
 
   return <FilesClient data={data} />
-}
-
-function categoryLabel(c: string) {
-  return (
-    {
-      house_plans: "House plans",
-      plot_plan: "Plot plan",
-      permit: "Permit",
-      contract: "Contract",
-      other: "Other",
-    }[c] ?? c
-  )
 }
