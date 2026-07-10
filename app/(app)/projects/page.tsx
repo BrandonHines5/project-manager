@@ -21,16 +21,6 @@ import type { Enums } from "@/lib/db/types"
 
 export const metadata = { title: "Projects — Hines Homes" }
 
-// A project counts as "active for portfolio health" when it's in one of these
-// statuses. Paused / complete / warranty / cancelled are excluded from the
-// on-time / delayed roll-up because they aren't a live build the PM team is
-// pushing against today.
-const PORTFOLIO_ACTIVE: Enums<"project_status">[] = [
-  "upcoming",
-  "in_work",
-  "inventory",
-]
-
 export default async function ProjectsPage() {
   const profile = await requireSession()
   const supabase = await createSupabaseServerClient()
@@ -106,9 +96,6 @@ export default async function ProjectsPage() {
 
   // Portfolio headline counts, by project status.
   const visibleProjects = projects ?? []
-  const activeProjects = visibleProjects.filter((p) =>
-    PORTFOLIO_ACTIVE.includes(p.status)
-  )
   const inWorkCount = realProjects.filter((p) => p.status === "in_work").length
   const warrantyCount = realProjects.filter(
     (p) => p.status === "warranty"
@@ -141,14 +128,7 @@ export default async function ProjectsPage() {
         <MyFeedbackNotification userId={profile.id} />
       )}
       <div className="flex items-center justify-between gap-3 mb-5">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Projects</h1>
-          <p className="text-sm text-muted">
-            {visibleProjects.length} project
-            {visibleProjects.length === 1 ? "" : "s"} · {activeProjects.length}{" "}
-            active
-          </p>
-        </div>
+        <h1 className="text-2xl font-semibold tracking-tight">Projects</h1>
         {profile.role === "staff" && (
           <Link href="/projects/new">
             <Button>
