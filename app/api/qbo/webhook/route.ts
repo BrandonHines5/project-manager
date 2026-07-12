@@ -181,7 +181,12 @@ async function processNotifications(
   }
 }
 
-/** Bell fan-out to all staff when a client payment lands. Best-effort. */
+/**
+ * Bell fan-out when a client payment lands. Best-effort. Recipients come from
+ * the app_settings key `invoice_payment_recipients` (picked in Settings →
+ * QuickBooks); a never-set key falls back to staff with financial_access, and
+ * an explicitly saved empty list silences the notification entirely.
+ */
 async function notifyStaffOfPayment(opts: {
   projectId: string
   projectName: string | null
@@ -192,11 +197,7 @@ async function notifyStaffOfPayment(opts: {
   try {
     const admin = createSupabaseAdminClient()
     if (!admin) return
-    const { data: staff } = await admin
-      .from("profiles")
-      .select("id")
-      .eq("role", "staff")
-    const recipientIds = (staff ?? []).map((p) => p.id)
+    const recipientIds = await paymentRecipientIds(admin)
     if (!recipientIds.length) return
 
     const invoiceLabel = opts.docNumber ? `invoice #${opts.docNumber}` : "an invoice"
@@ -223,4 +224,48 @@ async function notifyStaffOfPayment(opts: {
       e instanceof Error ? e.message : String(e)
     )
   }
+}
+
+/** Resolve who receives the payment notification (see notifyStaffOfPayment). */
+async function paymentRecipientIds(
+  admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>
+): Promise<string[]> {
+  const { data: setting } = await admin
+    .from("app_settings")
+    .select("value")
+    .eq("key", "invoice_payment_recipients")
+    .maybeSingle()
+
+  let configured: string[] | null = null
+  if (setting?.value != null) {
+    try {
+      const parsed: unknown = JSON.parse(setting.value)
+      if (Array.isArray(parsed)) {
+        configured = parsed.filter((x): x is string => typeof x === "string")
+      }
+      // An unparseable/malformed value falls through as null → fallback,
+      // so a bad save can't silently kill payment notifications.
+    } catch {
+      configured = null
+    }
+  }
+
+  if (configured) {
+    if (!configured.length) return []
+    // Re-check against live staff so a departed or re-roled profile in a
+    // stale list never receives client-payment news.
+    const { data: staff } = await admin
+      .from("profiles")
+      .select("id")
+      .eq("role", "staff")
+      .in("id", configured)
+    return (staff ?? []).map((p) => p.id)
+  }
+
+  const { data: staff } = await admin
+    .from("profiles")
+    .select("id")
+    .eq("role", "staff")
+    .eq("financial_access", true)
+  return (staff ?? []).map((p) => p.id)
 }

@@ -147,6 +147,76 @@ export async function unlinkProjectQboCustomer(input: {
   return { ok: true }
 }
 
+// Who gets the in-app "payment received" notification. Stored as a JSON array
+// of profile ids in app_settings (same pattern as qbo_push_defaults). A
+// missing key falls back to staff with financial_access; an explicitly saved
+// empty list means notify nobody.
+const RECIPIENTS_KEY = "invoice_payment_recipients"
+
+const recipientIdsSchema = z.array(z.string().uuid()).max(50)
+
+export type PaymentRecipientConfig = {
+  staff: { id: string; full_name: string }[]
+  selected: string[]
+}
+
+/** Staff picklist + current payment-notification recipients (settings UI). */
+export async function getInvoicePaymentRecipientConfig(): Promise<PaymentRecipientConfig> {
+  await requireStaff()
+  const supabase = await createSupabaseServerClient()
+  const [{ data: staff }, { data: setting }] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("id, full_name, financial_access")
+      .eq("role", "staff")
+      .order("full_name"),
+    supabase
+      .from("app_settings")
+      .select("value")
+      .eq("key", RECIPIENTS_KEY)
+      .maybeSingle(),
+  ])
+
+  const staffRows = staff ?? []
+  let selected: string[] | null = null
+  if (setting?.value != null) {
+    try {
+      const parsed = recipientIdsSchema.safeParse(JSON.parse(setting.value))
+      if (parsed.success) selected = parsed.data
+    } catch {
+      // Unparseable value — treat as unset and show the fallback below.
+    }
+  }
+  return {
+    staff: staffRows.map((p) => ({ id: p.id, full_name: p.full_name })),
+    // Never-configured: pre-check the effective fallback (financial_access
+    // staff) so the UI shows who actually gets notified today.
+    selected:
+      selected ?? staffRows.filter((p) => p.financial_access).map((p) => p.id),
+  }
+}
+
+/** Save the payment-notification recipient list (staff only). */
+export async function saveInvoicePaymentRecipients(
+  ids: string[]
+): Promise<{ ok: boolean; error?: string }> {
+  const profile = await requireStaff()
+  const parsed = recipientIdsSchema.safeParse(ids)
+  if (!parsed.success) return { ok: false, error: "Invalid recipient list." }
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase.from("app_settings").upsert(
+    {
+      key: RECIPIENTS_KEY,
+      value: JSON.stringify(parsed.data),
+      updated_by: profile.id,
+    },
+    { onConflict: "key" }
+  )
+  if (error) return { ok: false, error: error.message }
+  revalidatePath("/settings/quickbooks")
+  return { ok: true }
+}
+
 /** Manual "Sync now" — full reconcile against the linked customer. */
 export async function syncProjectInvoices(input: {
   project_id: string
