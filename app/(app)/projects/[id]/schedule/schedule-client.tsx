@@ -108,7 +108,7 @@ export function ScheduleClient({ data }: { data: ScheduleData }) {
     <div className="max-w-7xl mx-auto px-4 md:px-6 py-5">
       <ScheduleHealthBanner data={data} />
       <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
-        <div className="flex items-center gap-4 text-sm">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
           <StatChip label="Work items" value={stats.work} />
           <StatChip label="To-dos" value={stats.todos} />
           <StatChip label="Open" value={stats.open} />
@@ -118,7 +118,7 @@ export function ScheduleClient({ data }: { data: ScheduleData }) {
             tone={stats.delayed > 0 ? "danger" : "muted"}
           />
         </div>
-        <div className="flex items-center gap-2 ml-auto">
+        <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
           <Button
             variant="secondary"
             size="sm"

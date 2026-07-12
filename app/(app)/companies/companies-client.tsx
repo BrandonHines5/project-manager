@@ -78,7 +78,7 @@ export function CompaniesClient({
             Subcontractors and vendors.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Select
             value={typeFilter}
             onChange={(e) =>
@@ -90,13 +90,13 @@ export function CompaniesClient({
             <option value="sub">Subcontractors</option>
             <option value="vendor">Vendors</option>
           </Select>
-          <div className="relative">
+          <div className="relative min-w-0 flex-1 sm:flex-none">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted" />
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search…"
-              className="pl-8 w-56"
+              className="pl-8 w-full sm:w-56"
             />
           </div>
           <Button onClick={() => setEditing("new")}>

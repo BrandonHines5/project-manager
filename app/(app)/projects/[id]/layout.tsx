@@ -190,7 +190,7 @@ export default async function ProjectDetailLayout({
                 </p>
               )}
             </div>
-            <div className="flex items-center gap-4 text-sm">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
               {isStaff && (
                 <EditProjectButton
                   project={{

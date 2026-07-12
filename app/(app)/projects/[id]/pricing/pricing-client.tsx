@@ -153,8 +153,10 @@ export function PricingClient({ data }: { data: PricingData }) {
               <tr>
                 <th className="text-left px-4 py-2.5 w-16">#</th>
                 <th className="text-left px-4 py-2.5">Title</th>
-                <th className="text-left px-4 py-2.5 w-32">Approved</th>
-                <th className="text-right px-4 py-2.5 w-36">Amount</th>
+                <th className="text-left px-4 py-2.5 w-32 hidden md:table-cell">
+                  Approved
+                </th>
+                <th className="text-right px-4 py-2.5 w-28 md:w-36">Amount</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -169,7 +171,7 @@ export function PricingClient({ data }: { data: PricingData }) {
                       {d.kind === "change_order" ? "CO" : "Sel"}
                     </Badge>
                   </td>
-                  <td className="px-4 py-2 text-muted">
+                  <td className="px-4 py-2 text-muted hidden md:table-cell">
                     {d.approved_at ? formatDate(d.approved_at) : "—"}
                   </td>
                   <td className="px-4 py-2 text-right tabular-nums">
@@ -179,9 +181,12 @@ export function PricingClient({ data }: { data: PricingData }) {
                 </tr>
               ))}
               <tr className="bg-background/40 font-semibold">
-                <td colSpan={3} className="px-4 py-2.5 text-right">
+                <td colSpan={2} className="px-4 py-2.5 text-right">
                   Total approved deltas
                 </td>
+                {/* Placeholder for the md-only Approved column so the total
+                    stays under Amount at every width. */}
+                <td className="hidden md:table-cell" />
                 <td className="px-4 py-2.5 text-right tabular-nums">
                   {(totals.approvedDelta >= 0 ? "+" : "") +
                     formatCurrency(totals.approvedDelta)}
@@ -227,10 +232,12 @@ export function PricingClient({ data }: { data: PricingData }) {
           <table className="w-full text-sm">
             <thead className="bg-background/60 text-xs uppercase text-muted">
               <tr>
-                <th className="text-left px-4 py-2.5 w-32">Date</th>
-                <th className="text-left px-4 py-2.5 w-28">Method</th>
+                <th className="text-left px-4 py-2.5 w-24 md:w-32">Date</th>
+                <th className="text-left px-4 py-2.5 w-28 hidden md:table-cell">
+                  Method
+                </th>
                 <th className="text-left px-4 py-2.5">Reference / notes</th>
-                <th className="text-right px-4 py-2.5 w-36">Amount</th>
+                <th className="text-right px-4 py-2.5 w-28 md:w-36">Amount</th>
                 {canEdit && <th className="w-12"></th>}
               </tr>
             </thead>
@@ -242,7 +249,9 @@ export function PricingClient({ data }: { data: PricingData }) {
                   onClick={canEdit ? () => setEditPayment(p) : undefined}
                 >
                   <td className="px-4 py-2 text-muted">{formatDate(p.paid_on)}</td>
-                  <td className="px-4 py-2 capitalize">{p.method}</td>
+                  <td className="px-4 py-2 capitalize hidden md:table-cell">
+                    {p.method}
+                  </td>
                   <td className="px-4 py-2">
                     <div className="text-sm">{p.reference || "—"}</div>
                     {p.notes && (
@@ -260,9 +269,12 @@ export function PricingClient({ data }: { data: PricingData }) {
                 </tr>
               ))}
               <tr className="bg-background/40 font-semibold">
-                <td colSpan={3} className="px-4 py-2.5 text-right">
+                <td colSpan={2} className="px-4 py-2.5 text-right">
                   Total paid
                 </td>
+                {/* Placeholder for the md-only Method column so the total
+                    stays under Amount at every width. */}
+                <td className="hidden md:table-cell" />
                 <td className="px-4 py-2.5 text-right tabular-nums">
                   {formatCurrency(totals.paid)}
                 </td>

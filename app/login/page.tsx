@@ -15,7 +15,7 @@ export default async function LoginPage() {
   if (profile) redirect("/projects")
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4">
+    <div className="min-h-dvh flex items-center justify-center bg-background px-4">
       <div className="w-full max-w-md">
         <div className="mb-6 text-center">
           <BrandTile className="h-12 w-12 rounded-lg shadow-sm" imgClassName="h-9 w-9" />

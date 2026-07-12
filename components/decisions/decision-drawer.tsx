@@ -2050,7 +2050,7 @@ function ChoicePhotosRow({
             <button
               type="button"
               onClick={() => onRemove(p)}
-              className="absolute top-0.5 right-0.5 rounded-full bg-black/60 text-white p-0.5 opacity-0 group-hover:opacity-100 cursor-pointer"
+              className="absolute top-0.5 right-0.5 rounded-full bg-black/60 text-white p-1.5 sm:p-0.5 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100 cursor-pointer"
               aria-label="Remove photo"
             >
               <X className="h-3 w-3" />
@@ -2899,7 +2899,7 @@ function AttachmentTile({
         <button
           type="button"
           onClick={onRemove}
-          className="absolute top-1 right-1 rounded-full bg-black/60 text-white p-0.5 opacity-0 group-hover:opacity-100 cursor-pointer"
+          className="absolute top-1 right-1 rounded-full bg-black/60 text-white p-1.5 sm:p-0.5 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100 cursor-pointer"
           aria-label="Remove"
         >
           <X className="h-3 w-3" />
@@ -2910,7 +2910,7 @@ function AttachmentTile({
         onChange={(e) => onCaption(e.target.value)}
         placeholder="Caption"
         disabled={!canEdit}
-        className="mt-1 text-[11px] h-7 px-2"
+        className="mt-1 text-[11px] h-9 sm:h-7 px-2"
       />
     </div>
   )

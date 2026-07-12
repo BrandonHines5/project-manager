@@ -107,9 +107,11 @@ export function SidebarBrand({
 export function SidebarNavList({
   role,
   onNavigate,
+  className,
 }: {
   role: UserRole
   onNavigate?: () => void
+  className?: string
 }) {
   const path = usePathname()
   const items = navItemsFor(role)
@@ -120,7 +122,7 @@ export function SidebarNavList({
     .filter((i) => matches(i.href))
     .sort((a, b) => b.href.length - a.href.length)[0]?.href
   return (
-    <nav className="flex-1 py-3 overflow-y-auto">
+    <nav className={cn("flex-1 py-3 overflow-y-auto", className)}>
       {items.map((item) => {
         const Icon = item.icon
         const active = item.href === activeHref

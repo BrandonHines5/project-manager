@@ -361,7 +361,7 @@ export function AIAgent({ dark = false }: { dark?: boolean }) {
       </button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent size="lg" className="sm:max-h-[85vh]">
+        <DialogContent size="lg" className="sm:max-h-[85dvh]">
           <DialogHeader>
             <div>
               <DialogTitle>
@@ -380,7 +380,9 @@ export function AIAgent({ dark = false }: { dark?: boolean }) {
           <DialogBody className="p-0">
             <div
               ref={scrollRef}
-              className="px-6 py-4 max-h-[55vh] overflow-y-auto space-y-3"
+              // Fill the sheet on phones (the dialog is full-screen there);
+              // the 55dvh cap only applies to the floating desktop dialog.
+              className="px-4 sm:px-6 py-4 h-full sm:h-auto sm:max-h-[55dvh] overflow-y-auto space-y-3"
             >
               {activeScope && (
                 <div className="flex items-center gap-1.5 rounded-md border border-brand-500/40 bg-brand-500/10 px-2.5 py-1.5 text-xs text-brand-700">

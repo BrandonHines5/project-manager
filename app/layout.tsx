@@ -26,6 +26,13 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: "#021b42",
+  // Expose env(safe-area-inset-*) so the shell can pad around the iPhone
+  // notch / home indicator when installed as a home-screen app (the manifest
+  // + black-translucent status bar draw content full-bleed under them).
+  viewportFit: "cover",
+  // Android: shrink the layout when the on-screen keyboard opens so pinned
+  // dialog footers (AI assistant input, drawer save bars) stay visible.
+  interactiveWidget: "resizes-content",
 }
 
 export default function RootLayout({

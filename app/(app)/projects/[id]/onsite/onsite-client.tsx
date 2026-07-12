@@ -182,7 +182,6 @@ function PromptCard({
         ) : isCompletionPrompt ? (
           <div className="flex flex-wrap gap-2">
             <Button
-              size="sm"
               disabled={pending}
               onClick={() =>
                 run(() =>
@@ -197,7 +196,6 @@ function PromptCard({
               {yesTodayLabel}
             </Button>
             <Button
-              size="sm"
               variant="secondary"
               disabled={pending}
               onClick={() => {
@@ -208,7 +206,6 @@ function PromptCard({
               Already done on&hellip;
             </Button>
             <Button
-              size="sm"
               variant="secondary"
               disabled={pending}
               onClick={() => {
@@ -223,8 +220,7 @@ function PromptCard({
           <div className="flex flex-wrap gap-2">
             {prompt.trigger === "starting_today" && (
               <Button
-                size="sm"
-                disabled={pending}
+                  disabled={pending}
                 onClick={() =>
                   run(() =>
                     answerStart({
@@ -240,8 +236,7 @@ function PromptCard({
             )}
             {prompt.trigger === "upcoming_unstarted" && (
               <Button
-                size="sm"
-                variant="secondary"
+                  variant="secondary"
                 disabled={pending}
                 onClick={onResolved}
               >
@@ -249,7 +244,6 @@ function PromptCard({
               </Button>
             )}
             <Button
-              size="sm"
               variant="secondary"
               disabled={pending}
               onClick={() => {
@@ -293,10 +287,10 @@ function DatePickerRow({
           disabled={disabled}
         />
       </Field>
-      <Button size="sm" disabled={disabled || !value} onClick={onSubmit}>
+      <Button disabled={disabled || !value} onClick={onSubmit}>
         Save
       </Button>
-      <Button size="sm" variant="ghost" disabled={disabled} onClick={onCancel}>
+      <Button variant="ghost" disabled={disabled} onClick={onCancel}>
         Cancel
       </Button>
     </div>
