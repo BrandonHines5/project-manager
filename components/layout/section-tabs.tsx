@@ -13,6 +13,9 @@ type Section = {
   // Project sub-route: /projects/{id}/{slug}
   slug: string
   hideForRoles?: UserRole[]
+  // Only staff with profiles.financial_access see this tab (e.g. Budget).
+  // Nav-level only — the page still enforces the same gate server-side.
+  requiresFinancialAccess?: boolean
   // Where this section lives in all-jobs scope. Sections without one are
   // per-job only and disappear when no job is selected.
   aggregateHref?: string
@@ -50,6 +53,12 @@ const SECTIONS: Section[] = [
   },
   { label: "Files", slug: "files" },
   { label: "Pricing", slug: "pricing" },
+  {
+    label: "Budget",
+    slug: "budget",
+    hideForRoles: ["client", "trade"],
+    requiresFinancialAccess: true,
+  },
   { label: "Roles", slug: "roles", hideForRoles: ["client", "trade"] },
   { label: "History", slug: "history", hideForRoles: ["client", "trade"] },
 ]
@@ -64,7 +73,13 @@ const SECTIONS: Section[] = [
  *   every open job by default (or the ?ids= selection carried from the jobs
  *   list). The chip lights up on pages that actually show all-jobs data.
  */
-export function SectionTabs({ role }: { role: UserRole }) {
+export function SectionTabs({
+  role,
+  financialAccess = false,
+}: {
+  role: UserRole
+  financialAccess?: boolean
+}) {
   const path = usePathname()
   // Carry the jobs-list selection between aggregate tabs so switching from
   // Schedule to Job Logs keeps the same set of jobs in view.
@@ -99,7 +114,11 @@ export function SectionTabs({ role }: { role: UserRole }) {
   // keeps its job context.
   const effectiveProjectId = projectId ?? (inAllScope ? null : lastProjectId)
 
-  const visible = SECTIONS.filter((s) => !s.hideForRoles?.includes(role))
+  const visible = SECTIONS.filter(
+    (s) =>
+      !s.hideForRoles?.includes(role) &&
+      (!s.requiresFinancialAccess || financialAccess)
+  )
   const aggregateTabs = visible.filter(
     (s) =>
       s.aggregateHref && (!s.aggregateRoles || s.aggregateRoles.includes(role))

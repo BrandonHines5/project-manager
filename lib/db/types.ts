@@ -404,6 +404,70 @@ export type Database = {
           },
         ]
       }
+      client_invites: {
+        Row: {
+          accepted_at: string | null
+          accepted_profile_id: string | null
+          contact_slot: number | null
+          created_at: string
+          email: string
+          id: string
+          invited_at: string
+          invited_by: string | null
+          name: string | null
+          project_id: string
+          token: string | null
+        }
+        Insert: {
+          accepted_at?: string | null
+          accepted_profile_id?: string | null
+          contact_slot?: number | null
+          created_at?: string
+          email: string
+          id?: string
+          invited_at?: string
+          invited_by?: string | null
+          name?: string | null
+          project_id: string
+          token?: string | null
+        }
+        Update: {
+          accepted_at?: string | null
+          accepted_profile_id?: string | null
+          contact_slot?: number | null
+          created_at?: string
+          email?: string
+          id?: string
+          invited_at?: string
+          invited_by?: string | null
+          name?: string | null
+          project_id?: string
+          token?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_invites_accepted_profile_id_fkey"
+            columns: ["accepted_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_invites_invited_by_fkey"
+            columns: ["invited_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_invites_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       communications: {
         Row: {
           body: string | null
@@ -501,70 +565,6 @@ export type Database = {
             columns: ["sent_by"]
             isOneToOne: false
             referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      client_invites: {
-        Row: {
-          accepted_at: string | null
-          accepted_profile_id: string | null
-          contact_slot: number | null
-          created_at: string
-          email: string
-          id: string
-          invited_at: string
-          invited_by: string | null
-          name: string | null
-          project_id: string
-          token: string | null
-        }
-        Insert: {
-          accepted_at?: string | null
-          accepted_profile_id?: string | null
-          contact_slot?: number | null
-          created_at?: string
-          email: string
-          id?: string
-          invited_at?: string
-          invited_by?: string | null
-          name?: string | null
-          project_id: string
-          token?: string | null
-        }
-        Update: {
-          accepted_at?: string | null
-          accepted_profile_id?: string | null
-          contact_slot?: number | null
-          created_at?: string
-          email?: string
-          id?: string
-          invited_at?: string
-          invited_by?: string | null
-          name?: string | null
-          project_id?: string
-          token?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "client_invites_accepted_profile_id_fkey"
-            columns: ["accepted_profile_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "client_invites_invited_by_fkey"
-            columns: ["invited_by"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "client_invites_project_id_fkey"
-            columns: ["project_id"]
-            isOneToOne: false
-            referencedRelation: "projects"
             referencedColumns: ["id"]
           },
         ]
@@ -1918,6 +1918,109 @@ export type Database = {
           },
         ]
       }
+      project_budget_lines: {
+        Row: {
+          budget_amount: number
+          cost_code_id: string
+          created_at: string
+          created_by: string | null
+          forecast_override: number | null
+          id: string
+          project_id: string
+          updated_at: string
+        }
+        Insert: {
+          budget_amount?: number
+          cost_code_id: string
+          created_at?: string
+          created_by?: string | null
+          forecast_override?: number | null
+          id?: string
+          project_id: string
+          updated_at?: string
+        }
+        Update: {
+          budget_amount?: number
+          cost_code_id?: string
+          created_at?: string
+          created_by?: string | null
+          forecast_override?: number | null
+          id?: string
+          project_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_budget_lines_cost_code_id_fkey"
+            columns: ["cost_code_id"]
+            isOneToOne: false
+            referencedRelation: "cost_codes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_budget_lines_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_budget_lines_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      project_cost_actuals: {
+        Row: {
+          amount: number
+          as_of: string | null
+          cost_code_id: string
+          created_at: string
+          id: string
+          project_id: string
+          source: string
+          updated_at: string
+        }
+        Insert: {
+          amount?: number
+          as_of?: string | null
+          cost_code_id: string
+          created_at?: string
+          id?: string
+          project_id: string
+          source?: string
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          as_of?: string | null
+          cost_code_id?: string
+          created_at?: string
+          id?: string
+          project_id?: string
+          source?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_cost_actuals_cost_code_id_fkey"
+            columns: ["cost_code_id"]
+            isOneToOne: false
+            referencedRelation: "cost_codes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_cost_actuals_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       project_files: {
         Row: {
           archived_at: string | null
@@ -2459,6 +2562,92 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      qbo_connection: {
+        Row: {
+          access_token: string
+          access_token_expires_at: string
+          company_name: string | null
+          connected_by: string | null
+          created_at: string
+          environment: string
+          realm_id: string
+          refresh_token: string
+          refresh_token_expires_at: string
+          updated_at: string
+        }
+        Insert: {
+          access_token: string
+          access_token_expires_at: string
+          company_name?: string | null
+          connected_by?: string | null
+          created_at?: string
+          environment?: string
+          realm_id: string
+          refresh_token: string
+          refresh_token_expires_at: string
+          updated_at?: string
+        }
+        Update: {
+          access_token?: string
+          access_token_expires_at?: string
+          company_name?: string | null
+          connected_by?: string | null
+          created_at?: string
+          environment?: string
+          realm_id?: string
+          refresh_token?: string
+          refresh_token_expires_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "qbo_connection_connected_by_fkey"
+            columns: ["connected_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      qbo_po_sync: {
+        Row: {
+          created_at: string
+          doc_number: string | null
+          last_error: string | null
+          purchase_order_id: string
+          qbo_po_id: string | null
+          qbo_realm_id: string
+          status: string
+          sync_token: string | null
+          synced_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          doc_number?: string | null
+          last_error?: string | null
+          purchase_order_id: string
+          qbo_po_id?: string | null
+          qbo_realm_id: string
+          status?: string
+          sync_token?: string | null
+          synced_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          doc_number?: string | null
+          last_error?: string | null
+          purchase_order_id?: string
+          qbo_po_id?: string | null
+          qbo_realm_id?: string
+          status?: string
+          sync_token?: string | null
+          synced_at?: string | null
+          updated_at?: string
+        }
+        Relationships: []
       }
       rental_items: {
         Row: {
@@ -3176,7 +3365,10 @@ export type Database = {
       strip_template_tag: { Args: { p_tag: string }; Returns: number }
       template_tag_usage: {
         Args: never
-        Returns: { tag: string; uses: number }[]
+        Returns: {
+          tag: string
+          uses: number
+        }[]
       }
       trade_sees_assignment_via_role: {
         Args: { p_item: string; p_role: string }
@@ -3184,7 +3376,6 @@ export type Database = {
       }
       trade_sees_decision: { Args: { p_decision: string }; Returns: boolean }
       trade_sees_item_via_role: { Args: { p_item: string }; Returns: boolean }
-      // Hand-added: 0078 landed after the last regeneration. Keep on regen.
       trade_sees_project: { Args: { p_project: string }; Returns: boolean }
       validate_media_tags: { Args: { p_tags: string[] }; Returns: undefined }
     }

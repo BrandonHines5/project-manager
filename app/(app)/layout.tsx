@@ -67,7 +67,10 @@ export default async function AppLayout({
         unreadCount={unreadCount ?? 0}
         brand={brand}
       />
-      <SectionTabs role={profile.role} />
+      <SectionTabs
+        role={profile.role}
+        financialAccess={profile.role === "staff" && !!profile.financial_access}
+      />
       <ProjectContextShell
         sidebar={
           <ProjectListSidebar
