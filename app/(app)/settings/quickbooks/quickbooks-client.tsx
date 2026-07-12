@@ -11,6 +11,10 @@ import {
   type QboDiagnosticResult,
   type QboLists,
 } from "@/app/actions/quickbooks"
+import {
+  saveInvoicePaymentRecipients,
+  type PaymentRecipientConfig,
+} from "@/app/actions/invoices"
 import type { QboConnectionStatus } from "@/lib/quickbooks/storage"
 import type { PushDefaults } from "@/lib/quickbooks/purchase-orders"
 
@@ -33,6 +37,7 @@ export function QuickBooksSettingsClient({
   errorReason,
   webhookUrl,
   webhookConfigured,
+  paymentRecipients,
 }: {
   configured: boolean
   status: QboConnectionStatus | null
@@ -41,6 +46,7 @@ export function QuickBooksSettingsClient({
   errorReason: string | null
   webhookUrl: string
   webhookConfigured: boolean
+  paymentRecipients: PaymentRecipientConfig | null
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
@@ -322,6 +328,11 @@ export function QuickBooksSettingsClient({
         </section>
       )}
 
+      {/* Who gets the in-app "payment received" notification */}
+      {configured && status && paymentRecipients && (
+        <PaymentRecipientsSection config={paymentRecipients} />
+      )}
+
       <p className="mt-6 text-xs text-muted">
         Need help with this integration? Contact{" "}
         <a className="text-brand-600 underline" href="mailto:brandon@hineshomes.com">
@@ -330,6 +341,62 @@ export function QuickBooksSettingsClient({
         .
       </p>
     </div>
+  )
+}
+
+function PaymentRecipientsSection({ config }: { config: PaymentRecipientConfig }) {
+  const router = useRouter()
+  const [pending, startTransition] = useTransition()
+  const [selected, setSelected] = useState<Set<string>>(new Set(config.selected))
+  const [message, setMessage] = useState<string | null>(null)
+
+  function toggle(id: string) {
+    setMessage(null)
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function handleSave() {
+    startTransition(async () => {
+      const res = await saveInvoicePaymentRecipients([...selected])
+      setMessage(res.ok ? "Recipients saved." : res.error ?? "Save failed.")
+      if (res.ok) router.refresh()
+    })
+  }
+
+  return (
+    <section className="mt-6 rounded-lg border border-border bg-surface p-5">
+      <div className="font-medium text-sm">Payment notifications</div>
+      <p className="mt-1 text-sm text-muted">
+        Who gets the in-app notification when a client payment lands on an
+        invoice. Uncheck everyone to turn the notification off.
+      </p>
+      <ul className="mt-3 space-y-1.5">
+        {config.staff.map((p) => (
+          <li key={p.id}>
+            <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={selected.has(p.id)}
+                onChange={() => toggle(p.id)}
+                className="h-4 w-4 rounded border-border-strong accent-brand-500"
+              />
+              {p.full_name}
+            </label>
+          </li>
+        ))}
+      </ul>
+      <div className="mt-3 flex items-center gap-3">
+        <Button variant="primary" size="sm" onClick={handleSave} disabled={pending}>
+          {pending ? "Saving…" : "Save recipients"}
+        </Button>
+        {message && <span className="text-sm text-muted">{message}</span>}
+      </div>
+    </section>
   )
 }
 

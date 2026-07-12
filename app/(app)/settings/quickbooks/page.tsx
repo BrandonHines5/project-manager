@@ -3,6 +3,7 @@ import { appUrl } from "@/lib/email"
 import { qboConfigured } from "@/lib/quickbooks/config"
 import { getQboStatus } from "@/lib/quickbooks/storage"
 import { getQboPushDefaults } from "@/app/actions/quickbooks"
+import { getInvoicePaymentRecipientConfig } from "@/app/actions/invoices"
 import { QuickBooksSettingsClient } from "./quickbooks-client"
 
 export const metadata = { title: "QuickBooks — Hines Homes" }
@@ -18,9 +19,10 @@ export default async function QuickBooksSettingsPage({
   const status = await getQboStatus()
   // Only fetch push defaults when connected (getQboPushDefaults is cheap, but
   // keep the shape tidy).
-  const [params, pushDefaults] = await Promise.all([
+  const [params, pushDefaults, paymentRecipients] = await Promise.all([
     searchParams,
     status ? getQboPushDefaults() : Promise.resolve(null),
+    status ? getInvoicePaymentRecipientConfig() : Promise.resolve(null),
   ])
 
   return (
@@ -35,6 +37,7 @@ export default async function QuickBooksSettingsPage({
       errorReason={params.error ?? null}
       webhookUrl={appUrl("/api/qbo/webhook")}
       webhookConfigured={!!process.env.QBO_WEBHOOK_VERIFIER_TOKEN}
+      paymentRecipients={paymentRecipients}
     />
   )
 }
