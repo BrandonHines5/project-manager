@@ -12,6 +12,10 @@ import { cn } from "@/lib/utils"
 import type { FeedItem } from "@/lib/comms/feed"
 import { FeedItemRow } from "@/components/comms/feed-item"
 import {
+  ComposeMessageButton,
+  type ComposeContact,
+} from "@/components/comms/compose-dialog"
+import {
   assignCommunication,
   ignoreCommunication,
 } from "@/app/actions/communications"
@@ -41,9 +45,11 @@ type GlobalFeedItem = FeedItem & { projectName: string | null }
 export function GlobalCommunicationsClient({
   feed,
   projects,
+  contacts,
 }: {
   feed: GlobalFeedItem[]
   projects: Project[]
+  contacts: ComposeContact[]
 }) {
   const [kind, setKind] = useState<KindFilter>("all")
   const [query, setQuery] = useState("")
@@ -67,13 +73,18 @@ export function GlobalCommunicationsClient({
 
   return (
     <div className="max-w-4xl mx-auto px-4 md:px-6 py-5 space-y-4">
-      <header>
-        <h1 className="text-xl font-semibold text-foreground">Communications</h1>
-        <p className="mt-0.5 text-xs text-muted">
-          Every call, text and email across the business. Calls and texts land
-          here automatically — no filing required. Search by person, message or
-          job.
-        </p>
+      <header className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold text-foreground">
+            Communications
+          </h1>
+          <p className="mt-0.5 text-xs text-muted">
+            Every call, text and email across the business. Calls and texts
+            land here automatically — no filing required. Search by person,
+            message or job.
+          </p>
+        </div>
+        <ComposeMessageButton contacts={contacts} projectId={null} />
       </header>
 
       <div className="flex items-center gap-2 flex-wrap">

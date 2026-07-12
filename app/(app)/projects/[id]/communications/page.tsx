@@ -13,6 +13,8 @@ import {
   type ScheduleCommentRow,
 } from "@/lib/comms/feed"
 import { createCrmClient } from "@/lib/supabase/crm"
+import type { ComposeContact } from "@/components/comms/compose-dialog"
+import { buildCompanyContacts } from "@/lib/comms/contacts"
 import { CommunicationsClient } from "./communications-client"
 
 export const metadata = { title: "Communications — Hines Homes" }
@@ -32,7 +34,9 @@ export default async function CommunicationsPage({
 
   const { data: project } = await supabase
     .from("projects")
-    .select("id, name, client_email, client_email_2, created_at")
+    .select(
+      "id, name, client_name, client_email, client_phone, client_name_2, client_email_2, client_phone_2, created_at"
+    )
     .eq("id", projectId)
     .maybeSingle()
   if (!project) notFound()
@@ -141,11 +145,34 @@ export default async function CommunicationsPage({
     feed.sort((a, b) => (a.occurredAt < b.occurredAt ? 1 : -1))
   }
 
+  // Compose targets (staff only — clients/trades never see the compose
+  // button): this job's client contact(s) first, then the company directory.
+  const contacts: ComposeContact[] = []
+  if (profile.role === "staff") {
+    const clientSlots = [
+      { slot: 1 as const, name: project.client_name, email: project.client_email, phone: project.client_phone },
+      { slot: 2 as const, name: project.client_name_2, email: project.client_email_2, phone: project.client_phone_2 },
+    ]
+    for (const c of clientSlots) {
+      if (!c.email && !c.phone) continue
+      contacts.push({
+        id: `client:${c.slot}`,
+        name: c.name || "Client",
+        detail: "client",
+        email: c.email,
+        phone: c.phone,
+        recipient: { kind: "project_client", project_id: projectId, slot: c.slot },
+      })
+    }
+    contacts.push(...(await buildCompanyContacts(supabase)))
+  }
+
   return (
     <CommunicationsClient
       feed={feed}
       projectId={projectId}
       role={profile.role}
+      contacts={contacts}
     />
   )
 }
