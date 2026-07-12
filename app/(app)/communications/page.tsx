@@ -1,6 +1,7 @@
 import { requireStaff } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { buildFeed, type FeedProfile } from "@/lib/comms/feed"
+import { buildCompanyContacts } from "@/lib/comms/contacts"
 import { GlobalCommunicationsClient } from "./communications-client"
 
 export const metadata = { title: "Communications — Hines Homes" }
@@ -20,7 +21,7 @@ export default async function GlobalCommunicationsPage() {
   await requireStaff()
   const supabase = await createSupabaseServerClient()
 
-  const [{ data: recent }, { data: projects }, { data: profiles }] =
+  const [{ data: recent }, { data: projects }, { data: profiles }, contacts] =
     await Promise.all([
       supabase
         .from("communications")
@@ -33,6 +34,9 @@ export default async function GlobalCommunicationsPage() {
         .select("id, name, project_number")
         .order("project_number", { ascending: false }),
       supabase.from("profiles").select("id, full_name, email, role"),
+      // Compose targets: the whole company directory. Address display is
+      // informational — composeMessage re-resolves it server-side.
+      buildCompanyContacts(supabase),
     ])
 
   const feed = buildFeed({
@@ -54,6 +58,7 @@ export default async function GlobalCommunicationsPage() {
         projectName: f.projectId ? (projectNames.get(f.projectId) ?? null) : null,
       }))}
       projects={projects ?? []}
+      contacts={contacts}
     />
   )
 }
