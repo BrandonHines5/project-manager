@@ -288,9 +288,13 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
                   </th>
                 )}
                 <th className="text-left font-medium px-4 py-2.5 w-16">#</th>
-                <th className="text-left font-medium px-4 py-2.5 w-32">Type</th>
+                {/* The KindChip repeats in the drawer; the Title column is what
+                    a phone needs, so Type joins Due/Comments as md-and-up. */}
+                <th className="text-left font-medium px-4 py-2.5 w-32 hidden md:table-cell">
+                  Type
+                </th>
                 <th className="text-left font-medium px-4 py-2.5">Title</th>
-                <th className="text-left font-medium px-4 py-2.5 w-36">Status</th>
+                <th className="text-left font-medium px-4 py-2.5 w-28 md:w-36">Status</th>
                 <th className="text-left font-medium px-4 py-2.5 w-28 hidden md:table-cell">
                   Due
                 </th>
@@ -328,7 +332,7 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
                     <td className="px-4 py-3 font-mono text-xs text-muted tabular-nums">
                       #{d.number}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 hidden md:table-cell">
                       <KindChip kind={d.kind} />
                     </td>
                     <td className="px-4 py-3 font-medium">

@@ -80,7 +80,7 @@ export function TeamClient({
             you share with them — they can change it after signing in.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Select
             value={roleFilter}
             onChange={(e) =>
@@ -93,13 +93,13 @@ export function TeamClient({
             <option value="trade">Trades</option>
             <option value="client">Clients</option>
           </Select>
-          <div className="relative">
+          <div className="relative min-w-0 flex-1 sm:flex-none">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted" />
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search…"
-              className="pl-8 w-56"
+              className="pl-8 w-full sm:w-56"
             />
           </div>
           <Button onClick={() => setInviting(true)}>
@@ -120,8 +120,8 @@ export function TeamClient({
           }
         />
       ) : (
-        <div className="bg-surface border border-border rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="bg-surface border border-border rounded-lg overflow-x-auto">
+          <table className="w-full min-w-[720px] text-sm">
             <thead className="bg-background/60 text-xs uppercase text-muted">
               <tr>
                 <th className="text-left px-4 py-2.5">Name</th>

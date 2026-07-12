@@ -331,7 +331,9 @@ export function FilesClient({ data }: { data: FilesData }) {
                       <FileIconLucide className="h-6 w-6" />
                     </div>
                   )}
-                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent text-white text-[10px] p-1.5 opacity-0 group-hover:opacity-100">
+                  {/* Hover-reveal is meaningless on touch — keep the caption
+                      strip visible on phones. */}
+                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent text-white text-[10px] p-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100">
                     <div className="font-medium truncate">
                       {m.caption ?? m.file_name}
                     </div>

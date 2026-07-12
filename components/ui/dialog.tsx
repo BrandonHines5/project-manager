@@ -144,14 +144,16 @@ export function DialogContent({
         className={cn(
           "bg-surface w-full shadow-2xl border-l border-border sm:border sm:rounded-lg outline-none",
           side === "right"
-            ? "h-full max-w-2xl sm:max-w-3xl sm:h-[90vh] sm:rounded-l-lg sm:rounded-r-lg"
-            : `h-full sm:h-auto sm:max-h-[90vh] sm:my-auto ${sizeClass}`,
-          "flex flex-col overflow-hidden",
+            ? "h-full max-w-2xl sm:max-w-3xl sm:h-[90dvh] sm:rounded-l-lg sm:rounded-r-lg"
+            : `h-full sm:h-auto sm:max-h-[90dvh] sm:my-auto ${sizeClass}`,
+          // Full-screen sheets on phones sit under the iPhone home indicator;
+          // pad it out (inset is 0 in a regular browser tab).
+          "flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] sm:pb-0",
           className
         )}
       >
         <button
-          className="absolute top-3 right-3 z-10 rounded-md p-1.5 text-muted hover:bg-background hover:text-foreground cursor-pointer"
+          className="absolute top-2 right-2 z-10 inline-flex h-9 w-9 items-center justify-center rounded-md text-muted hover:bg-background hover:text-foreground cursor-pointer"
           onClick={() => ctx.setOpen(false)}
           aria-label="Close"
           type="button"
@@ -175,7 +177,7 @@ export function DialogHeader({
   return (
     <div
       className={cn(
-        "px-6 py-4 border-b border-border flex items-start justify-between gap-4",
+        "px-4 sm:px-6 py-4 border-b border-border flex items-start justify-between gap-4",
         className
       )}
     >
@@ -200,7 +202,7 @@ export function DialogBody({
   children: React.ReactNode
 }) {
   return (
-    <div className={cn("px-6 py-5 overflow-y-auto flex-1", className)}>
+    <div className={cn("px-4 sm:px-6 py-5 overflow-y-auto flex-1", className)}>
       {children}
     </div>
   )
@@ -216,7 +218,9 @@ export function DialogFooter({
   return (
     <div
       className={cn(
-        "px-6 py-3 border-t border-border flex items-center justify-end gap-2 bg-background/60",
+        // flex-wrap: button-heavy footers (decision drawer has up to six)
+        // wrap onto extra rows on a phone instead of running off-screen.
+        "px-4 sm:px-6 py-3 border-t border-border flex flex-wrap items-center justify-end gap-2 bg-background/60",
         className
       )}
     >

@@ -813,7 +813,7 @@ export function Walkthrough({
                       value={p.caption}
                       onChange={(e) => updateCaption(p.id, e.target.value)}
                       placeholder="Caption…"
-                      className="h-7 text-xs"
+                      className="h-9 sm:h-7 text-xs"
                     />
                   </div>
                 ))}

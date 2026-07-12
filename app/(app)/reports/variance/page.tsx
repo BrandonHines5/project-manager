@@ -116,7 +116,10 @@ export default async function VarianceReportPage({
               baseline
             </CardTitle>
           </CardHeader>
-          <table className="w-full text-sm">
+          {/* Six date columns can't fit a phone; scroll the table inside the
+              card instead of crushing every cell into multi-line soup. */}
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-sm">
             <thead className="bg-background/60 text-xs uppercase text-muted">
               <tr>
                 <th className="text-left px-4 py-2.5">Project / item</th>
@@ -175,6 +178,7 @@ export default async function VarianceReportPage({
               })}
             </tbody>
           </table>
+          </div>
         </Card>
       )}
     </div>

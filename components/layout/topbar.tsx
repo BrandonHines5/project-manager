@@ -20,6 +20,7 @@ import { GlobalSearch } from "@/components/layout/global-search"
 import { FeedbackButton } from "@/components/feedback/feedback-button"
 import { MobileNav } from "@/components/layout/mobile-nav"
 import { BrandTile } from "@/components/layout/brand-tile"
+import type { SidebarProject } from "@/components/layout/project-list-sidebar"
 import type { UserRole } from "@/lib/auth"
 import { HINES_HOMES, type Brand } from "@/lib/brand"
 
@@ -83,17 +84,22 @@ export function Topbar({
   role,
   unreadCount,
   brand = HINES_HOMES,
+  projects = [],
 }: {
   fullName: string
   email: string
   role: UserRole
   unreadCount: number
   brand?: Brand
+  projects?: SidebarProject[]
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   return (
-    <header className="h-14 shrink-0 bg-sidebar text-sidebar-foreground flex items-center gap-2 px-3 md:px-4">
-      <MobileNav role={role} brand={brand} />
+    // min-h + safe-area padding (instead of a fixed h-14) so the dark bar
+    // extends up under the iPhone status bar in home-screen mode without
+    // the notch overlapping the controls.
+    <header className="min-h-14 pt-[env(safe-area-inset-top)] shrink-0 bg-sidebar text-sidebar-foreground flex items-center gap-2 px-3 md:px-4">
+      <MobileNav role={role} brand={brand} projects={projects} />
       <Link
         href="/projects"
         className="flex items-center gap-2 shrink-0 md:mr-3"

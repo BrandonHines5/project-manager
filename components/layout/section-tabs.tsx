@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { usePathname, useSearchParams } from "next/navigation"
 import { LayoutGrid } from "lucide-react"
@@ -112,6 +112,15 @@ export function SectionTabs({
     setLastProjectId(projectId)
   }
 
+  // The bar holds up to 13 tabs and scrolls horizontally on a phone; keep the
+  // active tab visible so landing on a right-hand section (History, Roles)
+  // doesn't leave its underline off-screen. block:"nearest" stops the page
+  // itself from scrolling vertically.
+  const activeTabRef = useRef<HTMLAnchorElement | null>(null)
+  useEffect(() => {
+    activeTabRef.current?.scrollIntoView({ inline: "nearest", block: "nearest" })
+  }, [path])
+
   // On a job page use that job; on an intentional all-jobs page use none; on
   // any other unscoped page fall back to the remembered job so the section bar
   // keeps its job context.
@@ -148,7 +157,7 @@ export function SectionTabs({
         className="flex items-center gap-1 px-3 md:px-4 overflow-x-auto"
       >
         {inAllScope ? (
-          <span className="mr-1 my-1.5 shrink-0 inline-flex items-center gap-1.5 rounded-full bg-brand-500 text-white px-3 py-1 text-xs font-medium">
+          <span className="mr-1 my-1.5 shrink-0 inline-flex items-center gap-1.5 rounded-full bg-brand-500 text-white px-3 py-1.5 sm:py-1 text-xs font-medium">
             <LayoutGrid className="h-3.5 w-3.5" />
             All jobs
           </span>
@@ -156,7 +165,7 @@ export function SectionTabs({
           <Link
             href={chipHref}
             title="View this section across all jobs"
-            className="mr-1 my-1.5 shrink-0 inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1 text-xs font-medium text-muted hover:text-foreground hover:border-border-strong"
+            className="mr-1 my-1.5 shrink-0 inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 sm:py-1 text-xs font-medium text-muted hover:text-foreground hover:border-border-strong"
           >
             <LayoutGrid className="h-3.5 w-3.5" />
             All jobs
@@ -176,6 +185,7 @@ export function SectionTabs({
             <Link
               key={t.slug}
               href={href}
+              ref={active ? activeTabRef : undefined}
               className={cn(
                 "px-3 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap",
                 active

@@ -652,7 +652,7 @@ export function PoDrawer({
                           )
                         )
                       }}
-                      className="absolute top-1 right-1 rounded-full bg-black/60 text-white p-0.5 opacity-0 group-hover:opacity-100 cursor-pointer"
+                      className="absolute top-1 right-1 rounded-full bg-black/60 text-white p-1.5 sm:p-0.5 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100 cursor-pointer"
                       aria-label="Remove"
                     >
                       <X className="h-3 w-3" />

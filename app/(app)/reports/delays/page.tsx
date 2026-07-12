@@ -279,8 +279,8 @@ export default async function DelayReportPage({
               <thead className="bg-background/60 text-xs uppercase text-muted">
                 <tr>
                   <th className="text-left px-4 py-2.5">Reason</th>
-                  <th className="text-right px-4 py-2.5 w-32">Entries</th>
-                  <th className="text-right px-4 py-2.5 w-32">Days</th>
+                  <th className="text-right px-4 py-2.5 w-20 sm:w-32">Entries</th>
+                  <th className="text-right px-4 py-2.5 w-20 sm:w-32">Days</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -314,9 +314,9 @@ export default async function DelayReportPage({
               <thead className="bg-background/60 text-xs uppercase text-muted">
                 <tr>
                   <th className="text-left px-4 py-2.5">Assigned to</th>
-                  <th className="text-left px-4 py-2.5 w-32">Type</th>
-                  <th className="text-right px-4 py-2.5 w-24">Entries</th>
-                  <th className="text-right px-4 py-2.5 w-24">Days</th>
+                  <th className="text-left px-4 py-2.5 w-24 sm:w-32">Type</th>
+                  <th className="text-right px-4 py-2.5 w-16 sm:w-24">Entries</th>
+                  <th className="text-right px-4 py-2.5 w-16 sm:w-24">Days</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -347,8 +347,8 @@ export default async function DelayReportPage({
               <thead className="bg-background/60 text-xs uppercase text-muted">
                 <tr>
                   <th className="text-left px-4 py-2.5">Project</th>
-                  <th className="text-right px-4 py-2.5 w-32">Entries</th>
-                  <th className="text-right px-4 py-2.5 w-32">Days</th>
+                  <th className="text-right px-4 py-2.5 w-20 sm:w-32">Entries</th>
+                  <th className="text-right px-4 py-2.5 w-20 sm:w-32">Days</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -381,7 +381,10 @@ export default async function DelayReportPage({
             <CardHeader>
               <CardTitle>All entries</CardTitle>
             </CardHeader>
-            <table className="w-full text-sm">
+            {/* Five columns incl. two text ones — scroll inside the card on
+                phones instead of crushing them. */}
+            <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
               <thead className="bg-background/60 text-xs uppercase text-muted">
                 <tr>
                   <th className="text-left px-4 py-2.5 w-32">Logged</th>
@@ -425,6 +428,7 @@ export default async function DelayReportPage({
                 ))}
               </tbody>
             </table>
+            </div>
           </Card>
         </div>
       )}

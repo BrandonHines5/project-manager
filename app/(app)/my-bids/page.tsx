@@ -130,7 +130,7 @@ export default async function MyBidsPage() {
                           : STATUS_LABEL[r.status]}
                       </Badge>
                     </div>
-                    <div className="flex items-center gap-3 mt-1 text-xs text-muted">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1 text-xs text-muted">
                       {project && (
                         <>
                           <span className="font-mono">{project.project_number}</span>

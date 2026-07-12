@@ -5,6 +5,9 @@
   --color-surface: #ffffff;
   --color-foreground: #15263b;
   --color-muted: #6b7888;
+  /* Alias of --color-muted so shadcn-style `text-muted-foreground` classes
+     resolve instead of silently falling back to the default text color. */
+  --color-muted-foreground: #6b7888;
   --color-border: #dde3eb;
   --color-border-strong: #c7d0db;
 
@@ -44,6 +47,18 @@ body {
   font-family: var(--font-sans);
   font-feature-settings: "cv11", "ss01";
   -webkit-font-smoothing: antialiased;
+}
+
+/* iOS Safari zooms the whole page when a focused form control's font-size is
+   under 16px — and never zooms back out. Force 16px on phones for every text
+   control (the !important outranks Tailwind's text-sm/text-xs utilities);
+   desktop keeps each component's own size. */
+@media (max-width: 767px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
 }
 
 /* Scrollbar - quiet look */

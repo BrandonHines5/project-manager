@@ -66,6 +66,9 @@ export default async function AppLayout({
         role={profile.role}
         unreadCount={unreadCount ?? 0}
         brand={brand}
+        // The jobs-list sidebar is desktop-only; the topbar hands the same
+        // list to the mobile drawer so phones can switch jobs too.
+        projects={projects ?? []}
       />
       <SectionTabs
         role={profile.role}
@@ -81,7 +84,9 @@ export default async function AppLayout({
       >
         <main
           id="main-content"
-          className="flex-1 min-w-0 overflow-y-auto"
+          // Bottom safe-area so the last row of content clears the iPhone
+          // home indicator when installed as a home-screen app.
+          className="flex-1 min-w-0 overflow-y-auto pb-[env(safe-area-inset-bottom)]"
         >
           {children}
         </main>
