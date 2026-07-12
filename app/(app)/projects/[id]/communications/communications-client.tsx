@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils"
 import type { FeedItem } from "@/lib/comms/feed"
 import { FeedItemRow } from "@/components/comms/feed-item"
 import {
+  ClientComposeButton,
   ComposeMessageButton,
   type ComposeContact,
 } from "@/components/comms/compose-dialog"
@@ -122,6 +123,7 @@ export function CommunicationsClient({
           {role === "staff" && (
             <ComposeMessageButton contacts={contacts} projectId={projectId} />
           )}
+          {role === "client" && <ClientComposeButton projectId={projectId} />}
         </div>
       </div>
 

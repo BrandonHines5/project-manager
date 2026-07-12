@@ -1,7 +1,7 @@
 import { requireStaff } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { buildFeed, type FeedProfile } from "@/lib/comms/feed"
-import type { ComposeContact } from "@/components/comms/compose-dialog"
+import { buildCompanyContacts } from "@/lib/comms/contacts"
 import { GlobalCommunicationsClient } from "./communications-client"
 
 export const metadata = { title: "Communications — Hines Homes" }
@@ -21,7 +21,7 @@ export default async function GlobalCommunicationsPage() {
   await requireStaff()
   const supabase = await createSupabaseServerClient()
 
-  const [{ data: recent }, { data: projects }, { data: profiles }, { data: companies }] =
+  const [{ data: recent }, { data: projects }, { data: profiles }, contacts] =
     await Promise.all([
       supabase
         .from("communications")
@@ -34,10 +34,9 @@ export default async function GlobalCommunicationsPage() {
         .select("id, name, project_number")
         .order("project_number", { ascending: false }),
       supabase.from("profiles").select("id, full_name, email, role"),
-      supabase
-        .from("companies")
-        .select("id, name, email, phone, phone_secondary, type, trade_category")
-        .order("name"),
+      // Compose targets: the whole company directory. Address display is
+      // informational — composeMessage re-resolves it server-side.
+      buildCompanyContacts(supabase),
     ])
 
   const feed = buildFeed({
@@ -51,17 +50,6 @@ export default async function GlobalCommunicationsPage() {
   })
 
   const projectNames = new Map((projects ?? []).map((p) => [p.id, p.name]))
-
-  // Compose targets: the whole company directory. Address display is
-  // informational — composeMessage re-resolves it server-side.
-  const contacts: ComposeContact[] = (companies ?? []).map((c) => ({
-    id: `company:${c.id}`,
-    name: c.name,
-    detail: c.type === "client" ? "client" : c.trade_category || c.type,
-    email: c.email,
-    phone: c.phone || c.phone_secondary,
-    recipient: { kind: "company", company_id: c.id },
-  }))
 
   return (
     <GlobalCommunicationsClient

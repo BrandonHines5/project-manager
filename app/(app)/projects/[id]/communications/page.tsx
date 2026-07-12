@@ -14,6 +14,7 @@ import {
 } from "@/lib/comms/feed"
 import { createCrmClient } from "@/lib/supabase/crm"
 import type { ComposeContact } from "@/components/comms/compose-dialog"
+import { buildCompanyContacts } from "@/lib/comms/contacts"
 import { CommunicationsClient } from "./communications-client"
 
 export const metadata = { title: "Communications — Hines Homes" }
@@ -163,20 +164,7 @@ export default async function CommunicationsPage({
         recipient: { kind: "project_client", project_id: projectId, slot: c.slot },
       })
     }
-    const { data: companies } = await supabase
-      .from("companies")
-      .select("id, name, email, phone, phone_secondary, type, trade_category")
-      .order("name")
-    for (const c of companies ?? []) {
-      contacts.push({
-        id: `company:${c.id}`,
-        name: c.name,
-        detail: c.type === "client" ? "client" : c.trade_category || c.type,
-        email: c.email,
-        phone: c.phone || c.phone_secondary,
-        recipient: { kind: "company", company_id: c.id },
-      })
-    }
+    contacts.push(...(await buildCompanyContacts(supabase)))
   }
 
   return (

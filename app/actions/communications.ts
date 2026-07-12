@@ -2,10 +2,10 @@
 
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
-import { requireStaff } from "@/lib/auth"
+import { requireSession, requireStaff } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
-import { sendEmail } from "@/lib/email"
+import { appUrl, sendEmail } from "@/lib/email"
 import { sendQuoSms, normalizeE164 } from "@/lib/quo"
 
 const AssignInput = z.object({
@@ -166,7 +166,14 @@ export async function composeMessage(input: {
   body: string
 }): Promise<{ ok: boolean; error?: string }> {
   const profile = await requireStaff()
-  const parsed = ComposeInput.parse(input)
+  const validated = ComposeInput.safeParse(input)
+  if (!validated.success) {
+    return {
+      ok: false,
+      error: validated.error.issues[0]?.message ?? "Invalid input.",
+    }
+  }
+  const parsed = validated.data
   const supabase = await createSupabaseServerClient()
 
   // Resolve the destination + feed attribution from the recipient.
@@ -289,6 +296,119 @@ export async function composeMessage(input: {
   }
 
   if (projectId) revalidatePath(`/projects/${projectId}/communications`)
+  revalidatePath("/communications")
+  return { ok: true }
+}
+
+const ClientComposeInput = z.object({
+  project_id: z.string().uuid(),
+  subject: z.string().max(200).nullish(),
+  body: z.string().min(1, "Write a message first.").max(10_000),
+})
+
+/**
+ * A client starts a message to the team from their project's Communications
+ * tab. No recipient picker — it always goes to staff. The message itself is
+ * the `communications` row (inbound, stamped with the client's profile +
+ * project so both sides' feeds show it under RLS); staff are then fanned-out
+ * an in-app notification + email carrying the content, mirroring how sub bid
+ * submissions and due-date reset requests notify.
+ *
+ * requireSession, not requireStaff — the RLS-scoped project read doubles as
+ * the authorization check (clients only see their own projects' rows).
+ */
+export async function clientComposeMessage(input: {
+  project_id: string
+  subject?: string | null
+  body: string
+}): Promise<{ ok: boolean; error?: string }> {
+  const profile = await requireSession()
+  if (profile.role !== "client") {
+    return { ok: false, error: "Only client accounts can message the team here." }
+  }
+  const validated = ClientComposeInput.safeParse(input)
+  if (!validated.success) {
+    return {
+      ok: false,
+      error: validated.error.issues[0]?.message ?? "Invalid input.",
+    }
+  }
+  const parsed = validated.data
+  const supabase = await createSupabaseServerClient()
+
+  const { data: project, error: pErr } = await supabase
+    .from("projects")
+    .select("id, name")
+    .eq("id", parsed.project_id)
+    .maybeSingle()
+  if (pErr) return { ok: false, error: pErr.message }
+  if (!project) return { ok: false, error: "Project not found." }
+
+  const admin = createSupabaseAdminClient()
+  if (!admin) {
+    return { ok: false, error: "Messaging isn't configured. Try again later." }
+  }
+
+  const clientName = profile.full_name || profile.email || "Client"
+  const subject = parsed.subject?.trim() || null
+  const body = parsed.body.trim()
+
+  // The feed row IS the message — insert it directly (clients have no
+  // communications write policy, so this goes through the admin client after
+  // the RLS-scoped project read above proved membership).
+  const { error: cErr } = await admin.from("communications").insert({
+    channel: "email",
+    direction: "inbound",
+    status: "logged",
+    project_id: project.id,
+    profile_id: profile.id,
+    from_address: profile.email,
+    counterparty_name: clientName,
+    subject,
+    body,
+    source: "app",
+    source_kind: "client_message",
+  })
+  if (cErr) return { ok: false, error: cErr.message }
+
+  // Staff fan-out: in-app notification + email with the content. Best-effort —
+  // the message is already in the feed either way.
+  const link = `/projects/${project.id}/communications`
+  const title = `New message from ${clientName} — ${project.name}`
+  const { data: staff } = await admin
+    .from("profiles")
+    .select("id, email, notifications_enabled")
+    .eq("role", "staff")
+  const recipients = (staff ?? []).filter((s) => s.notifications_enabled)
+  if (recipients.length) {
+    const { error: nErr } = await admin.from("notifications").insert(
+      recipients.map((s) => ({
+        recipient_id: s.id,
+        type: "client_message",
+        title,
+        body: body.length > 200 ? `${body.slice(0, 200)}…` : body,
+        link_url: link,
+      }))
+    )
+    if (nErr) {
+      console.warn("[clientComposeMessage] notifications failed:", nErr.message)
+    }
+    const emails = recipients
+      .map((s) => s.email)
+      .filter((e): e is string => !!e)
+    if (emails.length) {
+      // No `log` on purpose: this staff-internal alert carries the message,
+      // but the feed row inserted above is the single logged copy.
+      await sendEmail({
+        to: emails,
+        replyTo: profile.email ?? undefined,
+        subject: subject ? `${title}: ${subject}` : title,
+        text: `${body}\n\n—\nReply in the app: ${appUrl(link)}`,
+      }).catch((e) => console.warn("[clientComposeMessage] email failed:", e))
+    }
+  }
+
+  revalidatePath(link)
   revalidatePath("/communications")
   return { ok: true }
 }

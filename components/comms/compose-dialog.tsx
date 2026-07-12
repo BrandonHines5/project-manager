@@ -16,7 +16,10 @@ import {
 } from "@/components/ui/dialog"
 import { Field, Input, Select, Textarea } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
-import { composeMessage } from "@/app/actions/communications"
+import {
+  clientComposeMessage,
+  composeMessage,
+} from "@/app/actions/communications"
 
 /**
  * A pickable recipient for the compose dialog. Known contacts carry the
@@ -88,6 +91,13 @@ export function ComposeMessageButton({
     setBody("")
   }
 
+  // Reset on EVERY close path (Cancel, backdrop, Escape, post-send) so a
+  // canceled draft can't be re-sent later to a different recipient unnoticed.
+  function handleOpenChange(next: boolean) {
+    setOpen(next)
+    if (!next) reset()
+  }
+
   function switchChannel(next: "sms" | "email") {
     setChannel(next)
     // Keep the selection when the contact is reachable both ways; otherwise
@@ -123,8 +133,7 @@ export function ComposeMessageButton({
         return
       }
       toast.success(channel === "sms" ? "Text sent" : "Email sent")
-      reset()
-      setOpen(false)
+      handleOpenChange(false)
       router.refresh()
     })
   }
@@ -135,7 +144,7 @@ export function ComposeMessageButton({
         <SquarePen className="h-3.5 w-3.5 mr-1.5" />
         New message
       </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent size="md">
           <DialogHeader>
             <div>
@@ -267,7 +276,7 @@ export function ComposeMessageButton({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setOpen(false)}
+              onClick={() => handleOpenChange(false)}
               disabled={pending}
             >
               Cancel
@@ -278,6 +287,101 @@ export function ComposeMessageButton({
                 : channel === "sms"
                   ? "Send text"
                   : "Send email"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}
+
+/**
+ * The client-portal counterpart: "New message" with no recipient picker — it
+ * always goes to the team. The send lands in this project's feed (visible to
+ * the client under their own RLS read) and staff get notified in-app + email.
+ */
+export function ClientComposeButton({ projectId }: { projectId: string }) {
+  const router = useRouter()
+  const [open, setOpen] = useState(false)
+  const [subject, setSubject] = useState("")
+  const [body, setBody] = useState("")
+  const [pending, startTransition] = useTransition()
+
+  function handleOpenChange(next: boolean) {
+    setOpen(next)
+    if (!next) {
+      setSubject("")
+      setBody("")
+    }
+  }
+
+  function send() {
+    if (!body.trim() || pending) return
+    startTransition(async () => {
+      const result = await clientComposeMessage({
+        project_id: projectId,
+        subject: subject.trim() || null,
+        body: body.trim(),
+      })
+      if (!result.ok) {
+        toast.error(result.error ?? "Failed to send.")
+        return
+      }
+      toast.success("Message sent")
+      handleOpenChange(false)
+      router.refresh()
+    })
+  }
+
+  return (
+    <>
+      <Button size="sm" onClick={() => setOpen(true)}>
+        <SquarePen className="h-3.5 w-3.5 mr-1.5" />
+        New message
+      </Button>
+      <Dialog open={open} onOpenChange={handleOpenChange}>
+        <DialogContent size="md">
+          <DialogHeader>
+            <div>
+              <DialogTitle>Message the team</DialogTitle>
+              <DialogDescription>
+                Goes straight to our team — we&apos;ll get back to you here.
+              </DialogDescription>
+            </div>
+          </DialogHeader>
+          <DialogBody className="space-y-4">
+            <Field label="Subject (optional)" htmlFor="client-compose-subject">
+              <Input
+                id="client-compose-subject"
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                maxLength={200}
+                placeholder="What's this about?"
+              />
+            </Field>
+            <Field label="Message" htmlFor="client-compose-body">
+              <Textarea
+                id="client-compose-body"
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                rows={5}
+                maxLength={10_000}
+                placeholder="Type your message…"
+                autoFocus
+              />
+            </Field>
+          </DialogBody>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleOpenChange(false)}
+              disabled={pending}
+            >
+              Cancel
+            </Button>
+            <Button size="sm" onClick={send} disabled={pending || !body.trim()}>
+              {pending ? "Sending…" : "Send"}
             </Button>
           </DialogFooter>
         </DialogContent>
