@@ -50,6 +50,9 @@ const SECTIONS: Section[] = [
   },
   { label: "Files", slug: "files" },
   { label: "Pricing", slug: "pricing" },
+  // Client invoices (QBO hybrid) — staff manage the QuickBooks link, clients
+  // view & pay. Trades have no business seeing client billing.
+  { label: "Invoices", slug: "invoices", hideForRoles: ["trade"] },
   { label: "Roles", slug: "roles", hideForRoles: ["client", "trade"] },
   { label: "History", slug: "history", hideForRoles: ["client", "trade"] },
 ]

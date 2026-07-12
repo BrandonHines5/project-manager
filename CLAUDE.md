@@ -83,6 +83,15 @@
 - Approved POs roll up as **Committed costs** by cost code on the project Pricing tab — staff with `profiles.financial_access` only, never clients.
 - Numbering RPCs `next_bid_package_number` / `next_po_number` use per-project advisory locks (hash args 1 / 2; decisions use 0). `award_bid` allocates PO numbers under the same lock key as `next_po_number`.
 
+## Client invoices module — model (QBO hybrid)
+
+- **QuickBooks stays the invoicing system of record**: invoices are created in QBO, QBO emails the client + sends reminders + takes payment on Intuit's hosted pay page (and emails the receipt). The app only MIRRORS them into the portal — no invoice creation, no payment processing, no client notifications from our side.
+- Link (0087): `projects.qbo_customer_id` + `qbo_customer_name` snapshot point a job at its QBO Customer. Staff link/change/unlink in the Invoices tab dialog (`linkProjectQboCustomer` purges the project's cached rows then backfills; unlink hard-deletes them — a wrong-customer link must never leave another client's invoices visible).
+- Cache: `qbo_invoices` (unique per realm+QBO id, bare-uuid `project_id` like qbo_po_sync). **Service-role writes only**; staff read everything, clients read `open`/`paid` on their `project_members` jobs, trades nothing. `status`: open | paid (balance 0) | voided | deleted (tombstone for rows QBO no longer returns); "Overdue" is derived in the UI from due_date + balance, not stored.
+- Sync paths in `lib/quickbooks/invoices.ts` (reuses the 0085 OAuth connection): `syncProjectInvoicesFromQbo` full-reconciles one customer (link-time backfill + staff "Sync now"), `syncSingleInvoice` handles one id (webhook). `include=invoiceLink` rides on reads/queries for the hosted pay link — null when the QBO company hasn't enabled online payments (staff see "No pay link", clients see nothing).
+- Webhook `/api/qbo/webhook`: configured in the Intuit dev portal (Invoice + Payment entities, all ops) with `QBO_WEBHOOK_VERIFIER_TOKEN` (HMAC-SHA256 verify). ACKs immediately, processes in `after()`. Payments resolve to invoices via the Payment's LinkedTxn. Deliveries can duplicate/reorder — everything is an idempotent upsert, and the staff in-app notification (`invoice_payment`, all staff) fires only on an observed balance DROP, so replays stay silent. New rows never notify (that's backfill).
+- Settings → QuickBooks has the webhook setup checklist (endpoint URL, entities, verifier-token env var).
+
 ## Subcontractor insurance module — model
 
 - `insurance_documents` (one per ingested COI file) + `insurance_policies` (one per policy parsed off it; enum `insurance_type`: general_liability | workers_comp | auto | umbrella). "Current" policy for a company+type = latest `expiration_date`; older rows are history. Staff-only RLS on both.
@@ -130,4 +139,4 @@
 
 ## Not included
 
-PO payments/bills & lien waivers (QuickBooks/Adaptive.build), client invoicing (QuickBooks), sales, warranty, time clock. If asked for these, push back politely — they're out of scope. (Purchase Orders and Bid Requests themselves ARE in scope — see the module sections above.)
+PO payments/bills & lien waivers (QuickBooks/Adaptive.build), client invoice creation & payment processing (stays in QuickBooks — the app only mirrors invoices + pay links per the Client invoices module above), sales, warranty, time clock. If asked for these, push back politely — they're out of scope. (Purchase Orders and Bid Requests themselves ARE in scope — see the module sections above.)

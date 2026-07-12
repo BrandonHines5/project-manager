@@ -1,4 +1,5 @@
 import { requireStaff } from "@/lib/auth"
+import { appUrl } from "@/lib/email"
 import { qboConfigured } from "@/lib/quickbooks/config"
 import { getQboStatus } from "@/lib/quickbooks/storage"
 import { getQboPushDefaults } from "@/app/actions/quickbooks"
@@ -32,6 +33,8 @@ export default async function QuickBooksSettingsPage({
       pushDefaults={pushDefaults}
       justConnected={params.connected === "1"}
       errorReason={params.error ?? null}
+      webhookUrl={appUrl("/api/qbo/webhook")}
+      webhookConfigured={!!process.env.QBO_WEBHOOK_VERIFIER_TOKEN}
     />
   )
 }
