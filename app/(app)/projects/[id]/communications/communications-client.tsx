@@ -8,6 +8,10 @@ import { EmptyState } from "@/components/ui/empty"
 import { cn } from "@/lib/utils"
 import type { FeedItem } from "@/lib/comms/feed"
 import { FeedItemRow } from "@/components/comms/feed-item"
+import {
+  ComposeMessageButton,
+  type ComposeContact,
+} from "@/components/comms/compose-dialog"
 import type { UserRole } from "@/lib/auth"
 
 const PAGE = 50
@@ -26,10 +30,12 @@ export function CommunicationsClient({
   feed,
   projectId,
   role,
+  contacts,
 }: {
   feed: FeedItem[]
   projectId: string
   role: UserRole
+  contacts: ComposeContact[]
 }) {
   const [kind, setKind] = useState<KindFilter>("all")
   const [query, setQuery] = useState("")
@@ -100,17 +106,22 @@ export function CommunicationsClient({
             </button>
           ))}
         </div>
-        <div className="relative ml-auto w-full sm:w-64">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted" />
-          <Input
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value)
-              setLimit(PAGE)
-            }}
-            placeholder="Search people, messages…"
-            className="pl-8"
-          />
+        <div className="ml-auto flex items-center gap-2 flex-wrap w-full sm:w-auto">
+          <div className="relative flex-1 sm:flex-none sm:w-64">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted" />
+            <Input
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value)
+                setLimit(PAGE)
+              }}
+              placeholder="Search people, messages…"
+              className="pl-8"
+            />
+          </div>
+          {role === "staff" && (
+            <ComposeMessageButton contacts={contacts} projectId={projectId} />
+          )}
         </div>
       </div>
 
