@@ -2347,6 +2347,8 @@ export type Database = {
           project_manager: string | null
           project_number: string
           project_type: Database["public"]["Enums"]["project_type"] | null
+          qbo_customer_id: string | null
+          qbo_customer_name: string | null
           start_date: string | null
           status: Database["public"]["Enums"]["project_status"]
           warranty_end_date: string | null
@@ -2381,6 +2383,8 @@ export type Database = {
           project_manager?: string | null
           project_number: string
           project_type?: Database["public"]["Enums"]["project_type"] | null
+          qbo_customer_id?: string | null
+          qbo_customer_name?: string | null
           start_date?: string | null
           status?: Database["public"]["Enums"]["project_status"]
           warranty_end_date?: string | null
@@ -2415,6 +2419,8 @@ export type Database = {
           project_manager?: string | null
           project_number?: string
           project_type?: Database["public"]["Enums"]["project_type"] | null
+          qbo_customer_id?: string | null
+          qbo_customer_name?: string | null
           start_date?: string | null
           status?: Database["public"]["Enums"]["project_status"]
           warranty_end_date?: string | null
@@ -2609,6 +2615,60 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      qbo_invoices: {
+        Row: {
+          balance: number
+          created_at: string
+          customer_memo: string | null
+          doc_number: string | null
+          due_date: string | null
+          id: string
+          invoice_link: string | null
+          last_synced_at: string
+          project_id: string
+          qbo_invoice_id: string
+          qbo_realm_id: string
+          status: string
+          total: number
+          txn_date: string | null
+          updated_at: string
+        }
+        Insert: {
+          balance?: number
+          created_at?: string
+          customer_memo?: string | null
+          doc_number?: string | null
+          due_date?: string | null
+          id?: string
+          invoice_link?: string | null
+          last_synced_at?: string
+          project_id: string
+          qbo_invoice_id: string
+          qbo_realm_id: string
+          status?: string
+          total?: number
+          txn_date?: string | null
+          updated_at?: string
+        }
+        Update: {
+          balance?: number
+          created_at?: string
+          customer_memo?: string | null
+          doc_number?: string | null
+          due_date?: string | null
+          id?: string
+          invoice_link?: string | null
+          last_synced_at?: string
+          project_id?: string
+          qbo_invoice_id?: string
+          qbo_realm_id?: string
+          status?: string
+          total?: number
+          txn_date?: string | null
+          updated_at?: string
+        }
+        Relationships: []
       }
       qbo_po_sync: {
         Row: {

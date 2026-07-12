@@ -31,12 +31,16 @@ export function QuickBooksSettingsClient({
   pushDefaults,
   justConnected,
   errorReason,
+  webhookUrl,
+  webhookConfigured,
 }: {
   configured: boolean
   status: QboConnectionStatus | null
   pushDefaults: PushDefaults | null
   justConnected: boolean
   errorReason: string | null
+  webhookUrl: string
+  webhookConfigured: boolean
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
@@ -93,8 +97,9 @@ export function QuickBooksSettingsClient({
     <div className="mx-auto max-w-3xl px-4 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">QuickBooks Online</h1>
       <p className="mt-1 text-sm text-muted">
-        Push approved Purchase Orders into QuickBooks Online, where Adaptive imports
-        them so vendor bills can be matched against the PO amount.
+        Push approved Purchase Orders into QuickBooks Online (where Adaptive imports
+        them so vendor bills can be matched against the PO amount), and mirror each
+        job&rsquo;s QuickBooks invoices into the client portal.
       </p>
 
       {justConnected && (
@@ -268,6 +273,52 @@ export function QuickBooksSettingsClient({
               {defaultsMsg}
             </div>
           )}
+        </section>
+      )}
+
+      {/* Client invoices — webhook setup for the invoice sync */}
+      {configured && status && (
+        <section className="mt-6 rounded-lg border border-border bg-surface p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="font-medium text-sm">Client invoices — webhook</div>
+            <span
+              className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                webhookConfigured
+                  ? "bg-brand-500/15 text-brand-700"
+                  : "bg-amber-100 text-amber-900"
+              }`}
+            >
+              {webhookConfigured ? "Verifier token set" : "Verifier token missing"}
+            </span>
+          </div>
+          <p className="mt-1 text-sm text-muted">
+            Each job&rsquo;s Invoices tab mirrors the invoices of its linked QuickBooks
+            customer. The webhook keeps that mirror current (and pings the team when a
+            payment lands) — without it, invoices only update on a manual
+            &ldquo;Sync now&rdquo;.
+          </p>
+          <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-sm text-muted">
+            <li>
+              In the Intuit developer portal, open this app&rsquo;s{" "}
+              <span className="text-foreground">Webhooks</span> section and set the
+              endpoint to{" "}
+              <code className="rounded bg-background px-1.5 py-0.5 text-xs text-foreground">
+                {webhookUrl}
+              </code>
+            </li>
+            <li>
+              Subscribe to the <span className="text-foreground">Invoice</span> and{" "}
+              <span className="text-foreground">Payment</span> entities (all
+              operations).
+            </li>
+            <li>
+              Copy the portal&rsquo;s Verifier Token into the{" "}
+              <code className="rounded bg-background px-1.5 py-0.5 text-xs text-foreground">
+                QBO_WEBHOOK_VERIFIER_TOKEN
+              </code>{" "}
+              environment variable in Vercel, then redeploy.
+            </li>
+          </ol>
         </section>
       )}
 
