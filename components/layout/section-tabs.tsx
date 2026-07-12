@@ -24,13 +24,13 @@ type Section = {
 }
 
 const SECTIONS: Section[] = [
+  { label: "Onsite", slug: "onsite", hideForRoles: ["client", "trade"] },
   {
     label: "Schedule",
     slug: "schedule",
     hideForRoles: ["client"],
     aggregateHref: AGGREGATE_ROUTE_BY_SLUG["schedule"],
   },
-  { label: "Onsite", slug: "onsite", hideForRoles: ["client", "trade"] },
   {
     label: "Job Logs",
     slug: "daily-logs",
@@ -41,8 +41,6 @@ const SECTIONS: Section[] = [
     slug: "decisions",
     aggregateHref: AGGREGATE_ROUTE_BY_SLUG["decisions"],
   },
-  { label: "Bids", slug: "bids", hideForRoles: ["client", "trade"] },
-  { label: "POs", slug: "purchase-orders", hideForRoles: ["client", "trade"] },
   // Visible to every role on a job — RLS filters the feed to each viewer's
   // own conversations. The global hub, though, is a staff page.
   {
@@ -51,17 +49,19 @@ const SECTIONS: Section[] = [
     aggregateHref: "/communications",
     aggregateRoles: ["staff"],
   },
-  { label: "Files", slug: "files" },
-  { label: "Pricing", slug: "pricing" },
+  { label: "Bids", slug: "bids", hideForRoles: ["client", "trade"] },
+  { label: "POs", slug: "purchase-orders", hideForRoles: ["client", "trade"] },
   {
     label: "Budget",
     slug: "budget",
     hideForRoles: ["client", "trade"],
     requiresFinancialAccess: true,
   },
+  { label: "Pricing", slug: "pricing" },
   // Client invoices (QBO hybrid) — staff manage the QuickBooks link, clients
   // view & pay. Trades have no business seeing client billing.
   { label: "Invoices", slug: "invoices", hideForRoles: ["trade"] },
+  { label: "Files", slug: "files" },
   { label: "Roles", slug: "roles", hideForRoles: ["client", "trade"] },
   { label: "History", slug: "history", hideForRoles: ["client", "trade"] },
 ]
