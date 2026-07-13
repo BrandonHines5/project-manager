@@ -63,8 +63,16 @@ export default async function DecisionsPage({
       .select("*, decisions!inner(project_id)")
       .eq("decisions.project_id", projectId)
       .order("created_at", { ascending: true }),
-    supabase.from("profiles").select("id, full_name, email, role"),
-    supabase.from("companies").select("id, name, type, trade_category"),
+    // Ordered so the assignee pickers (decision + follow-up drawers) render
+    // alphabetically — every other page orders these the same way.
+    supabase
+      .from("profiles")
+      .select("id, full_name, email, role")
+      .order("full_name", { ascending: true }),
+    supabase
+      .from("companies")
+      .select("id, name, type, trade_category")
+      .order("name", { ascending: true }),
     // Cost line items are RLS-restricted to staff. Clients get an empty
     // array here, which matches what the drawer should show them anyway.
     supabase

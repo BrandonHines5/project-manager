@@ -1045,15 +1045,22 @@ function AssignmentsEditor({
 
   // Hide already-staged entries from the pickers (same as PredecessorsEditor's
   // `available`) so re-picking the same person/company isn't a no-op surprise.
-  const availableProfiles = profiles.filter(
-    (p) => !assignments.some((a) => a.profile_id === p.id)
-  )
-  const availableCompanies = companies.filter(
-    (c) => c.type !== "client" && !assignments.some((a) => a.company_id === c.id)
-  )
-  const availableRoles = roles.filter(
-    (r) => !assignments.some((a) => a.role_id === r.id)
-  )
+  // Each list is sorted alphabetically so the pickers are easy to scan — the
+  // roles catalog in particular arrives in manual `position` order, not A–Z.
+  // filter()/[...spread] return fresh arrays, so the sort never mutates props.
+  const availableProfiles = profiles
+    .filter((p) => !assignments.some((a) => a.profile_id === p.id))
+    .sort((a, b) =>
+      (a.full_name || a.email || "").localeCompare(b.full_name || b.email || "")
+    )
+  const availableCompanies = companies
+    .filter(
+      (c) => c.type !== "client" && !assignments.some((a) => a.company_id === c.id)
+    )
+    .sort((a, b) => a.name.localeCompare(b.name))
+  const availableRoles = roles
+    .filter((r) => !assignments.some((a) => a.role_id === r.id))
+    .sort((a, b) => a.name.localeCompare(b.name))
 
   return (
     <div>
