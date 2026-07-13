@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { ChevronDown, ChevronRight, Pencil, Plus, Trash2, Users } from "lucide-react"
+import { Pencil, Plus, Trash2, Users } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 import { Field, Input, Select } from "@/components/ui/input"
@@ -22,6 +22,7 @@ import {
   updateRole,
   deleteRole,
   setProjectRole,
+  saveRoleAssignment,
 } from "@/app/actions/roles"
 
 type RoleKind = "staff" | "company" | "any"
@@ -50,6 +51,7 @@ type ScheduleItem = {
   kind: string
   milestone: string | null
 }
+type RoleAssignment = { role_id: string; schedule_item_id: string }
 
 function normalizeRoleKind(kind: string): RoleKind {
   return (["staff", "company", "any"].includes(kind) ? kind : "any") as RoleKind
@@ -64,6 +66,7 @@ export function RolesClient({
   profiles,
   companies,
   scheduleItems,
+  roleAssignments,
 }: {
   projectId: string
   isTemplate: boolean
@@ -73,13 +76,32 @@ export function RolesClient({
   profiles: Profile[]
   companies: Company[]
   scheduleItems: ScheduleItem[]
+  roleAssignments: RoleAssignment[]
 }) {
-  const [editing, setEditing] = useState<Role | null>(null)
+  const router = useRouter()
+  // The role dialog handles both a freshly-added role (isNew) and Edit; it
+  // fills the role on this job and assigns it to work / to-do items.
+  const [dialog, setDialog] = useState<{ role: Role; isNew: boolean } | null>(
+    null
+  )
+
   const memberByRole = useMemo(() => {
     const m = new Map<string, Member>()
     for (const row of members) m.set(row.role_id, row)
     return m
   }, [members])
+
+  // role_id -> the schedule items it's currently assigned to on this job, so
+  // the dialog opens with those pre-checked.
+  const itemsByRole = useMemo(() => {
+    const m = new Map<string, string[]>()
+    for (const a of roleAssignments) {
+      const arr = m.get(a.role_id)
+      if (arr) arr.push(a.schedule_item_id)
+      else m.set(a.role_id, [a.schedule_item_id])
+    }
+    return m
+  }, [roleAssignments])
 
   // Group by kind — staff first, then subs/vendors, then "anyone" — and
   // alphabetize within each group so a long role list is scannable.
@@ -96,6 +118,13 @@ export function RolesClient({
       ] as const
     ).filter((g) => g.roles.length > 0)
   }, [roles])
+
+  // Refresh on every close so the list reflects a save/delete — and so a role
+  // that was just added shows up even if the dialog is cancelled.
+  function closeDialog() {
+    setDialog(null)
+    router.refresh()
+  }
 
   return (
     <div className="max-w-3xl mx-auto px-4 md:px-6 py-5">
@@ -144,10 +173,11 @@ export function RolesClient({
                         projectId={projectId}
                         role={role}
                         member={memberByRole.get(role.id) ?? null}
+                        itemCount={itemsByRole.get(role.id)?.length ?? 0}
                         profiles={profiles}
                         companies={companies}
                         projectManager={projectManager}
-                        onEdit={() => setEditing(role)}
+                        onEdit={() => setDialog({ role, isNew: false })}
                       />
                     ))}
                   </ul>
@@ -158,15 +188,21 @@ export function RolesClient({
         </CardBody>
       </Card>
 
-      <AddRoleForm
-        projectId={projectId}
-        profiles={profiles}
-        companies={companies}
-        scheduleItems={scheduleItems}
-      />
+      <AddRoleForm onAdded={(role) => setDialog({ role, isNew: true })} />
 
-      {editing && (
-        <EditRoleDialog role={editing} onClose={() => setEditing(null)} />
+      {dialog && (
+        <RoleDialog
+          key={dialog.role.id}
+          role={dialog.role}
+          isNew={dialog.isNew}
+          projectId={projectId}
+          member={memberByRole.get(dialog.role.id) ?? null}
+          assignedItemIds={itemsByRole.get(dialog.role.id) ?? []}
+          profiles={profiles}
+          companies={companies}
+          scheduleItems={scheduleItems}
+          onClose={closeDialog}
+        />
       )}
     </div>
   )
@@ -176,6 +212,7 @@ function RoleRow({
   projectId,
   role,
   member,
+  itemCount,
   profiles,
   companies,
   projectManager,
@@ -184,6 +221,7 @@ function RoleRow({
   projectId: string
   role: Role
   member: Member | null
+  itemCount: number
   profiles: Profile[]
   companies: Company[]
   projectManager: string | null
@@ -194,6 +232,8 @@ function RoleRow({
   const kind = normalizeRoleKind(role.kind)
 
   // People = non-client profiles; companies = already filtered to non-client.
+  // Both alphabetical (roles arrive in position order elsewhere; these lists
+  // come pre-sorted from the query but we keep the render stable).
   const people = useMemo(
     () => profiles.filter((p) => p.role !== "client"),
     [profiles]
@@ -240,6 +280,11 @@ function RoleRow({
     <li className="px-4 py-3 flex items-center gap-3 flex-wrap sm:flex-nowrap">
       <div className="min-w-0 flex-1">
         <span className="font-medium">{role.name}</span>
+        {itemCount > 0 && (
+          <span className="ml-2 text-xs text-muted">
+            {itemCount} item{itemCount === 1 ? "" : "s"}
+          </span>
+        )}
         {pmHint && <p className="text-xs text-muted mt-0.5">{pmHint}</p>}
       </div>
       <div className="w-full sm:w-64">
@@ -287,7 +332,7 @@ function RoleRow({
         type="button"
         onClick={onEdit}
         className="text-muted hover:text-foreground p-1.5 cursor-pointer shrink-0"
-        title="Edit role"
+        title="Edit role / assign to schedule items"
       >
         <Pencil className="h-4 w-4" />
       </button>
@@ -295,75 +340,10 @@ function RoleRow({
   )
 }
 
-function AddRoleForm({
-  projectId,
-  profiles,
-  companies,
-  scheduleItems,
-}: {
-  projectId: string
-  profiles: Profile[]
-  companies: Company[]
-  scheduleItems: ScheduleItem[]
-}) {
-  const router = useRouter()
+function AddRoleForm({ onAdded }: { onAdded: (role: Role) => void }) {
   const [pending, startTransition] = useTransition()
   const [name, setName] = useState("")
   const [kind, setKind] = useState<RoleKind>("any")
-  // Optional "assign on this job" section — collapsed by default so the quick
-  // add stays compact.
-  const [expanded, setExpanded] = useState(false)
-  // "" | "p:<id>" | "c:<id>" — who fills the role on THIS job (optional).
-  const [target, setTarget] = useState("")
-  // Schedule items (this job) the new role should be assigned to (optional).
-  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
-  const [itemFilter, setItemFilter] = useState("")
-
-  // People = non-client profiles; companies already exclude clients. Both
-  // groups always alphabetical; `kind` only orders which group comes first.
-  const people = useMemo(
-    () =>
-      profiles
-        .filter((p) => p.role !== "client")
-        .sort((a, b) =>
-          (a.full_name || a.email || "").localeCompare(b.full_name || b.email || "")
-        ),
-    [profiles]
-  )
-  const sortedCompanies = useMemo(
-    () => [...companies].sort((a, b) => a.name.localeCompare(b.name)),
-    [companies]
-  )
-  const peopleFirst = kind !== "company"
-
-  const sortedItems = useMemo(
-    () => [...scheduleItems].sort((a, b) => a.title.localeCompare(b.title)),
-    [scheduleItems]
-  )
-  const filteredItems = useMemo(() => {
-    const q = itemFilter.trim().toLowerCase()
-    return q
-      ? sortedItems.filter((i) => i.title.toLowerCase().includes(q))
-      : sortedItems
-  }, [sortedItems, itemFilter])
-
-  function toggleItem(id: string) {
-    setSelectedItems((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  function reset() {
-    setName("")
-    setKind("any")
-    setTarget("")
-    setSelectedItems(new Set())
-    setItemFilter("")
-    setExpanded(false)
-  }
 
   function submit() {
     const trimmed = name.trim()
@@ -371,44 +351,24 @@ function AddRoleForm({
       toast.error("Role name is required")
       return
     }
-    const ids = Array.from(selectedItems)
     startTransition(async () => {
-      const res = await createRole({
-        name: trimmed,
-        kind,
-        project_id: projectId,
-        target,
-        schedule_item_ids: ids,
-      })
+      const res = await createRole({ name: trimmed, kind })
       if (!res.ok) {
         toast.error(res.error)
         return
       }
-      // Report both what landed and what didn't, so a nonzero skip (e.g. an
-      // item deleted between page load and submit) is never silently dropped.
-      const bits: string[] = []
-      if (res.assignedItems > 0) {
-        bits.push(
-          `assigned to ${res.assignedItems} item${res.assignedItems === 1 ? "" : "s"}`
-        )
-      }
-      if (res.skippedItems > 0) {
-        bits.push(
-          `${res.skippedItems} item${res.skippedItems === 1 ? "" : "s"} skipped`
-        )
-      }
-      const suffix = bits.length > 0 ? ` (${bits.join(", ")})` : ""
-      if (res.warning) {
-        toast.warning(`${res.warning}${suffix}`)
-      } else {
-        toast.success(`Added role "${res.role.name}"${suffix}`)
-      }
-      reset()
-      router.refresh()
+      setName("")
+      setKind("any")
+      // Open the assignment dialog for the just-added role so the assignee and
+      // its work / to-do items can be set right away.
+      onAdded({
+        id: res.role.id,
+        name: res.role.name,
+        kind: res.role.kind,
+        position: res.role.position,
+      })
     })
   }
-
-  const selectedCount = selectedItems.size
 
   return (
     <div className="mt-4">
@@ -444,41 +404,197 @@ function AddRoleForm({
         </Button>
       </div>
       <p className="text-xs text-muted mt-1">
-        Roles are shared across all projects and templates. &ldquo;Usually
-        filled by&rdquo; just sorts the assignee list — you can still pick
-        anyone.
+        Roles are shared across all projects and templates. After you add one, a
+        box opens to assign it to a person or sub and to any work or to-do
+        items. &ldquo;Usually filled by&rdquo; just sorts the assignee list.
       </p>
+    </div>
+  )
+}
 
-      {/* Optional: fill the role and assign it to work now, in the same step. */}
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-brand-600 hover:text-brand-700 cursor-pointer"
-        aria-expanded={expanded}
-      >
-        {expanded ? (
-          <ChevronDown className="h-4 w-4" />
-        ) : (
-          <ChevronRight className="h-4 w-4" />
-        )}
-        Assign on this job now (optional)
-        {!expanded && (target !== "" || selectedCount > 0) && (
-          <span className="ml-1 rounded-full bg-brand-100 text-brand-700 text-[11px] px-1.5 py-0.5">
-            {selectedCount > 0
-              ? `${target !== "" ? "1 · " : ""}${selectedCount} item${selectedCount === 1 ? "" : "s"}`
-              : "assignee set"}
-          </span>
-        )}
-      </button>
+/**
+ * One dialog for both the just-added role (isNew) and Edit. It renames /
+ * re-kinds the role, fills it on this job, and reconciles which work / to-do
+ * items it's assigned to — all persisted on Save via updateRole +
+ * saveRoleAssignment.
+ */
+function RoleDialog({
+  role,
+  isNew,
+  projectId,
+  member,
+  assignedItemIds,
+  profiles,
+  companies,
+  scheduleItems,
+  onClose,
+}: {
+  role: Role
+  isNew: boolean
+  projectId: string
+  member: Member | null
+  assignedItemIds: string[]
+  profiles: Profile[]
+  companies: Company[]
+  scheduleItems: ScheduleItem[]
+  onClose: () => void
+}) {
+  const [pending, startTransition] = useTransition()
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [name, setName] = useState(role.name)
+  const [kind, setKind] = useState<RoleKind>(normalizeRoleKind(role.kind))
+  const [target, setTarget] = useState(
+    member?.profile_id
+      ? `p:${member.profile_id}`
+      : member?.company_id
+        ? `c:${member.company_id}`
+        : ""
+  )
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(
+    new Set(assignedItemIds)
+  )
+  const [itemFilter, setItemFilter] = useState("")
 
-      {expanded && (
-        <div className="mt-2 rounded-md border border-border bg-background/40 p-3 space-y-3">
+  // People = non-client profiles; companies already exclude clients. Both
+  // alphabetical; `kind` only orders which group comes first.
+  const people = useMemo(
+    () =>
+      profiles
+        .filter((p) => p.role !== "client")
+        .sort((a, b) =>
+          (a.full_name || a.email || "").localeCompare(
+            b.full_name || b.email || ""
+          )
+        ),
+    [profiles]
+  )
+  const sortedCompanies = useMemo(
+    () => [...companies].sort((a, b) => a.name.localeCompare(b.name)),
+    [companies]
+  )
+  const peopleFirst = kind !== "company"
+
+  const sortedItems = useMemo(
+    () => [...scheduleItems].sort((a, b) => a.title.localeCompare(b.title)),
+    [scheduleItems]
+  )
+  const filteredItems = useMemo(() => {
+    const q = itemFilter.trim().toLowerCase()
+    return q
+      ? sortedItems.filter((i) => i.title.toLowerCase().includes(q))
+      : sortedItems
+  }, [sortedItems, itemFilter])
+
+  const selectedCount = selectedItems.size
+
+  function toggleItem(id: string) {
+    setSelectedItems((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function save() {
+    const trimmed = name.trim()
+    if (!trimmed) {
+      toast.error("Role name is required")
+      return
+    }
+    const ids = Array.from(selectedItems)
+    startTransition(async () => {
+      // Only touch the org-wide catalog row when the name/kind actually
+      // changed — avoids a needless write (and revalidation) on every save.
+      if (trimmed !== role.name || kind !== normalizeRoleKind(role.kind)) {
+        const up = await updateRole({ id: role.id, name: trimmed, kind })
+        if (!up.ok) {
+          toast.error(up.error)
+          return
+        }
+      }
+      const res = await saveRoleAssignment({
+        project_id: projectId,
+        role_id: role.id,
+        target,
+        schedule_item_ids: ids,
+      })
+      if (!res.ok) {
+        toast.error(res.error)
+        return
+      }
+      const bits: string[] = []
+      if (res.added > 0) bits.push(`${res.added} added`)
+      if (res.removed > 0) bits.push(`${res.removed} removed`)
+      if (res.skipped > 0) bits.push(`${res.skipped} skipped`)
+      const suffix = bits.length > 0 ? ` (${bits.join(", ")})` : ""
+      toast.success(`${isNew ? `Added role "${trimmed}"` : "Saved"}${suffix}`)
+      onClose()
+    })
+  }
+
+  function remove() {
+    startTransition(async () => {
+      const res = await deleteRole({ id: role.id })
+      if (!res.ok) {
+        toast.error(res.error)
+        return
+      }
+      toast.success(`Deleted role "${role.name}"`)
+      onClose()
+    })
+  }
+
+  return (
+    <Dialog open onOpenChange={(v) => !v && !pending && onClose()}>
+      <DialogContent size="md">
+        <DialogHeader>
+          <div>
+            <DialogTitle>{isNew ? "Assign role" : "Edit role"}</DialogTitle>
+            <DialogDescription>
+              {isNew ? (
+                <>
+                  &ldquo;{role.name}&rdquo; was added. Choose who fills it on
+                  this job and which work or to-do items it covers — or leave it
+                  and set this later.
+                </>
+              ) : (
+                <>
+                  Set who fills this role on this job and which work or to-do
+                  items it&apos;s assigned to. Renaming changes the role
+                  everywhere it&apos;s used, across all projects and templates.
+                </>
+              )}
+            </DialogDescription>
+          </div>
+        </DialogHeader>
+        <DialogBody className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Role name">
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                autoFocus={!isNew}
+              />
+            </Field>
+            <Field label="Usually filled by">
+              <Select
+                value={kind}
+                onChange={(e) => setKind(e.target.value as RoleKind)}
+              >
+                <option value="any">Anyone</option>
+                <option value="staff">Team</option>
+                <option value="company">Sub / vendor</option>
+              </Select>
+            </Field>
+          </div>
+
           <Field
             label="Assign to (this job)"
-            hint="Maps the role to a person or sub/vendor for this job — the same mapping you can change any time in the list above."
+            hint="Maps the role to a person or sub/vendor for this job."
           >
             <Select value={target} onChange={(e) => setTarget(e.target.value)}>
-              <option value="">— Leave unassigned —</option>
+              <option value="">— Unassigned —</option>
               {(peopleFirst
                 ? ([
                     ["people", people],
@@ -516,7 +632,7 @@ function AddRoleForm({
           <div>
             <div className="flex items-center justify-between gap-2 mb-1">
               <span className="text-xs font-medium text-muted uppercase tracking-wide">
-                Apply to schedule items
+                Assign to work / to-do items
               </span>
               {sortedItems.length > 0 && (
                 <div className="flex items-center gap-2 text-xs">
@@ -528,8 +644,8 @@ function AddRoleForm({
                     className="text-brand-600 hover:text-brand-700 cursor-pointer"
                     onClick={() =>
                       // Union the currently-shown (filtered) items into the
-                      // selection so "Select all" respects an active filter and
-                      // never drops items already checked.
+                      // selection so this respects an active filter and never
+                      // drops items already checked.
                       setSelectedItems(
                         (prev) =>
                           new Set([...prev, ...filteredItems.map((i) => i.id)])
@@ -602,82 +718,7 @@ function AddRoleForm({
               fills the role on this job.
             </p>
           </div>
-        </div>
-      )}
-    </div>
-  )
-}
 
-function EditRoleDialog({
-  role,
-  onClose,
-}: {
-  role: Role
-  onClose: () => void
-}) {
-  const router = useRouter()
-  const [pending, startTransition] = useTransition()
-  const [confirmingDelete, setConfirmingDelete] = useState(false)
-  const [name, setName] = useState(role.name)
-  const [kind, setKind] = useState<RoleKind>(
-    (["staff", "company", "any"].includes(role.kind)
-      ? role.kind
-      : "any") as RoleKind
-  )
-
-  function save() {
-    const trimmed = name.trim()
-    if (!trimmed) {
-      toast.error("Role name is required")
-      return
-    }
-    startTransition(async () => {
-      const res = await updateRole({ id: role.id, name: trimmed, kind })
-      if (!res.ok) {
-        toast.error(res.error)
-        return
-      }
-      router.refresh()
-      onClose()
-    })
-  }
-
-  function remove() {
-    startTransition(async () => {
-      const res = await deleteRole({ id: role.id })
-      if (!res.ok) {
-        toast.error(res.error)
-        return
-      }
-      toast.success(`Deleted role "${role.name}"`)
-      router.refresh()
-      onClose()
-    })
-  }
-
-  return (
-    <Dialog open onOpenChange={(v) => !v && !pending && onClose()}>
-      <DialogContent size="sm">
-        <DialogHeader>
-          <div>
-            <DialogTitle>Edit role</DialogTitle>
-            <DialogDescription>
-              Renaming changes this role everywhere it&apos;s used, across all
-              projects and templates.
-            </DialogDescription>
-          </div>
-        </DialogHeader>
-        <DialogBody className="space-y-3">
-          <Field label="Role name">
-            <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
-          </Field>
-          <Field label="Usually filled by">
-            <Select value={kind} onChange={(e) => setKind(e.target.value as RoleKind)}>
-              <option value="any">Anyone</option>
-              <option value="staff">Team</option>
-              <option value="company">Sub / vendor</option>
-            </Select>
-          </Field>
           {confirmingDelete && (
             <div className="rounded-md border border-danger/40 bg-danger/5 p-3 text-sm">
               <p className="font-medium text-danger">Delete this role?</p>
@@ -700,7 +741,12 @@ function EditRoleDialog({
               >
                 Cancel
               </Button>
-              <Button type="button" variant="danger" onClick={remove} disabled={pending}>
+              <Button
+                type="button"
+                variant="danger"
+                onClick={remove}
+                disabled={pending}
+              >
                 {pending ? "Deleting…" : "Delete role"}
               </Button>
             </>
@@ -715,8 +761,13 @@ function EditRoleDialog({
               >
                 <Trash2 className="h-4 w-4" /> Delete
               </Button>
-              <Button type="button" variant="ghost" onClick={onClose} disabled={pending}>
-                Cancel
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={onClose}
+                disabled={pending}
+              >
+                {isNew ? "Skip" : "Cancel"}
               </Button>
               <Button type="button" onClick={save} disabled={pending}>
                 {pending ? "Saving…" : "Save"}

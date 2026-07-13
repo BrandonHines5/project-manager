@@ -22,19 +22,6 @@ const RoleKind = z.enum(["staff", "company", "any"])
 const CreateRoleInput = z.object({
   name: z.string().trim().min(1, "Name is required").max(80),
   kind: RoleKind.default("any"),
-  // Optional per-project assignment done in the SAME step as the catalog add
-  // (the Roles tab "Add a role" form). All three below are ignored unless
-  // project_id is supplied; the org-wide catalog row is created either way.
-  project_id: z.string().uuid().optional(),
-  // "" = leave the role unfilled on this job; "p:<uuid>" a profile;
-  // "c:<uuid>" a company (sub/vendor). Mirrors setProjectRole's target.
-  target: z
-    .string()
-    .regex(/^$|^[pc]:[0-9a-fA-F-]{36}$/, "Invalid assignee")
-    .default(""),
-  // Schedule items (this project) the new role should be assigned to right
-  // away. Each becomes a role-based schedule_assignments row.
-  schedule_item_ids: z.array(z.string().uuid()).max(1000).default([]),
 })
 
 /**
@@ -42,31 +29,18 @@ const CreateRoleInput = z.object({
  * uq_roles_name_lower) — a duplicate returns a friendly error rather than the
  * raw constraint message. New roles sort after the existing ones.
  *
- * When called from a project (project_id set), the same call optionally maps
- * the new role to a person/company on that job (project_role_members) and
- * assigns it to a set of schedule items (role-based schedule_assignments), so
- * staff can define a role AND wire it up in one action. The catalog insert is
- * the only hard failure; a post-create assignment hiccup returns ok with a
- * `warning` (the role still exists and can be assigned from the row UI).
+ * This only creates the org-wide catalog row. Filling the role on a job and
+ * assigning it to schedule items happens right after in the role dialog via
+ * `saveRoleAssignment` (the "Add a role" flow opens that dialog on success).
  */
 export async function createRole(
   input: z.input<typeof CreateRoleInput>
-): Promise<
-  | {
-      ok: true
-      role: Tables<"roles">
-      assignedItems: number
-      skippedItems: number
-      warning?: string
-    }
-  | { ok: false; error: string }
-> {
-  const profile = await requireStaff()
+): Promise<{ ok: true; role: Tables<"roles"> } | { ok: false; error: string }> {
+  await requireStaff()
   const parsed = CreateRoleInput.safeParse(input)
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid role." }
   }
-  const { name, kind, project_id, target, schedule_item_ids } = parsed.data
   const supabase = await createSupabaseServerClient()
 
   // Position new roles at the end (max + 1). A small catalog, so a quick
@@ -79,101 +53,19 @@ export async function createRole(
     .maybeSingle()
   const nextPos = (last?.position ?? -1) + 1
 
-  const { data: role, error } = await supabase
+  const { data, error } = await supabase
     .from("roles")
-    .insert({ name, kind, position: nextPos })
+    .insert({ name: parsed.data.name, kind: parsed.data.kind, position: nextPos })
     .select("*")
     .single()
   if (error) {
     if (error.code === "23505") {
-      return { ok: false, error: `A role named "${name}" already exists.` }
+      return { ok: false, error: `A role named "${parsed.data.name}" already exists.` }
     }
     return { ok: false, error: error.message }
   }
-
-  let assignedItems = 0
-  let skippedItems = 0
-  let warning: string | undefined
-
-  if (project_id) {
-    // The two writes below are independent — filling the role and assigning it
-    // to work don't depend on each other — so each runs and reports on its own,
-    // and any failures collect into a single warning rather than short-
-    // circuiting the rest.
-    const warnings: string[] = []
-
-    // 1. Fill the role on this job (project_role_members) if an assignee was
-    //    chosen. Same shape as setProjectRole's upsert.
-    if (target !== "") {
-      const isProfile = target.startsWith("p:")
-      const id = target.slice(2)
-      const { error: memberErr } = await supabase
-        .from("project_role_members")
-        .upsert(
-          {
-            project_id,
-            role_id: role.id,
-            profile_id: isProfile ? id : null,
-            company_id: isProfile ? null : id,
-            updated_by: profile.id,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "project_id,role_id" }
-        )
-      if (memberErr) {
-        warnings.push(`the assignee couldn't be set (${memberErr.message})`)
-      }
-    }
-
-    // 2. Assign the role to the chosen schedule items. Scope to this project
-    //    so a forged id can't touch another job's rows (mirrors the bulk
-    //    assign action). Nothing to dedupe against — the role is brand new.
-    //    skippedItems always reflects requested-minus-assigned, so stale ids
-    //    (deleted between page load and submit) are reported, not lost.
-    if (schedule_item_ids.length > 0) {
-      const { data: items, error: itemsErr } = await supabase
-        .from("schedule_items")
-        .select("id")
-        .in("id", schedule_item_ids)
-        .eq("project_id", project_id)
-      if (itemsErr) {
-        warnings.push(`schedule items couldn't be assigned (${itemsErr.message})`)
-      } else {
-        const validIds = (items ?? []).map((i) => i.id)
-        if (validIds.length > 0) {
-          const rows = validIds.map((sid) => ({
-            schedule_item_id: sid,
-            profile_id: null,
-            company_id: null,
-            role_id: role.id,
-          }))
-          const { data: inserted, error: insErr } = await supabase
-            .from("schedule_assignments")
-            .insert(rows)
-            .select("schedule_item_id")
-          if (insErr) {
-            warnings.push(`schedule items couldn't be assigned (${insErr.message})`)
-          } else {
-            assignedItems = (inserted ?? []).length
-          }
-        }
-      }
-      skippedItems = schedule_item_ids.length - assignedItems
-    }
-
-    if (warnings.length > 0) {
-      warning = `Role created, but ${warnings.join("; ")}.`
-    }
-
-    // The resolved assignee/role shows up across the schedule and (for trades)
-    // My Assignments, so refresh those alongside the Roles tab.
-    revalidatePath(`/projects/${project_id}/roles`)
-    revalidatePath(`/projects/${project_id}/schedule`)
-    revalidatePath("/my-assignments")
-  }
-
   revalidatePath("/projects", "layout")
-  return { ok: true, role, assignedItems, skippedItems, warning }
+  return { ok: true, role: data }
 }
 
 const UpdateRoleInput = z.object({
@@ -293,4 +185,131 @@ export async function setProjectRole(
   revalidatePath(`/projects/${project_id}/schedule`)
   revalidatePath("/my-assignments")
   return { ok: true }
+}
+
+const SaveRoleAssignmentInput = z.object({
+  project_id: z.string().uuid(),
+  role_id: z.string().uuid(),
+  // "" clears the assignee; "p:<uuid>" a profile; "c:<uuid>" a company.
+  target: z
+    .string()
+    .regex(/^$|^[pc]:[0-9a-fA-F-]{36}$/, "Invalid assignee")
+    .default(""),
+  // The FULL set of schedule items this role should be assigned to on this
+  // job. The action reconciles to match exactly — checked-but-missing get
+  // inserted, previously-assigned-but-unchecked get removed.
+  schedule_item_ids: z.array(z.string().uuid()).max(2000).default([]),
+})
+
+/**
+ * Set who fills a role on a job AND reconcile the role's schedule-item
+ * assignments to exactly the given set — the save path for the role dialog
+ * (both the just-added role and the Edit button). This is a superset of
+ * setProjectRole: it also adds/removes role-based schedule_assignments so a
+ * role can be assigned to any work or to-do item after the fact.
+ *
+ * Runs under the caller's session so RLS still gates every write. All item ids
+ * are re-scoped to the project server-side, so a forged id can't touch another
+ * job's rows.
+ */
+export async function saveRoleAssignment(
+  input: z.input<typeof SaveRoleAssignmentInput>
+): Promise<
+  | { ok: true; added: number; removed: number; skipped: number }
+  | { ok: false; error: string }
+> {
+  const profile = await requireStaff()
+  const parsed = SaveRoleAssignmentInput.safeParse(input)
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid request." }
+  }
+  const { project_id, role_id, target, schedule_item_ids } = parsed.data
+  const supabase = await createSupabaseServerClient()
+
+  // 1. Assignee (project_role_members) — same upsert/delete as setProjectRole.
+  if (target === "") {
+    const { error } = await supabase
+      .from("project_role_members")
+      .delete()
+      .eq("project_id", project_id)
+      .eq("role_id", role_id)
+    if (error) return { ok: false, error: error.message }
+  } else {
+    const isProfile = target.startsWith("p:")
+    const id = target.slice(2)
+    const { error } = await supabase.from("project_role_members").upsert(
+      {
+        project_id,
+        role_id,
+        profile_id: isProfile ? id : null,
+        company_id: isProfile ? null : id,
+        updated_by: profile.id,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "project_id,role_id" }
+    )
+    if (error) return { ok: false, error: error.message }
+  }
+
+  // 2. Reconcile schedule-item assignments to the desired set.
+  // Desired ids re-scoped to this project (drops forged/stale/foreign ids —
+  // the difference is reported as `skipped`).
+  const uniqueRequested = Array.from(new Set(schedule_item_ids))
+  let desired = new Set<string>()
+  if (uniqueRequested.length > 0) {
+    const { data: validItems, error: validErr } = await supabase
+      .from("schedule_items")
+      .select("id")
+      .in("id", uniqueRequested)
+      .eq("project_id", project_id)
+    if (validErr) return { ok: false, error: validErr.message }
+    desired = new Set((validItems ?? []).map((i) => i.id))
+  }
+  const skipped = uniqueRequested.length - desired.size
+
+  // Current role-based assignments among this project's items (join keeps the
+  // query bounded without a giant IN list).
+  const { data: existing, error: existErr } = await supabase
+    .from("schedule_assignments")
+    .select("schedule_item_id, schedule_items!inner(project_id)")
+    .eq("schedule_items.project_id", project_id)
+    .eq("role_id", role_id)
+  if (existErr) return { ok: false, error: existErr.message }
+  const existingSet = new Set((existing ?? []).map((r) => r.schedule_item_id))
+
+  const toAdd = [...desired].filter((id) => !existingSet.has(id))
+  const toRemove = [...existingSet].filter((id) => !desired.has(id))
+
+  let added = 0
+  if (toAdd.length > 0) {
+    const rows = toAdd.map((sid) => ({
+      schedule_item_id: sid,
+      profile_id: null,
+      company_id: null,
+      role_id,
+    }))
+    const { data: ins, error: insErr } = await supabase
+      .from("schedule_assignments")
+      .insert(rows)
+      .select("schedule_item_id")
+    if (insErr) return { ok: false, error: insErr.message }
+    added = (ins ?? []).length
+  }
+
+  let removed = 0
+  if (toRemove.length > 0) {
+    const { data: del, error: delErr } = await supabase
+      .from("schedule_assignments")
+      .delete()
+      .eq("role_id", role_id)
+      .in("schedule_item_id", toRemove)
+      .select("schedule_item_id")
+    if (delErr) return { ok: false, error: delErr.message }
+    removed = (del ?? []).length
+  }
+
+  revalidatePath(`/projects/${project_id}/roles`)
+  revalidatePath(`/projects/${project_id}/schedule`)
+  revalidatePath("/my-assignments")
+  return { ok: true, added, removed, skipped }
 }
