@@ -838,6 +838,14 @@ export function ScheduleItemDialog({
                   Log a delay
                 </button>
               </div>
+              {item.kind === "work" && baselineSet && (
+                <p className="mt-0.5 text-xs text-muted">
+                  Moving this item&apos;s dates? Edit them above and Save —
+                  you&apos;ll be asked for a reason automatically. Use the delay
+                  log to record a delay you&apos;re absorbing without shifting
+                  the dates.
+                </p>
+              )}
               {showDelay && (
                 <DelayLogInline
                   itemId={item.id}
