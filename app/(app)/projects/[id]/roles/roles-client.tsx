@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { Pencil, Plus, Trash2, Users } from "lucide-react"
+import { ChevronDown, ChevronRight, Pencil, Plus, Trash2, Users } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 import { Field, Input, Select } from "@/components/ui/input"
@@ -44,6 +44,12 @@ type Company = {
   type: string
   trade_category: string | null
 }
+type ScheduleItem = {
+  id: string
+  title: string
+  kind: string
+  milestone: string | null
+}
 
 function normalizeRoleKind(kind: string): RoleKind {
   return (["staff", "company", "any"].includes(kind) ? kind : "any") as RoleKind
@@ -57,6 +63,7 @@ export function RolesClient({
   members,
   profiles,
   companies,
+  scheduleItems,
 }: {
   projectId: string
   isTemplate: boolean
@@ -65,6 +72,7 @@ export function RolesClient({
   members: Member[]
   profiles: Profile[]
   companies: Company[]
+  scheduleItems: ScheduleItem[]
 }) {
   const [editing, setEditing] = useState<Role | null>(null)
   const memberByRole = useMemo(() => {
@@ -150,7 +158,12 @@ export function RolesClient({
         </CardBody>
       </Card>
 
-      <AddRoleForm />
+      <AddRoleForm
+        projectId={projectId}
+        profiles={profiles}
+        companies={companies}
+        scheduleItems={scheduleItems}
+      />
 
       {editing && (
         <EditRoleDialog role={editing} onClose={() => setEditing(null)} />
@@ -282,11 +295,75 @@ function RoleRow({
   )
 }
 
-function AddRoleForm() {
+function AddRoleForm({
+  projectId,
+  profiles,
+  companies,
+  scheduleItems,
+}: {
+  projectId: string
+  profiles: Profile[]
+  companies: Company[]
+  scheduleItems: ScheduleItem[]
+}) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [name, setName] = useState("")
   const [kind, setKind] = useState<RoleKind>("any")
+  // Optional "assign on this job" section — collapsed by default so the quick
+  // add stays compact.
+  const [expanded, setExpanded] = useState(false)
+  // "" | "p:<id>" | "c:<id>" — who fills the role on THIS job (optional).
+  const [target, setTarget] = useState("")
+  // Schedule items (this job) the new role should be assigned to (optional).
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
+  const [itemFilter, setItemFilter] = useState("")
+
+  // People = non-client profiles; companies already exclude clients. Both
+  // groups always alphabetical; `kind` only orders which group comes first.
+  const people = useMemo(
+    () =>
+      profiles
+        .filter((p) => p.role !== "client")
+        .sort((a, b) =>
+          (a.full_name || a.email || "").localeCompare(b.full_name || b.email || "")
+        ),
+    [profiles]
+  )
+  const sortedCompanies = useMemo(
+    () => [...companies].sort((a, b) => a.name.localeCompare(b.name)),
+    [companies]
+  )
+  const peopleFirst = kind !== "company"
+
+  const sortedItems = useMemo(
+    () => [...scheduleItems].sort((a, b) => a.title.localeCompare(b.title)),
+    [scheduleItems]
+  )
+  const filteredItems = useMemo(() => {
+    const q = itemFilter.trim().toLowerCase()
+    return q
+      ? sortedItems.filter((i) => i.title.toLowerCase().includes(q))
+      : sortedItems
+  }, [sortedItems, itemFilter])
+
+  function toggleItem(id: string) {
+    setSelectedItems((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function reset() {
+    setName("")
+    setKind("any")
+    setTarget("")
+    setSelectedItems(new Set())
+    setItemFilter("")
+    setExpanded(false)
+  }
 
   function submit() {
     const trimmed = name.trim()
@@ -294,18 +371,44 @@ function AddRoleForm() {
       toast.error("Role name is required")
       return
     }
+    const ids = Array.from(selectedItems)
     startTransition(async () => {
-      const res = await createRole({ name: trimmed, kind })
+      const res = await createRole({
+        name: trimmed,
+        kind,
+        project_id: projectId,
+        target,
+        schedule_item_ids: ids,
+      })
       if (!res.ok) {
         toast.error(res.error)
         return
       }
-      setName("")
-      setKind("any")
-      toast.success(`Added role "${res.role.name}"`)
+      // Report both what landed and what didn't, so a nonzero skip (e.g. an
+      // item deleted between page load and submit) is never silently dropped.
+      const bits: string[] = []
+      if (res.assignedItems > 0) {
+        bits.push(
+          `assigned to ${res.assignedItems} item${res.assignedItems === 1 ? "" : "s"}`
+        )
+      }
+      if (res.skippedItems > 0) {
+        bits.push(
+          `${res.skippedItems} item${res.skippedItems === 1 ? "" : "s"} skipped`
+        )
+      }
+      const suffix = bits.length > 0 ? ` (${bits.join(", ")})` : ""
+      if (res.warning) {
+        toast.warning(`${res.warning}${suffix}`)
+      } else {
+        toast.success(`Added role "${res.role.name}"${suffix}`)
+      }
+      reset()
       router.refresh()
     })
   }
+
+  const selectedCount = selectedItems.size
 
   return (
     <div className="mt-4">
@@ -345,6 +448,162 @@ function AddRoleForm() {
         filled by&rdquo; just sorts the assignee list — you can still pick
         anyone.
       </p>
+
+      {/* Optional: fill the role and assign it to work now, in the same step. */}
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-brand-600 hover:text-brand-700 cursor-pointer"
+        aria-expanded={expanded}
+      >
+        {expanded ? (
+          <ChevronDown className="h-4 w-4" />
+        ) : (
+          <ChevronRight className="h-4 w-4" />
+        )}
+        Assign on this job now (optional)
+        {!expanded && (target !== "" || selectedCount > 0) && (
+          <span className="ml-1 rounded-full bg-brand-100 text-brand-700 text-[11px] px-1.5 py-0.5">
+            {selectedCount > 0
+              ? `${target !== "" ? "1 · " : ""}${selectedCount} item${selectedCount === 1 ? "" : "s"}`
+              : "assignee set"}
+          </span>
+        )}
+      </button>
+
+      {expanded && (
+        <div className="mt-2 rounded-md border border-border bg-background/40 p-3 space-y-3">
+          <Field
+            label="Assign to (this job)"
+            hint="Maps the role to a person or sub/vendor for this job — the same mapping you can change any time in the list above."
+          >
+            <Select value={target} onChange={(e) => setTarget(e.target.value)}>
+              <option value="">— Leave unassigned —</option>
+              {(peopleFirst
+                ? ([
+                    ["people", people],
+                    ["companies", sortedCompanies],
+                  ] as const)
+                : ([
+                    ["companies", sortedCompanies],
+                    ["people", people],
+                  ] as const)
+              ).map(([group]) =>
+                group === "people"
+                  ? people.length > 0 && (
+                      <optgroup key="people" label="People">
+                        {people.map((p) => (
+                          <option key={p.id} value={`p:${p.id}`}>
+                            {(p.full_name || p.email) + ` · ${roleLabel(p.role)}`}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )
+                  : sortedCompanies.length > 0 && (
+                      <optgroup key="companies" label="Subs / vendors">
+                        {sortedCompanies.map((c) => (
+                          <option key={c.id} value={`c:${c.id}`}>
+                            {c.name}
+                            {c.trade_category ? ` (${c.trade_category})` : ""}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )
+              )}
+            </Select>
+          </Field>
+
+          <div>
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <span className="text-xs font-medium text-muted uppercase tracking-wide">
+                Apply to schedule items
+              </span>
+              {sortedItems.length > 0 && (
+                <div className="flex items-center gap-2 text-xs">
+                  {selectedCount > 0 && (
+                    <span className="text-muted">{selectedCount} selected</span>
+                  )}
+                  <button
+                    type="button"
+                    className="text-brand-600 hover:text-brand-700 cursor-pointer"
+                    onClick={() =>
+                      // Union the currently-shown (filtered) items into the
+                      // selection so "Select all" respects an active filter and
+                      // never drops items already checked.
+                      setSelectedItems(
+                        (prev) =>
+                          new Set([...prev, ...filteredItems.map((i) => i.id)])
+                      )
+                    }
+                  >
+                    {itemFilter.trim() ? "Select filtered" : "Select all"}
+                  </button>
+                  {selectedCount > 0 && (
+                    <button
+                      type="button"
+                      className="text-muted hover:text-foreground cursor-pointer"
+                      onClick={() => setSelectedItems(new Set())}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+            {sortedItems.length === 0 ? (
+              <p className="text-xs text-muted">
+                No schedule items on this job yet.
+              </p>
+            ) : (
+              <>
+                {sortedItems.length > 8 && (
+                  <Input
+                    value={itemFilter}
+                    onChange={(e) => setItemFilter(e.target.value)}
+                    placeholder="Filter schedule items…"
+                    className="mb-1.5 h-8"
+                  />
+                )}
+                <div className="max-h-56 overflow-y-auto rounded-md border border-border divide-y divide-border">
+                  {filteredItems.length === 0 ? (
+                    <p className="text-xs text-muted px-3 py-2">
+                      No items match &ldquo;{itemFilter}&rdquo;.
+                    </p>
+                  ) : (
+                    filteredItems.map((item) => (
+                      <label
+                        key={item.id}
+                        className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-background/60"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedItems.has(item.id)}
+                          onChange={() => toggleItem(item.id)}
+                          className="h-4 w-4 rounded border-border-strong text-brand-600 focus-visible:ring-2 focus-visible:ring-brand-500/40"
+                        />
+                        <span className="min-w-0 truncate">{item.title}</span>
+                        {item.milestone ? (
+                          <span className="ml-auto shrink-0 text-[11px] text-muted">
+                            Milestone
+                          </span>
+                        ) : item.kind === "todo" ? (
+                          <span className="ml-auto shrink-0 text-[11px] text-muted">
+                            To-do
+                          </span>
+                        ) : null}
+                      </label>
+                    ))
+                  )}
+                </div>
+              </>
+            )}
+            <p className="text-xs text-muted mt-1">
+              The role is assigned to each checked item; it resolves to whoever
+              fills the role on this job.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

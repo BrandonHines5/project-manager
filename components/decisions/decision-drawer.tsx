@@ -3039,6 +3039,18 @@ function AssignmentsEditor({
     return "Unknown"
   }
 
+  // Alphabetize each picker group — the roles catalog arrives in manual
+  // `position` order, and sorting people/companies too keeps every list A–Z.
+  const staffProfiles = profiles
+    .filter((p) => p.role === "staff")
+    .sort((a, b) =>
+      (a.full_name || a.email || "").localeCompare(b.full_name || b.email || "")
+    )
+  const sortedCompanies = [...companies].sort((a, b) =>
+    a.name.localeCompare(b.name)
+  )
+  const sortedRoles = [...roles].sort((a, b) => a.name.localeCompare(b.name))
+
   function addFromValue(v: string) {
     if (!v) return
     const next: AssignmentDraft = {
@@ -3088,23 +3100,21 @@ function AssignmentsEditor({
         >
           <option value="">Add…</option>
           <optgroup label="People">
-            {profiles
-              .filter((p) => p.role === "staff")
-              .map((p) => (
-                <option key={p.id} value={`p:${p.id}`}>
-                  {p.full_name || p.email}
-                </option>
-              ))}
+            {staffProfiles.map((p) => (
+              <option key={p.id} value={`p:${p.id}`}>
+                {p.full_name || p.email}
+              </option>
+            ))}
           </optgroup>
           <optgroup label="Companies">
-            {companies.map((c) => (
+            {sortedCompanies.map((c) => (
               <option key={c.id} value={`c:${c.id}`}>
                 {c.name}
               </option>
             ))}
           </optgroup>
           <optgroup label="Roles">
-            {roles.map((r) => (
+            {sortedRoles.map((r) => (
               <option key={r.id} value={`r:${r.id}`}>
                 {r.name}
               </option>

@@ -365,10 +365,14 @@ export function ScheduleListView({
               b.full_name || b.email || ""
             )
           )}
-        roles={data.roles.map((r) => ({
-          id: r.id,
-          label: resolveRoleLabel(r.id, data),
-        }))}
+        roles={data.roles
+          .map((r) => ({
+            id: r.id,
+            label: resolveRoleLabel(r.id, data),
+          }))
+          // Roles arrive in manual `position` order; sort A–Z by resolved
+          // label so the assign picker matches every other entity list.
+          .sort((a, b) => a.label.localeCompare(b.label))}
         projects={data.projects
           .filter((p) => p.id !== projectId)
           .map((p) => ({

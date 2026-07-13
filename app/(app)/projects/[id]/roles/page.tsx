@@ -25,31 +25,44 @@ export default async function ProjectRolesPage({
   if (projectErr) throw new Error(projectErr.message)
   if (!project) notFound()
 
-  const [rolesRes, membersRes, profilesRes, companiesRes] = await Promise.all([
-    supabase
-      .from("roles")
-      .select("id, name, kind, position")
-      .order("position", { ascending: true })
-      .order("name", { ascending: true }),
-    supabase
-      .from("project_role_members")
-      .select("role_id, profile_id, company_id")
-      .eq("project_id", projectId),
-    supabase
-      .from("profiles")
-      .select("id, full_name, email, role")
-      // Clients can never fill a role — exclude them server-side so their
-      // names/emails aren't serialized into the page payload.
-      .neq("role", "client")
-      .order("full_name", { ascending: true }),
-    supabase
-      .from("companies")
-      .select("id, name, type, trade_category")
-      .neq("type", "client")
-      .order("name", { ascending: true }),
-  ])
+  const [rolesRes, membersRes, profilesRes, companiesRes, itemsRes] =
+    await Promise.all([
+      supabase
+        .from("roles")
+        .select("id, name, kind, position")
+        .order("position", { ascending: true })
+        .order("name", { ascending: true }),
+      supabase
+        .from("project_role_members")
+        .select("role_id, profile_id, company_id")
+        .eq("project_id", projectId),
+      supabase
+        .from("profiles")
+        .select("id, full_name, email, role")
+        // Clients can never fill a role — exclude them server-side so their
+        // names/emails aren't serialized into the page payload.
+        .neq("role", "client")
+        .order("full_name", { ascending: true }),
+      supabase
+        .from("companies")
+        .select("id, name, type, trade_category")
+        .neq("type", "client")
+        .order("name", { ascending: true }),
+      // Schedule items for this job power the "assign to schedule items"
+      // multi-select in the add-role form. Ordered by title so the picker is
+      // alphabetical (the component re-sorts too, for robustness).
+      supabase
+        .from("schedule_items")
+        .select("id, title, kind, milestone")
+        .eq("project_id", projectId)
+        .order("title", { ascending: true }),
+    ])
   const readErr =
-    rolesRes.error ?? membersRes.error ?? profilesRes.error ?? companiesRes.error
+    rolesRes.error ??
+    membersRes.error ??
+    profilesRes.error ??
+    companiesRes.error ??
+    itemsRes.error
   if (readErr) throw new Error(readErr.message)
 
   return (
@@ -61,6 +74,7 @@ export default async function ProjectRolesPage({
       members={membersRes.data ?? []}
       profiles={profilesRes.data ?? []}
       companies={companiesRes.data ?? []}
+      scheduleItems={itemsRes.data ?? []}
     />
   )
 }
