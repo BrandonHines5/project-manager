@@ -152,7 +152,9 @@ export function TrashPanel({
                     <p className="text-sm font-semibold break-words">
                       {item.entity_label || "(untitled)"}
                     </p>
-                    <p className="text-xs text-muted">
+                    {/* Browser-local time (repo convention) — the server
+                        render can differ, so let hydration patch it. */}
+                    <p className="text-xs text-muted" suppressHydrationWarning>
                       {meta.singular} · deleted by{" "}
                       {item.deleted_by_name ?? "System"} ·{" "}
                       {formatDeletedAt(item.deleted_at)}
@@ -187,6 +189,11 @@ export function TrashPanel({
               )
             })}
           </ul>
+          {items.length >= 1000 && (
+            <p className="text-center text-xs text-muted">
+              Showing the latest 1,000 entries.
+            </p>
+          )}
         </>
       )}
     </div>

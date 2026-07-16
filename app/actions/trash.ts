@@ -18,6 +18,7 @@ import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
 import { wouldCreateCycle } from "@/lib/schedule/scheduling"
+import { purgeProjectTrash } from "@/lib/trash-purge"
 import type { SnapshotRow, TrashPayload } from "@/lib/trash"
 import type { TablesInsert } from "@/lib/db/types"
 
@@ -1031,10 +1032,17 @@ export async function restoreDeletedItem(input: {
     .eq("id", entry.entity_id)
     .maybeSingle()
   if (existing) {
-    await supabase.rpc("claim_restored_entities", {
-      p_project: parsed.project_id,
-      p_entity_ids: [entry.entity_id],
-    })
+    // Nothing has been mutated yet, so a failed claim is safely retryable —
+    // and it must not be swallowed: an unclaimed entry would keep counting
+    // as unrestored and eventually purge Storage objects the live rows use.
+    const { error: claimExistingErr } = await supabase.rpc(
+      "claim_restored_entities",
+      {
+        p_project: parsed.project_id,
+        p_entity_ids: [entry.entity_id],
+      }
+    )
+    if (claimExistingErr) throw new Error(claimExistingErr.message)
     return {
       restored: false,
       alreadyBack: true,
@@ -1111,12 +1119,20 @@ export async function restoreDeletedItem(input: {
   }
 
   // Claim any overlapping entries whose entity came back inside this restore
-  // (e.g. a to-do bulk-deleted alongside its parent work item).
+  // (e.g. a to-do bulk-deleted alongside its parent work item). The restore
+  // itself already succeeded, so a failed claim is a warning, not an error —
+  // and the purge re-checks paths against live rows before removing objects,
+  // so a lingering unclaimed entry can't take the restored files with it.
   if (restoredIds.length > 0) {
-    await supabase.rpc("claim_restored_entities", {
+    const { error: claimErr } = await supabase.rpc("claim_restored_entities", {
       p_project: parsed.project_id,
       p_entity_ids: restoredIds,
     })
+    if (claimErr) {
+      warnings.push(
+        "Restored, but overlapping trash entries couldn't be marked as restored — if this item still shows under Recently deleted, restoring it again will clear it."
+      )
+    }
   }
 
   const section = PATH_FOR_TYPE[entry.entity_type]
@@ -1129,19 +1145,19 @@ export async function restoreDeletedItem(input: {
 /**
  * Drop trash entries past the 30-day retention and remove the Storage
  * objects of entries that were never restored. Called lazily from the
- * History page; best-effort by design.
+ * History page; the daily /api/cron/trash-purge sweep covers projects whose
+ * History page nobody opens. Best-effort at this layer (the page must render
+ * regardless) — a failed sweep retries next time because rows are only
+ * deleted after their Storage objects are gone (lib/trash-purge.ts).
  */
 export async function purgeExpiredTrash(projectId: string) {
   await requireStaff()
+  const parsed = z.string().uuid().safeParse(projectId)
+  if (!parsed.success) return
   const supabase = await createSupabaseServerClient()
-  const { data, error } = await supabase.rpc("purge_expired_deleted_items", {
-    p_project: projectId,
-  })
-  if (error || !data) return
-  const paths = data
-    .filter((r) => !r.was_restored)
-    .flatMap((r) => r.storage_paths ?? [])
-  for (let i = 0; i < paths.length; i += 100) {
-    await supabase.storage.from("project-files").remove(paths.slice(i, i + 100))
+  try {
+    await purgeProjectTrash(supabase, parsed.data)
+  } catch {
+    // Retried on the next page load / nightly cron.
   }
 }

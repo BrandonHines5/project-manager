@@ -3461,8 +3461,20 @@ export type Database = {
         Args: never
         Returns: Database["public"]["Enums"]["user_role"]
       }
+      finalize_purged_deleted_items: {
+        Args: { p_ids: string[]; p_project: string }
+        Returns: undefined
+      }
       is_member_of_project: { Args: { p_project: string }; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
+      list_expired_deleted_items: {
+        Args: { p_project: string }
+        Returns: {
+          id: string
+          storage_paths: string[]
+          was_restored: boolean
+        }[]
+      }
       match_contacts_by_email: {
         Args: { p: string }
         Returns: {
@@ -3487,13 +3499,6 @@ export type Database = {
       next_decision_number: { Args: { p_project: string }; Returns: number }
       next_po_number: { Args: { p_project: string }; Returns: number }
       normalize_phone: { Args: { p: string }; Returns: string }
-      purge_expired_deleted_items: {
-        Args: { p_project: string }
-        Returns: {
-          storage_paths: string[]
-          was_restored: boolean
-        }[]
-      }
       save_company_with_trades: {
         Args: {
           // Hand-kept nullability: these args accept NULL at runtime
@@ -3531,7 +3536,12 @@ export type Database = {
       trade_sees_decision: { Args: { p_decision: string }; Returns: boolean }
       trade_sees_item_via_role: { Args: { p_item: string }; Returns: boolean }
       trade_sees_project: { Args: { p_project: string }; Returns: boolean }
+      trash_purge_allowed: { Args: never; Returns: boolean }
       unclaim_deleted_item: { Args: { p_id: string }; Returns: undefined }
+      unreferenced_storage_paths: {
+        Args: { p_paths: string[] }
+        Returns: string[]
+      }
       validate_media_tags: { Args: { p_tags: string[] }; Returns: undefined }
     }
     Enums: {

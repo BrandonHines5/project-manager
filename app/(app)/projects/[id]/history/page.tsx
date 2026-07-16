@@ -37,7 +37,10 @@ export default async function ProjectHistoryPage({
         .eq("project_id", projectId)
         .is("restored_at", null)
         .order("deleted_at", { ascending: false })
-        .limit(200),
+        // Metadata-only rows, so a high ceiling is cheap. 30-day retention
+        // bounds the realistic count far below this; TrashPanel shows a
+        // truncation note if a project ever hits it.
+        .limit(1000),
     ])
   if (error) throw new Error(error.message)
   if (trashErr) throw new Error(trashErr.message)
