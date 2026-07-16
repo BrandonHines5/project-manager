@@ -1103,16 +1103,11 @@ function RequestCard({
               Continue
             </Button>
           )}
-          {req.status === "submitted" &&
-            (isLumber ? (
-              <Button size="sm" variant="secondary" onClick={() => onAdvance(req.id, "complete")} disabled={pending}>
-                Mark complete
-              </Button>
-            ) : (
-              <Button size="sm" variant="outline" onClick={() => onAdvance(req.id, "awaiting_payment")} disabled={pending}>
-                Mark payment link received
-              </Button>
-            ))}
+          {req.status === "submitted" && !isLumber && (
+            <Button size="sm" variant="outline" onClick={() => onAdvance(req.id, "awaiting_payment")} disabled={pending}>
+              Mark payment link received
+            </Button>
+          )}
           {req.status === "awaiting_payment" && (
             <Button size="sm" variant="outline" onClick={() => onAdvance(req.id, "paid")} disabled={pending}>
               Mark paid
@@ -1126,11 +1121,6 @@ function RequestCard({
           {!isLumber && paymentUrl && !req.payment_url && req.status === "submitted" && (
             <span className="text-xs text-muted">
               Once CAW emails the pay link, mark it received to surface the payment URL.
-            </span>
-          )}
-          {isLumber && req.status === "submitted" && (
-            <span className="text-xs text-muted">
-              Mark complete once Brad confirms the job is set up.
             </span>
           )}
           <button

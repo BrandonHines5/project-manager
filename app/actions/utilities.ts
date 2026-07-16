@@ -681,7 +681,8 @@ const StatusInput = z.object({
 /**
  * Walk a submitted request through its post-submission steps. CAW goes through
  * the external pay-by-link flow (submitted → awaiting_payment → paid →
- * complete); Lumber One has no payment, so submitted → complete directly.
+ * complete); Lumber One has none — sending the form is terminal, no
+ * confirmation step.
  * Returns a typed result (not a throw) for the user-facing guards, because
  * Next.js redacts thrown server-action error messages in production — so the
  * operator would otherwise see a generic "Update failed." instead of the real
@@ -707,7 +708,7 @@ export async function updateUtilityStatus(
   // Guard the workflow: each step only advances from the prior state.
   const allowed: Record<string, string | undefined> =
     req.provider === "lumber_one"
-      ? { complete: "submitted" }
+      ? {}
       : { awaiting_payment: "submitted", paid: "awaiting_payment", complete: "paid" }
   if (req.status !== allowed[status]) {
     return { ok: false, error: `Cannot move from "${req.status}" to "${status}".` }
