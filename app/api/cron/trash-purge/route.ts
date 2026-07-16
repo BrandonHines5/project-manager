@@ -43,15 +43,28 @@ export async function GET(req: Request) {
   const cutoff = new Date(
     Date.now() - TRASH_RETENTION_DAYS * 86_400_000
   ).toISOString()
-  const { data: rows, error } = await supabase
-    .from("deleted_items")
-    .select("project_id")
-    .lt("deleted_at", cutoff)
-  if (error) {
-    return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+  // Page through the expired rows — PostgREST caps a single response at
+  // 1,000 rows, and one project with a big backlog must not hide the others.
+  const projectIdSet = new Set<string>()
+  const PAGE = 1000
+  for (let offset = 0; ; offset += PAGE) {
+    const { data: rows, error } = await supabase
+      .from("deleted_items")
+      .select("project_id")
+      .lt("deleted_at", cutoff)
+      .order("id")
+      .range(offset, offset + PAGE - 1)
+    if (error) {
+      return NextResponse.json(
+        { ok: false, error: error.message },
+        { status: 500 }
+      )
+    }
+    for (const r of rows ?? []) projectIdSet.add(r.project_id)
+    if (!rows || rows.length < PAGE) break
   }
 
-  const projectIds = [...new Set((rows ?? []).map((r) => r.project_id))]
+  const projectIds = [...projectIdSet]
   let purged = 0
   let removedObjects = 0
   const failures: { project_id: string; error: string }[] = []
