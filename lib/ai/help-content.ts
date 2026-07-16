@@ -404,8 +404,15 @@ Within staff, PO/committed-cost dollar amounts are further limited to staff who 
       "who changed",
       "tracking",
       "activity",
+      "restore",
+      "recently deleted",
+      "undelete",
+      "trash",
+      "recover",
     ],
-    body: `Each project has a History tab (staff only; hidden from clients and trades) that records create/update/delete activity across the schedule, decisions, daily logs, files, payments, bid packages, purchase orders, members, and assignments — with the specific fields that changed. Related changes made together are grouped, so you can see, for example, a bulk schedule shift as one batch. It shows the most recent 500 events.`,
+    body: `Each project has a History tab (staff only; hidden from clients and trades) that records create/update/delete activity across the schedule, decisions, daily logs, files, payments, bid packages, purchase orders, members, and assignments — with the specific fields that changed. Related changes made together are grouped, so you can see, for example, a bulk schedule shift as one batch. It shows the most recent 500 events.
+
+The History tab also has a "Recently deleted" view: deleted schedule items, decisions, daily logs, files, bid packages and purchase orders are kept for 30 days and can be restored with one click — including their attachments, checklists, choices, line items, comments and assignments. A restored work item brings back its nested to-dos too. After 30 days the entry (and its attachment files) is removed for good. Payments work differently: a deleted payment is restored from the Pricing tab itself, not from Recently deleted.`,
   },
   {
     id: "settings",

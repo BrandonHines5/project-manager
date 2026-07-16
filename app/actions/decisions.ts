@@ -1560,16 +1560,11 @@ export async function deleteDecision({
 }) {
   await requireStaff()
   const supabase = await createSupabaseServerClient()
-  const { data: atts } = await supabase
-    .from("decision_attachments")
-    .select("storage_path")
-    .eq("decision_id", id)
-  const paths = (atts ?? []).map((a) => a.storage_path)
+  // Attachment Storage objects are NOT removed here: the delete is captured
+  // into deleted_items (0088) so it can be restored from the History tab, and
+  // the trash purge removes the objects when the entry expires unrestored.
   const { error } = await supabase.from("decisions").delete().eq("id", id)
   if (error) throw new Error(error.message)
-  if (paths.length) {
-    await supabase.storage.from("project-files").remove(paths)
-  }
   revalidatePath(`/projects/${project_id}/decisions`)
 }
 

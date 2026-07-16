@@ -155,9 +155,9 @@ export async function deleteProjectFile({
         .eq("id", newHead.id)
     }
   }
-  if (file.storage_path) {
-    await supabase.storage.from("project-files").remove([file.storage_path])
-  }
+  // The Storage object is NOT removed here: the delete is captured into
+  // deleted_items (0088) so it can be restored from the History tab, and the
+  // trash purge removes the object when the entry expires unrestored.
   revalidatePath(`/projects/${project_id}/files`)
 }
 

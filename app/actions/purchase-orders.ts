@@ -622,13 +622,11 @@ export async function deletePurchaseOrder({
   if (cur.status !== "draft") {
     throw new Error("Only draft POs can be deleted — void it instead.")
   }
-  const { data: atts } = await supabase
-    .from("po_attachments")
-    .select("storage_path")
-    .eq("purchase_order_id", id)
-  const paths = (atts ?? []).map((a) => a.storage_path)
   // Re-assert draft on the delete itself — the pre-check can race with a
   // concurrent release, and a released PO must never be deleted.
+  // Attachment Storage objects are NOT removed here: the delete is captured
+  // into deleted_items (0088) so it can be restored from the History tab, and
+  // the trash purge removes the objects when the entry expires unrestored.
   const { error, count } = await supabase
     .from("purchase_orders")
     .delete({ count: "exact" })
@@ -637,9 +635,6 @@ export async function deletePurchaseOrder({
   if (error) throw new Error(error.message)
   if (!count) {
     throw new Error("Only draft POs can be deleted — void it instead.")
-  }
-  if (paths.length) {
-    await supabase.storage.from("project-files").remove(paths)
   }
   revalidatePath(`/projects/${project_id}/purchase-orders`)
 }

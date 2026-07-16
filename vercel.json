@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/outlook-sync",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/trash-purge",
+      "schedule": "45 13 * * *"
     }
   ]
 }
