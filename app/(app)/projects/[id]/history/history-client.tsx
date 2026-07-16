@@ -2,78 +2,23 @@
 
 import { useMemo, useState } from "react"
 import {
+  ArchiveRestore,
   ChevronDown,
   ChevronRight,
-  DollarSign,
-  File,
-  FileSignature,
-  FolderKanban,
-  Gavel,
-  Hammer,
   History,
-  ListTodo,
-  NotebookPen,
-  Palette,
-  Receipt,
   Search,
-  UserCheck,
-  UserCog,
-  Users,
-  type LucideIcon,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { EmptyState } from "@/components/ui/empty"
 import { Input, Select } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import type { Tables } from "@/lib/db/types"
+import { ENTITY_META, humanize, metaFor } from "./entity-meta"
+import { TrashPanel, type TrashItem } from "./trash-panel"
 
 type HistoryRow = Tables<"project_history">
 
 const PAGE = 50
-
-type EntityMeta = {
-  // Filter pill ("Work items"), row sentence ("work item"), batch sentence
-  // ("work items") — kept separate so acronyms like "POs" read right.
-  label: string
-  singular: string
-  plural: string
-  icon: LucideIcon
-  className: string
-}
-
-const ENTITY_META: Record<string, EntityMeta> = {
-  work_item: { label: "Work items", singular: "work item", plural: "work items", icon: Hammer, className: "text-brand-600 bg-brand-50" },
-  todo: { label: "To-dos", singular: "to-do", plural: "to-dos", icon: ListTodo, className: "text-emerald-700 bg-emerald-50" },
-  change_order: { label: "Change orders", singular: "change order", plural: "change orders", icon: FileSignature, className: "text-amber-700 bg-amber-50" },
-  selection: { label: "Selections", singular: "selection", plural: "selections", icon: Palette, className: "text-purple-700 bg-purple-50" },
-  daily_log: { label: "Daily logs", singular: "daily log", plural: "daily logs", icon: NotebookPen, className: "text-sky-700 bg-sky-50" },
-  file: { label: "Files", singular: "file", plural: "files", icon: File, className: "text-zinc-600 bg-zinc-100" },
-  payment: { label: "Payments", singular: "payment", plural: "payments", icon: DollarSign, className: "text-green-700 bg-green-50" },
-  bid_package: { label: "Bids", singular: "bid package", plural: "bid packages", icon: Gavel, className: "text-orange-700 bg-orange-50" },
-  purchase_order: { label: "POs", singular: "PO", plural: "POs", icon: Receipt, className: "text-cyan-700 bg-cyan-50" },
-  member: { label: "Members", singular: "member", plural: "members", icon: Users, className: "text-blue-700 bg-blue-50" },
-  role_assignment: { label: "Roles", singular: "role assignment", plural: "role assignments", icon: UserCog, className: "text-indigo-700 bg-indigo-50" },
-  assignment: { label: "Assignments", singular: "assignment", plural: "assignments", icon: UserCheck, className: "text-teal-700 bg-teal-50" },
-  project: { label: "Project", singular: "project", plural: "project", icon: FolderKanban, className: "text-rose-700 bg-rose-50" },
-}
-
-function humanize(s: string) {
-  return s.replace(/_/g, " ")
-}
-
-// Unknown entity types (the audit trigger may outpace this map) still render,
-// just with a generic icon and a humanized name.
-function metaFor(type: string): EntityMeta {
-  return (
-    ENTITY_META[type] ?? {
-      label: humanize(type) || "Other",
-      singular: humanize(type) || "item",
-      plural: `${humanize(type) || "item"}s`,
-      icon: History,
-      className: "text-muted bg-background",
-    }
-  )
-}
 
 const ACTION_VERB: Record<string, string> = {
   create: "created",
@@ -128,7 +73,16 @@ function changesOf(row: HistoryRow): [string, FieldChange][] {
     .sort(([a], [b]) => a.localeCompare(b))
 }
 
-export function HistoryClient({ rows }: { rows: HistoryRow[] }) {
+export function HistoryClient({
+  rows,
+  projectId,
+  trash,
+}: {
+  rows: HistoryRow[]
+  projectId: string
+  trash: TrashItem[]
+}) {
+  const [view, setView] = useState<"activity" | "trash">("activity")
   const [entityType, setEntityType] = useState("all")
   const [action, setAction] = useState("all")
   const [query, setQuery] = useState("")
@@ -211,6 +165,38 @@ export function HistoryClient({ rows }: { rows: HistoryRow[] }) {
 
   return (
     <div className="max-w-4xl mx-auto px-4 md:px-6 py-5">
+      <div className="flex items-center gap-1 mb-4">
+        {(
+          [
+            ["activity", "Activity", History],
+            ["trash", "Recently deleted", ArchiveRestore],
+          ] as const
+        ).map(([key, label, Icon]) => (
+          <button
+            key={key}
+            type="button"
+            aria-pressed={view === key}
+            onClick={() => setView(key)}
+            className={cn(
+              "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors cursor-pointer",
+              view === key
+                ? "bg-brand-500 text-white border-brand-500"
+                : "bg-surface text-muted border-border hover:text-foreground"
+            )}
+          >
+            <Icon className="h-3.5 w-3.5" />
+            {label}
+            {key === "trash" && trash.length > 0 && (
+              <span className="tabular-nums">{trash.length}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {view === "trash" ? (
+        <TrashPanel projectId={projectId} items={trash} />
+      ) : (
+        <>
       <div className="flex items-center gap-2 flex-wrap mb-4">
         <div className="flex gap-1 flex-wrap">
           {["all", ...typePills].map((t) => (
@@ -311,6 +297,8 @@ export function HistoryClient({ rows }: { rows: HistoryRow[] }) {
             </p>
           )}
         </div>
+      )}
+        </>
       )}
     </div>
   )

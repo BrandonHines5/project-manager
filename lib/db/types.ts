@@ -1383,6 +1383,66 @@ export type Database = {
           },
         ]
       }
+      deleted_items: {
+        Row: {
+          deleted_at: string
+          deleted_by: string | null
+          deleted_by_name: string | null
+          entity_id: string
+          entity_label: string | null
+          entity_type: string
+          id: string
+          payload: Json
+          project_id: string
+          restored_at: string | null
+          restored_by: string | null
+          storage_paths: string[]
+        }
+        Insert: {
+          deleted_at?: string
+          deleted_by?: string | null
+          deleted_by_name?: string | null
+          entity_id: string
+          entity_label?: string | null
+          entity_type: string
+          id?: string
+          payload: Json
+          project_id: string
+          restored_at?: string | null
+          restored_by?: string | null
+          storage_paths?: string[]
+        }
+        Update: {
+          deleted_at?: string
+          deleted_by?: string | null
+          deleted_by_name?: string | null
+          entity_id?: string
+          entity_label?: string | null
+          entity_type?: string
+          id?: string
+          payload?: Json
+          project_id?: string
+          restored_at?: string | null
+          restored_by?: string | null
+          storage_paths?: string[]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "deleted_items_deleted_by_fkey"
+            columns: ["deleted_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "deleted_items_restored_by_fkey"
+            columns: ["restored_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       feedback_requests: {
         Row: {
           admin_notes: string | null
@@ -3365,6 +3425,33 @@ export type Database = {
         Args: { p_create_po: boolean; p_recipient: string }
         Returns: Json
       }
+      claim_deleted_item: {
+        Args: { p_id: string }
+        Returns: {
+          deleted_at: string
+          deleted_by: string | null
+          deleted_by_name: string | null
+          entity_id: string
+          entity_label: string | null
+          entity_type: string
+          id: string
+          payload: Json
+          project_id: string
+          restored_at: string | null
+          restored_by: string | null
+          storage_paths: string[]
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "deleted_items"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      claim_restored_entities: {
+        Args: { p_entity_ids: string[]; p_project: string }
+        Returns: undefined
+      }
       client_decide_decision: {
         Args: { p_action: string; p_choice_id?: string; p_decision_id: string }
         Returns: Json
@@ -3400,6 +3487,13 @@ export type Database = {
       next_decision_number: { Args: { p_project: string }; Returns: number }
       next_po_number: { Args: { p_project: string }; Returns: number }
       normalize_phone: { Args: { p: string }; Returns: string }
+      purge_expired_deleted_items: {
+        Args: { p_project: string }
+        Returns: {
+          storage_paths: string[]
+          was_restored: boolean
+        }[]
+      }
       save_company_with_trades: {
         Args: {
           // Hand-kept nullability: these args accept NULL at runtime
@@ -3437,6 +3531,7 @@ export type Database = {
       trade_sees_decision: { Args: { p_decision: string }; Returns: boolean }
       trade_sees_item_via_role: { Args: { p_item: string }; Returns: boolean }
       trade_sees_project: { Args: { p_project: string }; Returns: boolean }
+      unclaim_deleted_item: { Args: { p_id: string }; Returns: undefined }
       validate_media_tags: { Args: { p_tags: string[] }; Returns: undefined }
     }
     Enums: {
