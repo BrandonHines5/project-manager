@@ -30,22 +30,24 @@ export default async function PurchasingPage({
   const { tab, open, recipient } = await searchParams
   const supabase = await createSupabaseServerClient()
 
-  const { data: project } = await supabase
+  // A DB failure must error the page — never masquerade as a 404.
+  const { data: project, error: projectError } = await supabase
     .from("projects")
     .select("id, name, project_number")
     .eq("id", projectId)
     .maybeSingle()
+  if (projectError) throw new Error(projectError.message)
   if (!project) notFound()
 
   const [
     // Bid tables
-    { data: packages },
-    { data: bidLineItems },
-    { data: bidAttachments },
-    { data: recipients },
-    { data: quotes },
-    { data: bidComments },
-    { data: companyTrades },
+    { data: packages, error: packagesError },
+    { data: bidLineItems, error: bidLineItemsError },
+    { data: bidAttachments, error: bidAttachmentsError },
+    { data: recipients, error: recipientsError },
+    { data: quotes, error: quotesError },
+    { data: bidComments, error: bidCommentsError },
+    { data: companyTrades, error: companyTradesError },
     // PO tables
     { data: pos, error: posError },
     { data: poLineItems, error: poLineItemsError },
@@ -136,6 +138,13 @@ export default async function PurchasingPage({
   ])
 
   const queryError =
+    packagesError ??
+    bidLineItemsError ??
+    bidAttachmentsError ??
+    recipientsError ??
+    quotesError ??
+    bidCommentsError ??
+    companyTradesError ??
     posError ??
     poLineItemsError ??
     poAttachmentsError ??
@@ -199,10 +208,11 @@ export default async function PurchasingPage({
     .filter((x): x is string => !!x)
   let sourceBids: PurchaseOrdersData["source_bids"] = {}
   if (sourceBidIds.length) {
-    const { data: sources } = await supabase
+    const { data: sources, error: sourcesError } = await supabase
       .from("bid_recipients")
       .select("id, bid_packages:bid_package_id(number, title)")
       .in("id", sourceBidIds)
+    if (sourcesError) throw new Error(sourcesError.message)
     sourceBids = Object.fromEntries(
       (sources ?? []).flatMap((s) => {
         const pkg = (
@@ -223,10 +233,11 @@ export default async function PurchasingPage({
     .filter((x): x is string => !!x)
   let sourceDecisions: PurchaseOrdersData["source_decisions"] = {}
   if (sourceDecisionIds.length) {
-    const { data: decisions } = await supabase
+    const { data: decisions, error: decisionsError } = await supabase
       .from("decisions")
       .select("id, kind, number, title")
       .in("id", sourceDecisionIds)
+    if (decisionsError) throw new Error(decisionsError.message)
     sourceDecisions = Object.fromEntries(
       (decisions ?? []).map((d) => [
         d.id,
@@ -259,7 +270,11 @@ export default async function PurchasingPage({
       initialTab === "bids" &&
       openBidId &&
       recipient &&
-      cleanedRecipients.some((r) => r.id === recipient)
+      // Must belong to the OPENED package — a URL pairing package A with a
+      // recipient from package B would focus the wrong sub's thread.
+      cleanedRecipients.some(
+        (r) => r.id === recipient && r.bid_package_id === openBidId
+      )
         ? recipient
         : null,
     packages: cleanedPackages,

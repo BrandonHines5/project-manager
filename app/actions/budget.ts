@@ -70,8 +70,15 @@ async function loadBudgetEditorIds(
 export async function canEditBudget(profileId: string): Promise<boolean> {
   await requireStaff()
   const supabase = await createSupabaseServerClient()
-  const ids = await loadBudgetEditorIds(supabase)
-  return ids === null || ids.includes(profileId)
+  // A transient settings-read failure renders the page read-only rather than
+  // erroring it. Mutations still go through requireBudgetEditor, which lets
+  // that same failure throw — reads degrade, writes fail loudly.
+  try {
+    const ids = await loadBudgetEditorIds(supabase)
+    return ids === null || ids.includes(profileId)
+  } catch {
+    return false
+  }
 }
 
 async function requireBudgetEditor() {

@@ -80,6 +80,21 @@ export function NewPurchasingDialog({
   const [customNumber, setCustomNumber] = useState("")
   const [approvalDeadline, setApprovalDeadline] = useState("")
 
+  // A backdrop click or stray Cancel must not eat a half-typed form — same
+  // dirty-confirm pattern as the drawers. Kind/template selection alone
+  // isn't worth guarding; typed content is.
+  const dirty =
+    title.trim() !== "" ||
+    scope.trim() !== "" ||
+    lines.some((li) => li.description.trim() !== "") ||
+    flatTotal !== "" ||
+    customNumber !== ""
+
+  function requestClose() {
+    if (dirty && !confirm("Discard this unsaved form?")) return
+    onClose()
+  }
+
   function applyTemplate(id: string) {
     setTemplateId(id)
     const t = templates.find((x) => x.id === id)
@@ -104,7 +119,7 @@ export function NewPurchasingDialog({
     if (!confirm(`Delete the template “${t.name}”? This can't be undone.`)) return
     startTransition(async () => {
       try {
-        await deletePurchasingTemplate(t.id)
+        await deletePurchasingTemplate(t.id, projectId)
         setTemplateId("")
         toast.success("Template deleted")
         router.refresh()
@@ -185,7 +200,7 @@ export function NewPurchasingDialog({
   const runningTotal = effectiveTotal(kind, flatFee, flatTotal, lines)
 
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+    <Dialog open={open} onOpenChange={(v) => !v && requestClose()}>
       <DialogContent side="right">
         <DialogHeader>
           <div>
@@ -420,7 +435,7 @@ export function NewPurchasingDialog({
           </p>
         </DialogBody>
         <DialogFooter>
-          <Button type="button" variant="ghost" onClick={onClose}>
+          <Button type="button" variant="ghost" onClick={requestClose}>
             Cancel
           </Button>
           <Button type="button" onClick={handleCreate} disabled={pending}>

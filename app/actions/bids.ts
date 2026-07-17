@@ -362,6 +362,7 @@ export async function copyBidPackage(input: z.infer<typeof CopyBidPackageInput>)
     .select("*")
     .eq("bid_package_id", id)
     .order("position", { ascending: true })
+  let skippedAttachments = 0
   for (const a of srcAtts ?? []) {
     if (a.project_file_id && sameProject) {
       const { error: aErr } = await supabase.from("bid_package_attachments").insert({
@@ -386,10 +387,13 @@ export async function copyBidPackage(input: z.infer<typeof CopyBidPackageInput>)
       .from("project-files")
       .copy(a.storage_path, newPath)
     if (copyErr) {
+      // Skipped, not fatal — but COUNTED, so the caller can tell the user
+      // the copy is missing attachments instead of reporting clean success.
       console.warn(
         "[copyBidPackage] attachment blob copy failed (skipping):",
         copyErr.message
       )
+      skippedAttachments++
       continue
     }
     const { error: aErr } = await supabase.from("bid_package_attachments").insert({
@@ -410,7 +414,12 @@ export async function copyBidPackage(input: z.infer<typeof CopyBidPackageInput>)
 
   revalidateBidPaths(target_project_id)
   if (!sameProject) revalidateBidPaths(src.project_id)
-  return { id: newId, project_id: target_project_id, sameProject }
+  return {
+    id: newId,
+    project_id: target_project_id,
+    sameProject,
+    skipped_attachments: skippedAttachments,
+  }
 }
 
 /**
@@ -806,7 +815,7 @@ export async function reopenBidPackage({
 }: {
   id: string
   project_id: string
-}): Promise<{ notified: number }> {
+}): Promise<{ notified: number; token_failures: number }> {
   const profile = await requireStaff()
   const supabase = await createSupabaseServerClient()
 
@@ -827,16 +836,27 @@ export async function reopenBidPackage({
   if (rErr) throw new Error(rErr.message)
 
   // One row at a time: token carries a unique index, and each recipient
-  // must get their own fresh secret.
+  // must get their own fresh secret. Each write is count-verified — a
+  // recipient only enters tokenByRecipient (and gets notified below) when
+  // their token demonstrably persisted, so a partial failure can never send
+  // dead links. Failures don't abort the loop: the package is already
+  // 'sent', so mint what we can and surface the rest.
   const tokenByRecipient = new Map<string, string>()
+  let tokenFailures = 0
   for (const r of recipients ?? []) {
     const token = generateAccessToken()
-    const { error: tErr } = await supabase
+    const { error: tErr, count: tCount } = await supabase
       .from("bid_recipients")
-      .update({ token })
+      .update({ token }, { count: "exact" })
       .eq("id", r.id)
       .is("token", null)
-    if (tErr) throw new Error(tErr.message)
+    if (tErr || !tCount) {
+      tokenFailures++
+      if (tErr) {
+        console.warn("[reopenBidPackage] token mint failed:", r.id, tErr.message)
+      }
+      continue
+    }
     tokenByRecipient.set(r.id, token)
   }
 
@@ -872,23 +892,34 @@ export async function reopenBidPackage({
         kind: "bid_invite",
         counterparty_name: company.name,
       }
+      // Best-effort per recipient: the reopen is already committed, so a
+      // failed send must never reject the action — the sub's my-bids card
+      // has the live link regardless.
       if (company.email) {
-        const res = await sendEmail({ to: company.email, subject, text, log })
-        if (res.sent) notified++
+        try {
+          const res = await sendEmail({ to: company.email, subject, text, log })
+          if (res.sent) notified++
+        } catch (e) {
+          console.warn("[reopenBidPackage] email failed:", e)
+        }
       }
       const e164 = company.phone ? normalizeE164(company.phone) : null
       if (e164) {
-        await sendQuoSms({
-          to: e164,
-          content: `Hines Homes: bidding reopened for "${pkg.title}". New link: ${link}`,
-          log,
-        })
+        try {
+          await sendQuoSms({
+            to: e164,
+            content: `Hines Homes: bidding reopened for "${pkg.title}". New link: ${link}`,
+            log,
+          })
+        } catch (e) {
+          console.warn("[reopenBidPackage] SMS failed:", e)
+        }
       }
     }
   }
 
   revalidateBidPaths(project_id)
-  return { notified }
+  return { notified, token_failures: tokenFailures }
 }
 
 export async function deleteBidPackage({

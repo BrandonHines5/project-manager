@@ -108,6 +108,12 @@ export function PoDrawer({
 
   function handleCopy(targetProjectId: string) {
     if (!po) return
+    // The copy reads SAVED state and closes this form — unsaved edits would
+    // be silently absent from the copy and then discarded.
+    if (dirty) {
+      toast.error("Save your changes first — the copy uses the saved version.")
+      return
+    }
     startTransition(async () => {
       try {
         const r = await copyPurchaseOrder({
@@ -115,10 +121,14 @@ export function PoDrawer({
           target_project_id: targetProjectId,
         })
         const targetProject = data.projects.find((p) => p.id === targetProjectId)
-        toast.success(
-          r.sameProject
+        const skippedNote = r.skipped_attachments
+          ? ` — ${r.skipped_attachments} attachment${r.skipped_attachments === 1 ? "" : "s"} could not be copied`
+          : ""
+        toast[r.skipped_attachments ? "warning" : "success"](
+          (r.sameProject
             ? "Copied — new draft created in this project"
-            : `Copied to ${targetProject?.project_number ?? "the selected project"}`
+            : `Copied to ${targetProject?.project_number ?? "the selected project"}`) +
+            skippedNote
         )
         router.refresh()
         if (!r.sameProject) {
@@ -357,6 +367,7 @@ export function PoDrawer({
               unit: li.unit || null,
               unit_cost: li.unit_cost,
             })),
+          project_id: data.project_id,
         })
         toast.success("Template saved")
         setTemplateOpen(false)

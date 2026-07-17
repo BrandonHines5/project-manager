@@ -114,6 +114,12 @@ export function BidPackageDrawer({
 
   function handleCopy(targetProjectId: string) {
     if (!pkg) return
+    // The copy reads SAVED state and closes this form — unsaved edits would
+    // be silently absent from the copy and then discarded.
+    if (dirty) {
+      toast.error("Save your changes first — the copy uses the saved version.")
+      return
+    }
     startTransition(async () => {
       try {
         const r = await copyBidPackage({
@@ -121,10 +127,14 @@ export function BidPackageDrawer({
           target_project_id: targetProjectId,
         })
         const targetProject = data.projects.find((p) => p.id === targetProjectId)
-        toast.success(
-          r.sameProject
+        const skippedNote = r.skipped_attachments
+          ? ` — ${r.skipped_attachments} attachment${r.skipped_attachments === 1 ? "" : "s"} could not be copied`
+          : ""
+        toast[r.skipped_attachments ? "warning" : "success"](
+          (r.sameProject
             ? "Copied — new draft created in this project"
-            : `Copied to ${targetProject?.project_number ?? "the selected project"}`
+            : `Copied to ${targetProject?.project_number ?? "the selected project"}`) +
+            skippedNote
         )
         router.refresh()
         if (!r.sameProject) {
@@ -453,6 +463,11 @@ export function BidPackageDrawer({
 
   function handleReopen() {
     if (!pkg) return
+    // Reopen closes this form — title/due-date edits typed here would vanish.
+    if (dirty) {
+      toast.error("Save your changes first.")
+      return
+    }
     if (
       !confirm(
         "Reopen bidding? Every recipient gets a fresh link (the old ones stay dead), and invited subs are re-notified."
@@ -461,19 +476,25 @@ export function BidPackageDrawer({
       return
     startTransition(async () => {
       try {
-        const { notified } = await reopenBidPackage({
+        const { notified, token_failures } = await reopenBidPackage({
           id: pkg.id,
           project_id: data.project_id,
         })
-        toast.success(
-          notified
-            ? `Reopened — new links sent to ${notified} compan${notified === 1 ? "y" : "ies"}`
-            : "Reopened"
-        )
+        if (token_failures) {
+          toast.warning(
+            `Reopened, but ${token_failures} recipient link${token_failures === 1 ? "" : "s"} could not be re-created — use Add recipients / Resend for them.`
+          )
+        } else {
+          toast.success(
+            notified
+              ? `Reopened — new links sent to ${notified} compan${notified === 1 ? "y" : "ies"}`
+              : "Reopened"
+          )
+        }
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Reopen failed")
+        toastActionError(e, "Reopen failed")
       }
     })
   }
@@ -530,6 +551,7 @@ export function BidPackageDrawer({
               unit: li.unit || null,
               unit_cost: null,
             })),
+          project_id: data.project_id,
         })
         toast.success("Template saved")
         setTemplateOpen(false)

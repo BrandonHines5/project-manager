@@ -21,11 +21,15 @@ const TemplateLine = z.object({
 
 const TemplateInput = z.object({
   id: optStr,
-  name: z.string().min(1).max(120),
-  title: z.string().min(1).max(300),
+  // trim() before min(1) so whitespace-only names/titles are rejected.
+  name: z.string().trim().min(1).max(120),
+  title: z.string().trim().min(1).max(300),
   scope: optStr,
   flat_fee: z.boolean().default(false),
   line_items: z.array(TemplateLine).default([]),
+  // Not part of the template (templates are org-wide) — identifies the
+  // purchasing page the caller is on so its template list revalidates.
+  project_id: optStr,
 })
 
 export type PurchasingTemplateInputT = z.infer<typeof TemplateInput>
@@ -83,6 +87,7 @@ export async function savePurchasingTemplate(input: PurchasingTemplateInputT) {
       .eq("id", id)
     if (error) throw new Error(error.message)
     if (!count) throw new Error("Template not found")
+    revalidateTemplateConsumers(parsed.project_id)
     return { id }
   }
   const { data, error } = await supabase
@@ -91,10 +96,11 @@ export async function savePurchasingTemplate(input: PurchasingTemplateInputT) {
     .select("id")
     .single()
   if (error) throw new Error(error.message)
+  revalidateTemplateConsumers(parsed.project_id)
   return { id: data.id }
 }
 
-export async function deletePurchasingTemplate(id: string) {
+export async function deletePurchasingTemplate(id: string, projectId?: string) {
   await requireStaff()
   const parsed = z.string().uuid().parse(id)
   const supabase = await createSupabaseServerClient()
@@ -103,6 +109,15 @@ export async function deletePurchasingTemplate(id: string) {
     .delete()
     .eq("id", parsed)
   if (error) throw new Error(error.message)
+  revalidateTemplateConsumers(projectId)
+}
+
+// Templates are org-wide, so there's no single page to invalidate — the
+// caller passes the project it's on. Other projects' purchasing pages pick
+// up the change on their own next render (dynamic pages, no full-route
+// cache dependency on this data).
+function revalidateTemplateConsumers(projectId: string | null | undefined) {
+  if (projectId) revalidatePath(`/projects/${projectId}/purchasing`)
 }
 
 /**
@@ -133,10 +148,4 @@ export async function listPurchasingTemplates(): Promise<PurchasingTemplateRow[]
       line_items: lines,
     }
   })
-}
-
-/** Revalidate the unified purchasing page after template edits. */
-export async function revalidatePurchasing(projectId: string) {
-  await requireStaff()
-  revalidatePath(`/projects/${projectId}/purchasing`)
 }

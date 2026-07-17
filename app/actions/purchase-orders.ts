@@ -349,6 +349,7 @@ export async function copyPurchaseOrder(
     .select("*")
     .eq("purchase_order_id", id)
     .order("position", { ascending: true })
+  let skippedAttachments = 0
   for (const a of srcAtts ?? []) {
     if (a.project_file_id && sameProject) {
       const { error: aErr } = await supabase.from("po_attachments").insert({
@@ -373,10 +374,13 @@ export async function copyPurchaseOrder(
       .from("project-files")
       .copy(a.storage_path, newPath)
     if (copyErr) {
+      // Skipped, not fatal — but COUNTED, so the caller can tell the user
+      // the copy is missing attachments instead of reporting clean success.
       console.warn(
         "[copyPurchaseOrder] attachment blob copy failed (skipping):",
         copyErr.message
       )
+      skippedAttachments++
       continue
     }
     const { error: aErr } = await supabase.from("po_attachments").insert({
@@ -397,7 +401,12 @@ export async function copyPurchaseOrder(
 
   revalidatePoPaths(target_project_id)
   if (!sameProject) revalidatePoPaths(src.project_id)
-  return { id: newId, project_id: target_project_id, sameProject }
+  return {
+    id: newId,
+    project_id: target_project_id,
+    sameProject,
+    skipped_attachments: skippedAttachments,
+  }
 }
 
 /**
@@ -513,7 +522,12 @@ export async function createPoFromDecision(
         position: i,
       }))
     )
-    if (error) throw new Error(error.message)
+    if (error) {
+      // Don't strand a lineless draft header — a retry would then allocate
+      // ANOTHER number. Best-effort delete (draft, nothing references it yet).
+      await supabase.from("purchase_orders").delete().eq("id", newId).eq("status", "draft")
+      throw new Error(error.message)
+    }
   }
 
   revalidatePoPaths(decision.project_id)
@@ -566,8 +580,16 @@ export async function createPoForBidRecipient(
     }
   ).bid_packages
   if (!pkg) throw new Error("Bid package not found")
+  // Invited-only, matching the UI: a SUBMITTED bid goes through the award
+  // flow (which prices the PO from their quotes and stamps the package), an
+  // awarded one already has its PO, and a declined sub said no.
   if (recipient.status === "awarded") {
     throw new Error("This bid was awarded — the award already created its PO.")
+  }
+  if (recipient.status !== "invited") {
+    throw new Error(
+      "This sub already responded — award their bid instead of creating a PO directly."
+    )
   }
 
   const { data: lines, error: lErr } = await supabase
@@ -630,7 +652,12 @@ export async function createPoForBidRecipient(
         position: i,
       }))
     )
-    if (error) throw new Error(error.message)
+    if (error) {
+      // Don't strand a lineless draft header — a retry would then allocate
+      // ANOTHER number. Best-effort delete (draft, nothing references it yet).
+      await supabase.from("purchase_orders").delete().eq("id", newId).eq("status", "draft")
+      throw new Error(error.message)
+    }
   }
 
   revalidatePoPaths(pkg.project_id)
