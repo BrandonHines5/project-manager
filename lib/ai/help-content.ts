@@ -300,7 +300,7 @@ Award: awarding a package can also spin up a draft purchase order pre-filled fro
 
 Releasing a PO emails/texts the sub a public link (/po/{token}). The sub approves it with a typed signature and a disclaimer checkbox, or declines with a reason. Staff can also approve on the sub's behalf. Unreleasing pulls it back to draft and revokes the link; voiding keeps the record but kills the link. "Work complete" is a separate flag from approval.
 
-Committed costs: approved POs roll up by cost code on the project's Pricing tab, visible only to staff who have financial access — never to clients. Subs see their own non-draft POs on "My POs."
+Committed costs: approved POs roll up by cost code in the Budget tab's POs column, visible only to staff who have financial access — never to clients. Subs see their own non-draft POs on "My POs."
 
 Out of scope (v1): PO payments/bills and lien waivers live in QuickBooks/Adaptive, not here. Client invoicing lives in QuickBooks.`,
   },

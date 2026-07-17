@@ -84,7 +84,7 @@
 - Release mints a `token` and emails/SMSes the sub a public `/po/{token}` link; the sub approves with a typed signature + disclaimer checkbox (`approved_by_profile_id` null) or declines with a reason. Staff can approve on behalf (`staffApprovePurchaseOrder`, profile id recorded). Unrelease pulls it back to draft, revokes the token, and clears approval state; void keeps the record but kills the link.
 - Structural edits are draft-only — released POs must be unreleased first.
 - Trade portal page `/my-pos` (RLS `po_trade_read`, own company + non-draft only).
-- Approved POs roll up as **Committed costs** by cost code on the project Pricing tab — staff with `profiles.financial_access` only, never clients.
+- Approved POs roll up as **Committed costs** by cost code in the Budget tab's POs column — staff with `profiles.financial_access` only, never clients. (The old Pricing-tab Committed costs card was removed; Pricing shows only the client-facing contract picture.)
 - Numbering RPCs `next_bid_package_number` / `next_po_number` use per-project advisory locks (hash args 1 / 2; decisions use 0). `award_bid` allocates PO numbers under the same lock key as `next_po_number`.
 
 ## Budget module — model

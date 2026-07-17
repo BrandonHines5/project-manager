@@ -556,15 +556,27 @@ function VisibilityToggle({
           onClick={() => onChange("internal")}
           className={cn(
             "rounded-md border p-3 text-left cursor-pointer flex gap-3 items-start",
+            // Solid dark fill when selected — the old zinc-50 tint was easy
+            // to miss, and "which visibility is on?" must be unmistakable.
             value === "internal"
-              ? "border-zinc-700 bg-zinc-50"
+              ? "border-zinc-800 bg-zinc-800 text-white"
               : "border-border-strong hover:bg-background/60"
           )}
         >
-          <EyeOff className="h-5 w-5 mt-0.5 text-zinc-600" />
+          <EyeOff
+            className={cn(
+              "h-5 w-5 mt-0.5",
+              value === "internal" ? "text-zinc-300" : "text-zinc-600"
+            )}
+          />
           <div>
             <div className="font-medium text-sm">Internal only</div>
-            <div className="text-xs text-muted">
+            <div
+              className={cn(
+                "text-xs",
+                value === "internal" ? "text-zinc-300" : "text-muted"
+              )}
+            >
               Hidden from the client portal
             </div>
           </div>

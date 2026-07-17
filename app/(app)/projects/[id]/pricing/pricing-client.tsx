@@ -40,33 +40,7 @@ export type PricingData = {
     "id" | "number" | "title" | "kind" | "cost_delta" | "status" | "approved_at"
   >[]
   payments: Tables<"project_payments">[]
-  // Approved-PO rollup (money out to subs). Only populated for staff with
-  // financial_access — empty array + false for everyone else.
-  financial_access: boolean
-  committed_pos: CommittedPo[]
   brand: Pick<Brand, "name" | "logo">
-}
-
-export type CommittedPo = {
-  id: string
-  number: number
-  title: string
-  flat_fee: boolean
-  flat_total: number | null
-  work_complete: boolean
-  company_name: string
-  line_items: {
-    quantity: number
-    unit_cost: number
-    cost_code_code: string | null
-    cost_code_name: string | null
-  }[]
-}
-
-function poTotal(po: CommittedPo) {
-  return po.flat_fee
-    ? Number(po.flat_total ?? 0)
-    : po.line_items.reduce((s, li) => s + li.quantity * li.unit_cost, 0)
 }
 
 export function PricingClient({ data }: { data: PricingData }) {
@@ -197,15 +171,6 @@ export function PricingClient({ data }: { data: PricingData }) {
         )}
       </Card>
 
-      {/* Committed costs (approved POs by cost code) — staff w/ financial
-          access only. Money OUT to subs; never rendered for clients. */}
-      {data.role === "staff" && data.financial_access && (
-        <CommittedCostsCard
-          projectId={data.project_id}
-          pos={data.committed_pos}
-        />
-      )}
-
       {/* Payments */}
       <Card>
         <CardHeader className="flex items-center justify-between">
@@ -297,111 +262,6 @@ export function PricingClient({ data }: { data: PricingData }) {
       {/* Print-only document: shown only when the browser prints / saves to PDF. */}
       <PricingPrintDocument data={data} totals={totals} />
     </div>
-  )
-}
-
-// Approved-PO totals grouped by cost code ("committed costs" in BuilderTrend
-// terms). Flat-fee POs have no per-line codes and bucket under one row.
-function CommittedCostsCard({
-  projectId,
-  pos,
-}: {
-  projectId: string
-  pos: CommittedPo[]
-}) {
-  const { groups, grandTotal } = useMemo(() => {
-    const byCode = new Map<string, { label: string; total: number }>()
-    let grand = 0
-    for (const po of pos) {
-      if (po.flat_fee) {
-        const amount = Number(po.flat_total ?? 0)
-        grand += amount
-        const key = "__flat__"
-        const cur = byCode.get(key) ?? { label: "Flat fee / uncoded", total: 0 }
-        cur.total += amount
-        byCode.set(key, cur)
-        continue
-      }
-      for (const li of po.line_items) {
-        const amount = li.quantity * li.unit_cost
-        grand += amount
-        const key = li.cost_code_code ?? "__uncoded__"
-        const label = li.cost_code_code
-          ? `${li.cost_code_code} — ${li.cost_code_name}`
-          : "Uncoded"
-        const cur = byCode.get(key) ?? { label, total: 0 }
-        cur.total += amount
-        byCode.set(key, cur)
-      }
-    }
-    const groups = [...byCode.entries()]
-      .map(([key, g]) => ({ key, ...g }))
-      .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }))
-    return { groups, grandTotal: grand }
-  }, [pos])
-
-  return (
-    <Card>
-      <CardHeader className="flex items-center justify-between">
-        <CardTitle>Committed costs</CardTitle>
-        <Link
-          href={`/projects/${projectId}/purchase-orders`}
-          className="text-xs text-brand-600 hover:underline"
-        >
-          Manage purchase orders →
-        </Link>
-      </CardHeader>
-      {pos.length === 0 ? (
-        <CardBody>
-          <p className="text-sm text-muted">
-            No approved purchase orders yet. When a sub approves a PO, its
-            cost-coded total rolls up here as committed cost.
-          </p>
-        </CardBody>
-      ) : (
-        <>
-          <table className="w-full text-sm">
-            <thead className="bg-background/60 text-xs uppercase text-muted">
-              <tr>
-                <th className="text-left px-4 py-2.5">Cost code</th>
-                <th className="text-right px-4 py-2.5 w-36">Committed</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {groups.map((g) => (
-                <tr key={g.key}>
-                  <td className="px-4 py-2">{g.label}</td>
-                  <td className="px-4 py-2 text-right tabular-nums">
-                    {formatCurrency(g.total)}
-                  </td>
-                </tr>
-              ))}
-              <tr className="bg-background/40 font-semibold">
-                <td className="px-4 py-2.5 text-right">Total committed</td>
-                <td className="px-4 py-2.5 text-right tabular-nums">
-                  {formatCurrency(grandTotal)}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          <CardBody className="border-t border-border">
-            <div className="text-xs text-muted space-y-1">
-              {pos.map((po) => (
-                <div key={po.id} className="flex items-center gap-2">
-                  <span className="font-mono">PO-{po.number}</span>
-                  <span className="truncate">{po.title}</span>
-                  <span className="truncate">· {po.company_name}</span>
-                  {po.work_complete && <Badge tone="success">Work complete</Badge>}
-                  <span className="ml-auto tabular-nums">
-                    {formatCurrency(poTotal(po))}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </CardBody>
-        </>
-      )}
-    </Card>
   )
 }
 
