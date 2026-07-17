@@ -2103,6 +2103,7 @@ export type Database = {
         Row: {
           archived_at: string | null
           category: Database["public"]["Enums"]["file_category"]
+          client_visible: boolean
           created_at: string
           description: string | null
           file_name: string
@@ -2122,6 +2123,7 @@ export type Database = {
         Insert: {
           archived_at?: string | null
           category?: Database["public"]["Enums"]["file_category"]
+          client_visible?: boolean
           created_at?: string
           description?: string | null
           file_name: string
@@ -2141,6 +2143,7 @@ export type Database = {
         Update: {
           archived_at?: string | null
           category?: Database["public"]["Enums"]["file_category"]
+          client_visible?: boolean
           created_at?: string
           description?: string | null
           file_name?: string
@@ -3591,6 +3594,7 @@ export type Database = {
         | "plot_plan"
         | "permit"
         | "contract"
+        | "quotes"
         | "other"
       insurance_type: "general_liability" | "workers_comp" | "auto" | "umbrella"
       payment_method: "check" | "wire" | "card" | "cash" | "other"
@@ -3776,6 +3780,7 @@ export const Constants = {
         "plot_plan",
         "permit",
         "contract",
+        "quotes",
         "other",
       ],
       insurance_type: ["general_liability", "workers_comp", "auto", "umbrella"],

@@ -6,7 +6,7 @@ import { toast } from "sonner"
 import {
   Upload,
   FileText,
-  Map,
+  Map as MapIcon,
   ShieldCheck,
   ScrollText,
   File as FileIconLucide,
@@ -18,10 +18,13 @@ import {
   History,
   RefreshCcw,
   Eye,
+  EyeOff,
   Archive,
   ArchiveRestore,
   ChevronDown,
   ChevronRight,
+  Receipt,
+  UploadCloud,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -38,10 +41,12 @@ import {
 } from "@/components/ui/dialog"
 import { cn, formatDate } from "@/lib/utils"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
+import { uploadToStorage } from "@/lib/storage/upload"
 import {
   saveProjectFile,
   deleteProjectFile,
   setProjectFileArchived,
+  setProjectFileClientVisibility,
   getFileVersions,
   setMediaTags,
   type FileInputT,
@@ -75,21 +80,29 @@ const CATEGORY_META: Record<
   { label: string; icon: typeof FileText; tone: "brand" | "info" | "success" | "warning" | "muted" }
 > = {
   house_plans: { label: "House plans", icon: FileText, tone: "brand" },
-  plot_plan: { label: "Plot plan", icon: Map, tone: "info" },
+  plot_plan: { label: "Plot plan", icon: MapIcon, tone: "info" },
   permit: { label: "Permit", icon: ShieldCheck, tone: "success" },
   contract: { label: "Contract", icon: ScrollText, tone: "warning" },
+  quotes: { label: "Quotes", icon: Receipt, tone: "info" },
   other: { label: "Other", icon: FileIconLucide, tone: "muted" },
 }
+
+type PlanSort = "newest" | "title" | "category"
 
 export function FilesClient({ data }: { data: FilesData }) {
   const canEdit = data.role === "staff"
   const [uploadOpen, setUploadOpen] = useState(false)
+  // Files dropped anywhere on the page — preloaded into the upload dialog.
+  const [droppedFiles, setDroppedFiles] = useState<File[] | null>(null)
+  // Counter, not boolean: dragenter/dragleave fire per child element crossed.
+  const [dragDepth, setDragDepth] = useState(0)
   // When non-null, the upload dialog opens pre-targeted as a revision of the
   // referenced file (parent_file_id chain handled server-side).
   const [revisionTarget, setRevisionTarget] = useState<{
     id: string
     title: string
     category: Enums<"file_category">
+    client_visible: boolean
   } | null>(null)
   // When set, render the History dialog for the given plan's chain.
   const [historyTarget, setHistoryTarget] = useState<Tables<"project_files"> | null>(
@@ -97,6 +110,12 @@ export function FilesClient({ data }: { data: FilesData }) {
   )
   const [search, setSearch] = useState("")
   const [tagFilter, setTagFilter] = useState<string | null>(null)
+  // Plans list controls: free-text search, category chip, sort order.
+  const [planQuery, setPlanQuery] = useState("")
+  const [categoryFilter, setCategoryFilter] = useState<
+    Enums<"file_category"> | null
+  >(null)
+  const [planSort, setPlanSort] = useState<PlanSort>("newest")
   const [lightbox, setLightbox] = useState<Media | null>(null)
   // When set, render the in-browser document viewer for this plan.
   const [viewerTarget, setViewerTarget] = useState<Tables<"project_files"> | null>(
@@ -106,14 +125,46 @@ export function FilesClient({ data }: { data: FilesData }) {
 
   // Split plans into the active list and the archived folder. Archived plans
   // are filed away (still downloadable) but kept out of the main list.
-  const activePlans = useMemo(
-    () => data.plans.filter((p) => !p.archived_at),
-    [data.plans]
-  )
+  const activePlans = useMemo(() => {
+    const q = planQuery.trim().toLowerCase()
+    const filtered = data.plans
+      .filter((p) => !p.archived_at)
+      .filter((p) => !categoryFilter || p.category === categoryFilter)
+      .filter(
+        (p) =>
+          !q ||
+          p.title.toLowerCase().includes(q) ||
+          p.file_name.toLowerCase().includes(q) ||
+          (p.description ?? "").toLowerCase().includes(q)
+      )
+    return [...filtered].sort((a, b) => {
+      switch (planSort) {
+        case "title":
+          return a.title.localeCompare(b.title, undefined, { sensitivity: "base" })
+        case "category":
+          return (
+            CATEGORY_META[a.category].label.localeCompare(
+              CATEGORY_META[b.category].label
+            ) || a.title.localeCompare(b.title)
+          )
+        default:
+          return b.created_at.localeCompare(a.created_at)
+      }
+    })
+  }, [data.plans, planQuery, categoryFilter, planSort])
   const archivedPlans = useMemo(
     () => data.plans.filter((p) => p.archived_at),
     [data.plans]
   )
+  // Chip row shows only categories that exist on this job (with counts).
+  const categoryCounts = useMemo(() => {
+    const m = new Map<Enums<"file_category">, number>()
+    for (const p of data.plans) {
+      if (p.archived_at) continue
+      m.set(p.category, (m.get(p.category) ?? 0) + 1)
+    }
+    return m
+  }, [data.plans])
 
   // Global tag pool for the filter chip row. Built from every visible
   // media tag (not just the currently-filtered set) so the user can pivot
@@ -141,34 +192,144 @@ export function FilesClient({ data }: { data: FilesData }) {
       .sort((a, b) => b.source_date.localeCompare(a.source_date))
   }, [data.media, search, tagFilter])
 
+  // Page-wide drag & drop (staff only): dropping files anywhere opens the
+  // upload dialog preloaded with them.
+  function onDragEnter(e: React.DragEvent) {
+    if (!canEdit || !e.dataTransfer.types.includes("Files")) return
+    e.preventDefault()
+    setDragDepth((d) => d + 1)
+  }
+  function onDragOver(e: React.DragEvent) {
+    if (!canEdit || !e.dataTransfer.types.includes("Files")) return
+    e.preventDefault()
+  }
+  function onDragLeave(e: React.DragEvent) {
+    if (!canEdit || !e.dataTransfer.types.includes("Files")) return
+    e.preventDefault()
+    setDragDepth((d) => Math.max(0, d - 1))
+  }
+  function onDrop(e: React.DragEvent) {
+    if (!canEdit || !e.dataTransfer.types.includes("Files")) return
+    e.preventDefault()
+    setDragDepth(0)
+    const files = Array.from(e.dataTransfer.files)
+    if (files.length === 0) return
+    setDroppedFiles(files)
+    setUploadOpen(true)
+  }
+
+  const hasPlanFilters = planQuery.trim() !== "" || categoryFilter !== null
+
   return (
-    <div className="max-w-7xl mx-auto px-4 md:px-6 py-5 space-y-8">
+    <div
+      className="relative max-w-7xl mx-auto px-4 md:px-6 py-5 space-y-8"
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {dragDepth > 0 && (
+        <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center rounded-lg border-2 border-dashed border-brand-500 bg-brand-50/80">
+          <div className="flex flex-col items-center gap-2 text-brand-700">
+            <UploadCloud className="h-10 w-10" />
+            <p className="text-sm font-medium">Drop files to upload</p>
+          </div>
+        </div>
+      )}
       {/* Plans section */}
       <section>
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
           <div>
             <h2 className="text-base font-semibold">Plans &amp; documents</h2>
             <p className="text-xs text-muted">
-              House plans, plot plans, permits, and contracts.
+              House plans, plot plans, permits, contracts, and quotes.
+              {canEdit ? " Drag files anywhere on this page to upload." : ""}
             </p>
           </div>
-          {canEdit && (
-            <Button size="sm" onClick={() => setUploadOpen(true)}>
-              <Upload className="h-3.5 w-3.5" /> Upload
-            </Button>
-          )}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted" />
+              <Input
+                value={planQuery}
+                onChange={(e) => setPlanQuery(e.target.value)}
+                placeholder="Search documents…"
+                className="pl-8 w-44 sm:w-52"
+              />
+            </div>
+            <Select
+              value={planSort}
+              onChange={(e) => setPlanSort(e.target.value as PlanSort)}
+              className="w-auto h-8 text-xs"
+              aria-label="Sort documents"
+            >
+              <option value="newest">Newest first</option>
+              <option value="title">Title A–Z</option>
+              <option value="category">By type</option>
+            </Select>
+            {canEdit && (
+              <Button size="sm" onClick={() => setUploadOpen(true)}>
+                <Upload className="h-3.5 w-3.5" /> Upload
+              </Button>
+            )}
+          </div>
         </div>
+
+        {categoryCounts.size > 0 && (
+          <div className="mb-3 flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] uppercase tracking-wide text-muted mr-1">
+              Type
+            </span>
+            {(Object.keys(CATEGORY_META) as Enums<"file_category">[])
+              .filter((c) => categoryCounts.has(c))
+              .map((c) => {
+                const active = categoryFilter === c
+                return (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setCategoryFilter(active ? null : c)}
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] cursor-pointer transition-colors",
+                      active
+                        ? "bg-brand-500 text-white"
+                        : "bg-surface text-muted border border-border-strong hover:text-foreground hover:bg-background"
+                    )}
+                  >
+                    {CATEGORY_META[c].label}
+                    <span className={active ? "opacity-80" : "opacity-60"}>
+                      {categoryCounts.get(c)}
+                    </span>
+                  </button>
+                )
+              })}
+            {categoryFilter && (
+              <button
+                type="button"
+                onClick={() => setCategoryFilter(null)}
+                className="text-[11px] text-muted hover:text-foreground underline cursor-pointer"
+              >
+                clear
+              </button>
+            )}
+          </div>
+        )}
 
         {activePlans.length === 0 ? (
           <EmptyState
             icon={<FileText className="h-8 w-8" />}
             title={
-              archivedPlans.length > 0 ? "No active plans" : "No plans uploaded"
+              hasPlanFilters
+                ? "No matches"
+                : archivedPlans.length > 0
+                  ? "No active plans"
+                  : "No plans uploaded"
             }
             description={
-              canEdit
-                ? "Upload the house plans, plot plan, permits, and contract here."
-                : "No documents yet."
+              hasPlanFilters
+                ? "Try different search terms or clear the type filter."
+                : canEdit
+                  ? "Upload the house plans, plot plan, permits, contract, and quotes here."
+                  : "No documents yet."
             }
           />
         ) : (
@@ -186,6 +347,7 @@ export function FilesClient({ data }: { data: FilesData }) {
                     id: p.id,
                     title: p.title,
                     category: p.category,
+                    client_visible: p.client_visible,
                   })
                 }
                 onShowHistory={() => setHistoryTarget(p)}
@@ -349,8 +511,12 @@ export function FilesClient({ data }: { data: FilesData }) {
       {uploadOpen && canEdit && (
         <UploadDialog
           open={uploadOpen}
-          onClose={() => setUploadOpen(false)}
+          onClose={() => {
+            setUploadOpen(false)
+            setDroppedFiles(null)
+          }}
           projectId={data.project_id}
+          initialFiles={droppedFiles}
         />
       )}
       {revisionTarget && canEdit && (
@@ -411,6 +577,9 @@ function PlanCard({
   const meta = CATEGORY_META[file.category]
   const Icon = meta.icon
   const isImage = file.file_type?.startsWith("image/") ?? false
+  const isPdf =
+    file.file_type === "application/pdf" ||
+    file.file_name.toLowerCase().endsWith(".pdf")
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const hasHistory = file.version > 1 || file.parent_file_id != null
@@ -451,15 +620,30 @@ function PlanCard({
     })
   }
 
+  function handleVisibility(next: boolean) {
+    startTransition(async () => {
+      try {
+        await setProjectFileClientVisibility({
+          id: file.id,
+          project_id: projectId,
+          visible: next,
+        })
+        toast.success(next ? "Visible to client" : "Hidden from client")
+        router.refresh()
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Action failed")
+      }
+    })
+  }
+
   return (
     <Card className={cn("flex flex-col", archived && "opacity-75")}>
-      <button
-        type="button"
-        onClick={onView}
-        className="aspect-[4/3] bg-background flex items-center justify-center overflow-hidden relative cursor-pointer group"
-        title="View"
-        aria-label={`View ${file.title}`}
-      >
+      {/* Thumbnail: images render directly; PDFs get a live first-page
+          preview via the browser's built-in reader (lazy, pointer-events
+          off — the overlay button owns the click); everything else keeps
+          the category icon. A div (not a button) so the PDF iframe stays
+          valid markup. */}
+      <div className="aspect-[4/3] bg-background flex items-center justify-center overflow-hidden relative group">
         {isImage && url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -467,23 +651,72 @@ function PlanCard({
             alt={file.title}
             className="h-full w-full object-cover"
           />
+        ) : isPdf && url ? (
+          <iframe
+            src={`${url}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`}
+            title={`Preview of ${file.title}`}
+            className="h-full w-full pointer-events-none"
+            loading="lazy"
+            tabIndex={-1}
+            aria-hidden
+          />
         ) : (
           <Icon className="h-12 w-12 text-muted" />
         )}
-        <span className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+        <button
+          type="button"
+          onClick={onView}
+          className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center cursor-pointer"
+          title="View"
+          aria-label={`View ${file.title}`}
+        >
           <Eye className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
-        </span>
+        </button>
         {file.version > 1 && (
-          <span className="absolute top-2 left-2 inline-flex items-center rounded-full bg-foreground/80 text-white text-[10px] font-medium px-1.5 py-0.5">
+          <span className="pointer-events-none absolute top-2 left-2 inline-flex items-center rounded-full bg-foreground/80 text-white text-[10px] font-medium px-1.5 py-0.5">
             v{file.version}
           </span>
         )}
-      </button>
+      </div>
       <CardBody className="flex-1 flex flex-col gap-1">
         <div className="flex items-center justify-between gap-2">
-          <Badge tone={meta.tone}>{meta.label}</Badge>
+          <span className="inline-flex items-center gap-1.5 min-w-0">
+            <Badge tone={meta.tone}>{meta.label}</Badge>
+            {canEdit && file.client_visible && (
+              <Badge tone="success">Client</Badge>
+            )}
+          </span>
           <div className="flex items-center gap-1">
-            {hasHistory && (
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => handleVisibility(!file.client_visible)}
+                disabled={pending}
+                className={cn(
+                  "p-1 cursor-pointer inline-flex",
+                  file.client_visible
+                    ? "text-brand-600 hover:text-foreground"
+                    : "text-muted hover:text-foreground"
+                )}
+                title={
+                  file.client_visible
+                    ? "Visible to the client — click to hide"
+                    : "Hidden from the client — click to share"
+                }
+                aria-label={
+                  file.client_visible ? "Hide from client" : "Show to client"
+                }
+              >
+                {file.client_visible ? (
+                  <Eye className="h-3.5 w-3.5" />
+                ) : (
+                  <EyeOff className="h-3.5 w-3.5" />
+                )}
+              </button>
+            )}
+            {/* Revision history is a staff action (getFileVersions is
+                staff-gated) — clients used to get a dead icon here. */}
+            {hasHistory && canEdit && (
               <button
                 type="button"
                 onClick={onShowHistory}
@@ -750,76 +983,137 @@ function UploadDialog({
   onClose,
   projectId,
   revisionOf,
+  initialFiles,
 }: {
   open: boolean
   onClose: () => void
   projectId: string
   // When set, the upload is treated as a new revision of this file:
-  // category + title pre-fill from it, and the saveProjectFile call carries
-  // replaces_id so the server links the chain.
+  // category + title + visibility pre-fill from it, and the saveProjectFile
+  // call carries replaces_id so the server links the chain. Revisions are
+  // single-file by nature; fresh uploads accept a batch.
   revisionOf?: {
     id: string
     title: string
     category: Enums<"file_category">
+    client_visible: boolean
   }
+  // Files dropped onto the page — adopted as the initial batch.
+  initialFiles?: File[] | null
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [uploading, setUploading] = useState(false)
+  const [progress, setProgress] = useState("")
   const [category, setCategory] = useState<Enums<"file_category">>(
     revisionOf?.category ?? "house_plans"
   )
-  const [title, setTitle] = useState(revisionOf?.title ?? "")
+  const [title, setTitle] = useState(
+    revisionOf?.title ??
+      (initialFiles?.length === 1
+        ? initialFiles[0].name.replace(/\.[a-z0-9]{2,5}$/i, "")
+        : "")
+  )
   const [description, setDescription] = useState("")
-  const [file, setFile] = useState<File | null>(null)
+  const [clientVisible, setClientVisible] = useState(
+    revisionOf?.client_visible ?? true
+  )
+  // Generated ids keep React keys stable even for same-name files.
+  const [files, setFiles] = useState<{ id: string; file: File }[]>(() =>
+    (initialFiles ?? []).map((file) => ({ id: crypto.randomUUID(), file }))
+  )
   const fileRef = useRef<HTMLInputElement>(null)
 
+  function addFiles(picked: FileList | null) {
+    if (!picked || picked.length === 0) return
+    const adds = Array.from(picked).map((file) => ({
+      id: crypto.randomUUID(),
+      file,
+    }))
+    // Revisions replace exactly one file; batches append.
+    setFiles((prev) => {
+      const next = revisionOf ? adds.slice(0, 1) : [...prev, ...adds]
+      // A lone file names itself so drag-drop is one click to submit.
+      if (!revisionOf && next.length === 1) {
+        setTitle((t) => t || next[0].file.name.replace(/\.[a-z0-9]{2,5}$/i, ""))
+      }
+      return next
+    })
+    if (fileRef.current) fileRef.current.value = ""
+  }
+
   async function handleSubmit() {
-    if (!file) {
-      toast.error("Pick a file")
+    if (files.length === 0) {
+      toast.error("Pick at least one file")
       return
     }
-    if (!title.trim()) {
+    // Single file (or revision): the Title field names it. A multi-file
+    // batch titles each row by its file name.
+    if (files.length === 1 && !title.trim()) {
       toast.error("Title is required")
       return
     }
     setUploading(true)
     try {
       const supabase = createSupabaseBrowserClient()
-      const ext = file.name.split(".").pop()?.toLowerCase() ?? "bin"
-      const path = `projects/${projectId}/plans/${Date.now()}-${Math.random()
-        .toString(36)
-        .slice(2, 8)}.${ext}`
-      const { error: upErr } = await supabase.storage
-        .from("project-files")
-        .upload(path, file, { contentType: file.type || undefined })
-      if (upErr) throw upErr
-
-      const payload: FileInputT = {
-        project_id: projectId,
-        category,
-        title: title.trim(),
-        description: description || null,
-        storage_path: path,
-        file_name: file.name,
-        file_type: file.type || null,
-        file_size: file.size,
-        replaces_id: revisionOf?.id,
-      }
-      startTransition(async () => {
+      let uploaded = 0
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i].file
+        setProgress(
+          files.length > 1
+            ? `Uploading ${i + 1} of ${files.length} — ${file.name}`
+            : "Uploading…"
+        )
+        const ext = file.name.split(".").pop()?.toLowerCase() ?? "bin"
+        const path = `projects/${projectId}/plans/${Date.now()}-${Math.random()
+          .toString(36)
+          .slice(2, 8)}.${ext}`
+        const result = await uploadToStorage(supabase, {
+          bucket: "project-files",
+          path,
+          body: file,
+          contentType: file.type || undefined,
+        })
+        if (!result.ok) {
+          toast.error(`${file.name}: ${result.error}`)
+          continue
+        }
+        const payload: FileInputT = {
+          project_id: projectId,
+          category,
+          title:
+            files.length === 1
+              ? title.trim()
+              : file.name.replace(/\.[a-z0-9]{2,5}$/i, ""),
+          description: description || null,
+          storage_path: path,
+          file_name: file.name,
+          file_type: file.type || null,
+          file_size: file.size,
+          client_visible: clientVisible,
+          replaces_id: revisionOf?.id,
+        }
         try {
           await saveProjectFile(payload)
-          toast.success("Uploaded")
-          router.refresh()
-          onClose()
+          uploaded++
         } catch (e) {
-          toast.error(e instanceof Error ? e.message : "Save failed")
+          toast.error(
+            `${file.name}: ${e instanceof Error ? e.message : "Save failed"}`
+          )
         }
-      })
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Upload failed")
+      }
+      if (uploaded > 0) {
+        toast.success(
+          uploaded === 1 ? "Uploaded" : `${uploaded} files uploaded`
+        )
+        startTransition(() => {
+          router.refresh()
+        })
+        onClose()
+      }
     } finally {
       setUploading(false)
+      setProgress("")
     }
   }
 
@@ -828,7 +1122,7 @@ function UploadDialog({
       <DialogContent size="lg">
         <DialogHeader>
           <DialogTitle>
-            {revisionOf ? `Replace "${revisionOf.title}"` : "Upload file"}
+            {revisionOf ? `Replace "${revisionOf.title}"` : "Upload files"}
           </DialogTitle>
         </DialogHeader>
         <DialogBody className="space-y-4">
@@ -839,20 +1133,24 @@ function UploadDialog({
                 setCategory(e.target.value as Enums<"file_category">)
               }
             >
-              <option value="house_plans">House plans</option>
-              <option value="plot_plan">Plot plan</option>
-              <option value="permit">Permit</option>
-              <option value="contract">Contract</option>
-              <option value="other">Other</option>
+              {(Object.keys(CATEGORY_META) as Enums<"file_category">[]).map(
+                (c) => (
+                  <option key={c} value={c}>
+                    {CATEGORY_META[c].label}
+                  </option>
+                )
+              )}
             </Select>
           </Field>
-          <Field label="Title">
-            <Input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="House plans — rev C"
-            />
-          </Field>
+          {files.length <= 1 && (
+            <Field label="Title">
+              <Input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="House plans — rev C"
+              />
+            </Field>
+          )}
           <Field label="Description">
             <Textarea
               value={description}
@@ -861,30 +1159,81 @@ function UploadDialog({
               placeholder="Optional"
             />
           </Field>
-          <Field label="File">
+          <Field label={revisionOf ? "File" : "Files"}>
             <input
               ref={fileRef}
               type="file"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              multiple={!revisionOf}
+              onChange={(e) => addFiles(e.target.files)}
               className="text-sm"
             />
-            {file && (
+            {files.length > 0 && (
+              <ul className="mt-1 space-y-0.5 text-xs text-muted">
+                {files.map((f) => (
+                  <li key={f.id} className="flex items-center gap-2">
+                    <span className="truncate">
+                      {f.file.name} · {(f.file.size / 1024 / 1024).toFixed(2)} MB
+                    </span>
+                    <button
+                      type="button"
+                      className="text-muted hover:text-danger cursor-pointer"
+                      onClick={() =>
+                        setFiles((prev) => prev.filter((x) => x.id !== f.id))
+                      }
+                      disabled={uploading}
+                      aria-label={`Remove ${f.file.name}`}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {files.length > 1 && (
               <p className="text-xs text-muted mt-1">
-                {file.name} · {(file.size / 1024 / 1024).toFixed(2)} MB
+                Each file is titled by its name; category, description, and
+                visibility apply to the whole batch.
               </p>
             )}
           </Field>
+          <label className="flex items-start gap-2 text-sm cursor-pointer">
+            <input
+              type="checkbox"
+              checked={clientVisible}
+              onChange={(e) => setClientVisible(e.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-border-strong"
+            />
+            <span>
+              <span className="font-medium">Visible to client</span>
+              <span className="block text-xs text-muted">
+                Uncheck to keep this off the homeowner&rsquo;s portal — you can
+                flip it later with the eye icon on the card.
+              </span>
+            </span>
+          </label>
+          {uploading && progress && (
+            <p className="text-xs text-muted">{progress}</p>
+          )}
         </DialogBody>
         <DialogFooter>
-          <Button type="button" variant="ghost" onClick={onClose}>
+          <Button type="button" variant="ghost" onClick={onClose} disabled={uploading}>
             Cancel
           </Button>
           <Button
             type="button"
             onClick={handleSubmit}
-            disabled={pending || uploading || !file || !title.trim()}
+            disabled={
+              pending ||
+              uploading ||
+              files.length === 0 ||
+              (files.length === 1 && !title.trim())
+            }
           >
-            {uploading ? "Uploading…" : pending ? "Saving…" : "Upload"}
+            {uploading
+              ? "Uploading…"
+              : files.length > 1
+                ? `Upload ${files.length} files`
+                : "Upload"}
           </Button>
         </DialogFooter>
       </DialogContent>
