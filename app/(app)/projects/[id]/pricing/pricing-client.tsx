@@ -4,6 +4,7 @@ import { useState, useTransition, useMemo } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import { Plus, Trash2, Receipt, DollarSign, FileDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -588,7 +589,7 @@ function DeleteButton({
         toast.success("Deleted")
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Delete failed")
+        toastActionError(e, "Delete failed")
       }
     })
   }
@@ -646,7 +647,7 @@ function PaymentDialog({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Save failed")
+        toastActionError(e, "Save failed")
       }
     })
   }

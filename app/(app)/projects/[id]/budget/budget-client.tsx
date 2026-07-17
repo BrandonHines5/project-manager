@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import {
   Download,
   FileSpreadsheet,
@@ -66,7 +67,7 @@ export function BudgetClient({
         if (done) toast.success(done)
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Something went wrong")
+        toastActionError(e, "Something went wrong")
       }
     })
 
@@ -605,7 +606,7 @@ function ImportDialog({
         setPreview(await parseBudgetImport(fd))
       } catch (e) {
         setFileName(null)
-        toast.error(e instanceof Error ? e.message : "Couldn't read that file")
+        toastActionError(e, "Couldn't read that file")
       }
     })
   }
@@ -629,7 +630,7 @@ function ImportDialog({
         close(false)
         onDone()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Import failed")
+        toastActionError(e, "Import failed")
       }
     })
   }

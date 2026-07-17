@@ -3,6 +3,7 @@
 import { useCallback, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError, actionErrorMessage } from "@/lib/action-error"
 import { Building2, Search, Loader2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -55,9 +56,7 @@ export function AddWarrantyProjectButton() {
       if (res.ok) setProjects(res.projects)
       else setLoadError(res.error)
     } catch (e) {
-      setLoadError(
-        e instanceof Error ? e.message : "Could not load CRM projects"
-      )
+      setLoadError(actionErrorMessage(e, "Could not load CRM projects"))
     } finally {
       setLoading(false)
     }
@@ -89,7 +88,7 @@ export function AddWarrantyProjectButton() {
           toast.error(res.error)
         }
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not add project")
+        toastActionError(e, "Could not add project")
       }
     })
   }

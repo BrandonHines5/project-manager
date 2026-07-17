@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState, useTransition } from "react"
 import Link from "next/link"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import { ChevronDown, ChevronRight, ExternalLink, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -164,7 +165,7 @@ export function InsuranceClient({
         const url = await getInsuranceDocumentUrl(documentId)
         window.open(url, "_blank", "noopener")
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not open document")
+        toastActionError(e, "Could not open document")
       }
     })
   }
@@ -422,9 +423,7 @@ function CompanyRows({
                             await deleteInsurancePolicy(p.id)
                             toast.success("Policy removed")
                           } catch (e) {
-                            toast.error(
-                              e instanceof Error ? e.message : "Delete failed"
-                            )
+                            toastActionError(e, "Delete failed")
                           }
                         })
                       }
@@ -560,7 +559,7 @@ function ReviewCard({
                   await assignInsuranceDocument(doc.id, companyId)
                   toast.success("Certificate filed")
                 } catch (e) {
-                  toast.error(e instanceof Error ? e.message : "Assign failed")
+                  toastActionError(e, "Assign failed")
                 }
               })
             }
@@ -580,7 +579,7 @@ function ReviewCard({
               await deleteInsuranceDocument(doc.id)
               toast.success("Document deleted")
             } catch (e) {
-              toast.error(e instanceof Error ? e.message : "Delete failed")
+              toastActionError(e, "Delete failed")
             }
           })
         }

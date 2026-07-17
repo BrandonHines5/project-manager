@@ -9,6 +9,7 @@ import { restoreDeletedItem } from "@/app/actions/trash"
 import { TRASH_RETENTION_DAYS, trashDaysLeft } from "@/lib/trash"
 import { cn } from "@/lib/utils"
 import { metaFor } from "./entity-meta"
+import { actionErrorMessage } from "@/lib/action-error"
 
 export type TrashItem = {
   id: string
@@ -74,7 +75,7 @@ export function TrashPanel({
             key: Date.now(),
             label,
             ok: false,
-            messages: [e instanceof Error ? e.message : "Restore failed."],
+            messages: [actionErrorMessage(e, "Restore failed.")],
           },
           ...prev.slice(0, 4),
         ])

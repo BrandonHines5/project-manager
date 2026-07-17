@@ -4,6 +4,7 @@ import { useState, useTransition, useRef } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import {
   Trash2,
   Plus,
@@ -112,7 +113,7 @@ export function PoDrawer({
         }
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Copy failed")
+        toastActionError(e, "Copy failed")
       }
     })
   }
@@ -287,7 +288,7 @@ export function PoDrawer({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Save failed")
+        toastActionError(e, "Save failed")
       }
     })
   }
@@ -308,7 +309,7 @@ export function PoDrawer({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Unrelease failed")
+        toastActionError(e, "Unrelease failed")
       }
     })
   }
@@ -330,7 +331,7 @@ export function PoDrawer({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Approve failed")
+        toastActionError(e, "Approve failed")
       }
     })
   }
@@ -350,7 +351,7 @@ export function PoDrawer({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Void failed")
+        toastActionError(e, "Void failed")
       }
     })
   }
@@ -370,7 +371,7 @@ export function PoDrawer({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Update failed")
+        toastActionError(e, "Update failed")
       }
     })
   }
@@ -394,7 +395,7 @@ export function PoDrawer({
           toast.error(res.error)
         }
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Push failed")
+        toastActionError(e, "Push failed")
       }
     })
   }
@@ -409,7 +410,7 @@ export function PoDrawer({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Delete failed")
+        toastActionError(e, "Delete failed")
       }
     })
   }
@@ -1108,7 +1109,7 @@ function PoCommentsThread({
         setBody("")
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not post")
+        toastActionError(e, "Could not post")
       }
     })
   }

@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { MessageSquare } from "lucide-react"
-import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import { Avatar } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Label, Textarea } from "@/components/ui/input"
@@ -55,7 +55,7 @@ export function CommentsThread({
         setBody("")
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not post")
+        toastActionError(e, "Could not post")
       }
     })
   }

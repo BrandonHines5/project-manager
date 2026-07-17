@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useTransition } from "react"
-import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import { Card, CardBody } from "@/components/ui/card"
 import { Select, Label } from "@/components/ui/input"
 import { saveNotificationPreference } from "@/app/actions/notification-preferences"
@@ -72,7 +72,7 @@ export function NotificationsSettingsClient({
         })
       } catch (e) {
         setPrefs((p) => ({ ...p, [key]: !enabled }))
-        toast.error(e instanceof Error ? e.message : "Failed to save")
+        toastActionError(e, "Failed to save")
       }
     })
   }

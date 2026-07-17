@@ -11,6 +11,7 @@ import {
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import { Plus, Trash2, Download, RefreshCw } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -240,7 +241,7 @@ export function WarrantySheet({ cards }: { cards: TrackerCard[] }) {
         setAddOpen(false)
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not add item")
+        toastActionError(e, "Could not add item")
       }
     })
   }
@@ -256,7 +257,7 @@ export function WarrantySheet({ cards }: { cards: TrackerCard[] }) {
           toast.error(res.error)
         }
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Sync failed")
+        toastActionError(e, "Sync failed")
       }
     })
   }
@@ -529,7 +530,7 @@ function TrackerRow({ item }: { item: TrackerItem }) {
         await dispatchPatch(item, fields)
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not save")
+        toastActionError(e, "Could not save")
       }
     })
   }
@@ -597,7 +598,7 @@ function TrackerRow({ item }: { item: TrackerItem }) {
         toast.success("Item deleted")
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not delete")
+        toastActionError(e, "Could not delete")
       }
     })
   }

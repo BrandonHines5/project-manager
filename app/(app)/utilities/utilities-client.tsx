@@ -3,6 +3,7 @@
 import { useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError, actionErrorMessage } from "@/lib/action-error"
 import { Droplets, FileDown, Send, Loader2, CheckCircle2, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card"
@@ -475,7 +476,7 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
         toast.success("Draft saved.")
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Save failed.")
+        toastActionError(e, "Save failed.")
       }
     })
   }
@@ -497,7 +498,7 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
         toast.success(`Generated ${out.length} form${out.length === 1 ? "" : "s"}.`)
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Generation failed.")
+        toastActionError(e, "Generation failed.")
       }
     })
   }
@@ -524,9 +525,7 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
           }
         } catch (e) {
           failed.push(p.key)
-          toast.error(
-            `${p.label}: ${e instanceof Error ? e.message : "Send failed."}`
-          )
+          toast.error(`${p.label}: ${actionErrorMessage(e, "Send failed.")}`)
         }
       }
       if (failed.length === 0) {
@@ -577,7 +576,7 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
         toast.success("Request deleted.")
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Delete failed.")
+        toastActionError(e, "Delete failed.")
       }
     })
   }
@@ -592,7 +591,7 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
         }
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Update failed.")
+        toastActionError(e, "Update failed.")
       }
     })
   }

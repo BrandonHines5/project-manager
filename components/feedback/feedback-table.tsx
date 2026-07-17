@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import { Trash2, Inbox } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Select, Textarea } from "@/components/ui/input"
@@ -144,7 +145,7 @@ function FeedbackTableRow({
         toast.success("Status updated")
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not update status")
+        toastActionError(e, "Could not update status")
       }
     })
   }
@@ -158,7 +159,7 @@ function FeedbackTableRow({
         toast.success("Notes saved")
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not save notes")
+        toastActionError(e, "Could not save notes")
       }
     })
   }
@@ -171,7 +172,7 @@ function FeedbackTableRow({
         toast.success("Request deleted")
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not delete")
+        toastActionError(e, "Could not delete")
       }
     })
   }

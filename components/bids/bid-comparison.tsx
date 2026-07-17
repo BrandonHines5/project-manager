@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import { Trophy, MessageSquare, ChevronDown, ChevronRight, Eye } from "lucide-react"
 import {
   Dialog,
@@ -107,7 +108,7 @@ export function BidComparison({
           if (!pkg.allow_multiple_awards) onClose()
         }
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Award failed")
+        toastActionError(e, "Award failed")
       }
     })
   }
@@ -383,7 +384,7 @@ function RecipientThread({
         toast.success("Posted — the sub was emailed their link")
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not post")
+        toastActionError(e, "Could not post")
       }
     })
   }

@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import { Users, X, Plus, Mail } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -106,7 +107,7 @@ function MembersDialog({
         setRoleOnProject("")
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not add")
+        toastActionError(e, "Could not add")
       }
     })
   }
@@ -122,7 +123,7 @@ function MembersDialog({
         toast.success("Removed")
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not remove")
+        toastActionError(e, "Could not remove")
       }
     })
   }
@@ -145,7 +146,7 @@ function MembersDialog({
         }
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not send invites")
+        toastActionError(e, "Could not send invites")
       }
     })
   }

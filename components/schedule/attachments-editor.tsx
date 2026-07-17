@@ -2,6 +2,7 @@
 
 import { useRef, useState, useTransition } from "react"
 import { toast } from "sonner"
+import { toastActionError, actionErrorMessage } from "@/lib/action-error"
 import { Paperclip, Trash2, ExternalLink } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/input"
@@ -90,9 +91,7 @@ export function AttachmentsEditor({
           })
         } catch (e) {
           toast.error(
-            `Couldn't attach ${file.name}: ${
-              e instanceof Error ? e.message : "unknown"
-            }`
+            `Couldn't attach ${file.name}: ${actionErrorMessage(e, "unknown")}`
           )
           // Roll the storage upload back so we don't leak an orphan file.
           await supabase.storage.from("project-files").remove([path])
@@ -116,7 +115,7 @@ export function AttachmentsEditor({
         await deleteScheduleItemAttachment({ id, project_id: projectId })
         onChange(attachments.filter((a) => a.id !== id))
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Delete failed")
+        toastActionError(e, "Delete failed")
       }
     })
   }

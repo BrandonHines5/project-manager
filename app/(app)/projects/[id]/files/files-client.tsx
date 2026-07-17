@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo, useRef, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError, actionErrorMessage } from "@/lib/action-error"
 import {
   Upload,
   FileText,
@@ -430,7 +431,7 @@ function PlanCard({
         toast.success("Deleted")
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Delete failed")
+        toastActionError(e, "Delete failed")
       }
     })
   }
@@ -446,7 +447,7 @@ function PlanCard({
         toast.success(next ? "Archived" : "Restored")
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Action failed")
+        toastActionError(e, "Action failed")
       }
     })
   }
@@ -687,7 +688,7 @@ function HistoryDialog({
         if (alive) setVersions(rows)
       })
       .catch((e) => {
-        if (alive) setError(e instanceof Error ? e.message : "Lookup failed")
+        if (alive) setError(actionErrorMessage(e, "Lookup failed"))
       })
     return () => {
       alive = false
@@ -813,11 +814,11 @@ function UploadDialog({
           router.refresh()
           onClose()
         } catch (e) {
-          toast.error(e instanceof Error ? e.message : "Save failed")
+          toastActionError(e, "Save failed")
         }
       })
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Upload failed")
+      toastActionError(e, "Upload failed")
     } finally {
       setUploading(false)
     }
@@ -940,7 +941,7 @@ function Lightbox({
         // Keep parent state in sync so the gallery row + filter chips refresh.
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Tag save failed")
+        toastActionError(e, "Tag save failed")
         // Roll back the optimistic update so chips revert.
         setTags(media.tags)
       }

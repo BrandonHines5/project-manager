@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import { MessageSquarePlus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -68,7 +69,7 @@ function FeedbackDialog({ onClose }: { onClose: () => void }) {
         onClose()
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not submit request")
+        toastActionError(e, "Could not submit request")
       }
     })
   }

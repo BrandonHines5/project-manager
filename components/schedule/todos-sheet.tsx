@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
-import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import { Plus, Pencil } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input, Select } from "@/components/ui/input"
@@ -144,7 +144,7 @@ function SheetRow({
         await updateScheduleItemFields(fields)
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Save failed")
+        toastActionError(e, "Save failed")
       }
     })
   }
