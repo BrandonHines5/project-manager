@@ -55,6 +55,16 @@ export function BidsClient({
       ? { mode: "edit", packageId: data.open_package_id }
       : null
   )
+  // Same-route deep links (?open= changes while this tree stays mounted —
+  // e.g. after the unified create dialog pushes to the new record) must
+  // still open the drawer. Render-time derived-state sync.
+  const [prevOpenId, setPrevOpenId] = useState(data.open_package_id)
+  if (data.open_package_id !== prevOpenId) {
+    setPrevOpenId(data.open_package_id)
+    if (data.open_package_id) {
+      setDrawerState({ mode: "edit", packageId: data.open_package_id })
+    }
+  }
   // awardRecipientId deep-links the comparison straight into the award
   // confirm for one bid (the "Award & create PO" shortcut in the drawer).
   const [compare, setCompare] = useState<{

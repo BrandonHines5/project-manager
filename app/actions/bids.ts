@@ -9,6 +9,7 @@ import { sendQuoSms, normalizeE164 } from "@/lib/quo"
 import { generateAccessToken } from "@/lib/tokens"
 import { formatDate } from "@/lib/utils"
 import { notifyCommentPosted } from "@/lib/comms/notify"
+import { canonicalizeLinkedAttachments } from "@/lib/purchasing/linked-files"
 
 const optStr = z.string().nullish()
 
@@ -154,8 +155,24 @@ async function reconcileAttachments(
       }
     }
   }
-  const newOnes = attachments.filter((a) => !nz(a.id))
+  let newOnes = attachments.filter((a) => !nz(a.id))
   if (newOnes.length) {
+    // Linked Files-tab rows are re-authorized against the package's REAL
+    // project and their metadata rebuilt from the DB — client-supplied
+    // path/name on a linked row is never trusted.
+    if (newOnes.some((a) => nz(a.project_file_id))) {
+      const { data: pkgRow, error: pkgRowErr } = await supabase
+        .from("bid_packages")
+        .select("project_id")
+        .eq("id", packageId)
+        .single()
+      if (pkgRowErr) throw new Error(pkgRowErr.message)
+      newOnes = await canonicalizeLinkedAttachments(
+        supabase,
+        pkgRow.project_id,
+        newOnes
+      )
+    }
     const startPos = existing?.length ?? 0
     const { error } = await supabase.from("bid_package_attachments").insert(
       newOnes.map((a, i) => ({
@@ -809,15 +826,28 @@ export async function closeBidPackage({
  * so bidding resumes exactly where it stopped; recipients still 'invited'
  * are re-notified with their new link (the old one is dead).
  */
-export async function reopenBidPackage({
-  id,
-  project_id,
-}: {
+export async function reopenBidPackage(input: {
   id: string
   project_id: string
 }): Promise<{ notified: number; token_failures: number }> {
+  // project_id from the caller is accepted for shape only — the package's
+  // STORED project drives logs and revalidation below.
+  const { id } = z
+    .object({ id: z.string().uuid(), project_id: z.string().uuid() })
+    .parse(input)
   const profile = await requireStaff()
   const supabase = await createSupabaseServerClient()
+
+  // Load the package under the caller's RLS session — its stored project_id
+  // and title feed everything downstream.
+  const { data: pkg, error: pkgErr } = await supabase
+    .from("bid_packages")
+    .select("id, project_id, title, due_date, status")
+    .eq("id", id)
+    .maybeSingle()
+  if (pkgErr) throw new Error(pkgErr.message)
+  if (!pkg) throw new Error("Bid package not found")
+  const project_id = pkg.project_id
 
   // CAS closed → sent with a count guard (mirror of closeBidPackage) so a
   // double-click can't run the re-token + re-notify block twice.
@@ -833,7 +863,17 @@ export async function reopenBidPackage({
     .from("bid_recipients")
     .select("id, status, company_id")
     .eq("bid_package_id", id)
-  if (rErr) throw new Error(rErr.message)
+  if (rErr) {
+    // The package flipped to 'sent' but no tokens exist yet — every link is
+    // dead. Best-effort compensation: put it back to 'closed' so the state
+    // stays coherent and the reopen can simply be retried.
+    await supabase
+      .from("bid_packages")
+      .update({ status: "closed", closed_at: new Date().toISOString() })
+      .eq("id", id)
+      .eq("status", "sent")
+    throw new Error(rErr.message)
+  }
 
   // One row at a time: token carries a unique index, and each recipient
   // must get their own fresh secret. Each write is count-verified — a
@@ -864,13 +904,8 @@ export async function reopenBidPackage({
   // silence would read as "the bid vanished". Submitted/declined recipients
   // aren't nagged; their my-bids card regains its link automatically.
   let notified = 0
-  const { data: pkg } = await supabase
-    .from("bid_packages")
-    .select("title, due_date")
-    .eq("id", id)
-    .maybeSingle()
   const invited = (recipients ?? []).filter((r) => r.status === "invited")
-  if (invited.length && pkg) {
+  if (invited.length) {
     const { data: companies } = await supabase
       .from("companies")
       .select("id, name, email, phone, notifications_enabled")

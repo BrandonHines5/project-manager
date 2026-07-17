@@ -1573,7 +1573,7 @@ function RecurrenceEditor({
                   Fixed schedule — cadence counts from the due date (e.g. every May 1)
                 </option>
                 <option value="after_completion">
-                  After completion — next due = date completed + interval (e.g. filters 3 months after done)
+                  After completion — next due = completion date + interval (e.g. air filters due 3 months after they were last changed)
                 </option>
               </Select>
             </Field>

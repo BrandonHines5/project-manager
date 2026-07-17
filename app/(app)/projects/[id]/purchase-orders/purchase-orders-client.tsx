@@ -50,6 +50,16 @@ export function PurchaseOrdersClient({
   const [drawerState, setDrawerState] = useState<
     { mode: "create" } | { mode: "edit"; poId: string } | null
   >(() => (data.open_po_id ? { mode: "edit", poId: data.open_po_id } : null))
+  // Same-route deep links (?open= changes while this tree stays mounted —
+  // e.g. after the unified create dialog pushes to the new record) must
+  // still open the drawer. Render-time derived-state sync.
+  const [prevOpenId, setPrevOpenId] = useState(data.open_po_id)
+  if (data.open_po_id !== prevOpenId) {
+    setPrevOpenId(data.open_po_id)
+    if (data.open_po_id) {
+      setDrawerState({ mode: "edit", poId: data.open_po_id })
+    }
+  }
 
   const editingPo =
     drawerState?.mode === "edit"

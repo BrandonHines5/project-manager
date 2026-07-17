@@ -11,6 +11,7 @@ import { generateAccessToken } from "@/lib/tokens"
 import { formatDate } from "@/lib/utils"
 import { notifyCommentPosted } from "@/lib/comms/notify"
 import { brandForProjectType } from "@/lib/brand"
+import { canonicalizeLinkedAttachments } from "@/lib/purchasing/linked-files"
 import type { Enums } from "@/lib/db/types"
 
 const optStr = z.string().nullish()
@@ -210,8 +211,24 @@ export async function savePurchaseOrder(input: PurchaseOrderInputT) {
       }
     }
   }
-  const newOnes = parsed.attachments.filter((a) => !nz(a.id))
+  let newOnes = parsed.attachments.filter((a) => !nz(a.id))
   if (newOnes.length) {
+    // Linked Files-tab rows are re-authorized against the PO's REAL project
+    // and their metadata rebuilt from the DB — client-supplied path/name on
+    // a linked row is never trusted.
+    if (newOnes.some((a) => nz(a.project_file_id))) {
+      const { data: poRow, error: poRowErr } = await supabase
+        .from("purchase_orders")
+        .select("project_id")
+        .eq("id", id)
+        .single()
+      if (poRowErr) throw new Error(poRowErr.message)
+      newOnes = await canonicalizeLinkedAttachments(
+        supabase,
+        poRow.project_id,
+        newOnes
+      )
+    }
     const startPos = existingAtts?.length ?? 0
     const { error } = await supabase.from("po_attachments").insert(
       newOnes.map((a, i) => ({
@@ -441,13 +458,16 @@ export async function createPoFromDecision(
     throw new Error("Only an approved selection or change order can become a PO.")
   }
 
+  // POs go to subs/vendors only — a client company must never receive one,
+  // regardless of what the picker offered.
   const { data: company, error: cErr } = await supabase
     .from("companies")
     .select("id")
     .eq("id", company_id)
+    .in("type", ["sub", "vendor"])
     .maybeSingle()
   if (cErr) throw new Error(cErr.message)
-  if (!company) throw new Error("Company not found")
+  if (!company) throw new Error("Pick a sub or vendor company.")
 
   let itemsQuery = supabase
     .from("decision_cost_items")

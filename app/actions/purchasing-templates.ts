@@ -103,13 +103,14 @@ export async function savePurchasingTemplate(input: PurchasingTemplateInputT) {
 export async function deletePurchasingTemplate(id: string, projectId?: string) {
   await requireStaff()
   const parsed = z.string().uuid().parse(id)
+  const parsedProjectId = z.string().uuid().optional().parse(projectId)
   const supabase = await createSupabaseServerClient()
   const { error } = await supabase
     .from("purchasing_templates")
     .delete()
     .eq("id", parsed)
   if (error) throw new Error(error.message)
-  revalidateTemplateConsumers(projectId)
+  revalidateTemplateConsumers(parsedProjectId)
 }
 
 // Templates are org-wide, so there's no single page to invalidate — the
@@ -121,8 +122,10 @@ function revalidateTemplateConsumers(projectId: string | null | undefined) {
 }
 
 /**
- * Templates for the create flows. Malformed line_items entries (hand-edited
- * or from an older shape) are dropped rather than crashing the page.
+ * Templates for the create flows. A template with ANY malformed line_items
+ * entry (hand-edited row, older shape) is excluded wholesale — offering it
+ * with lines silently missing could produce an incomplete bid/PO that looks
+ * complete. The row stays in the DB for repair; it just isn't offered.
  */
 export async function listPurchasingTemplates(): Promise<PurchasingTemplateRow[]> {
   await requireStaff()
@@ -132,20 +135,30 @@ export async function listPurchasingTemplates(): Promise<PurchasingTemplateRow[]
     .select("id, name, title, scope, flat_fee, line_items")
     .order("name", { ascending: true })
   if (error) throw new Error(error.message)
-  return (data ?? []).map((t) => {
+  const out: PurchasingTemplateRow[] = []
+  for (const t of data ?? []) {
     const rawLines = Array.isArray(t.line_items) ? t.line_items : []
     const lines: PurchasingTemplateLine[] = []
+    let malformed = !Array.isArray(t.line_items) && t.line_items !== null
     for (const raw of rawLines) {
       const parsed = TemplateLine.safeParse(raw)
       if (parsed.success) lines.push(parsed.data)
+      else malformed = true
     }
-    return {
+    if (malformed) {
+      console.warn(
+        `[purchasing-templates] template ${t.id} ("${t.name}") has malformed line_items — excluded from pickers`
+      )
+      continue
+    }
+    out.push({
       id: t.id,
       name: t.name,
       title: t.title,
       scope: t.scope,
       flat_fee: t.flat_fee,
       line_items: lines,
-    }
-  })
+    })
+  }
+  return out
 }

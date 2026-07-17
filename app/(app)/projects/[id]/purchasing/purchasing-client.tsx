@@ -35,6 +35,15 @@ export function PurchasingClient({
   const [tab, setTab] = useState<PurchasingTab>(initialTab)
   const [newOpen, setNewOpen] = useState(false)
 
+  // Same-route deep links (the create dialog pushes ?tab=…&open=… while this
+  // tree stays mounted) must still flip the toggle. Render-time derived-state
+  // sync — same sanctioned pattern as SectionTabs' lastProjectId.
+  const [prevInitialTab, setPrevInitialTab] = useState(initialTab)
+  if (initialTab !== prevInitialTab) {
+    setPrevInitialTab(initialTab)
+    setTab(initialTab)
+  }
+
   function switchTab(next: PurchasingTab) {
     setTab(next)
     // Keep the URL shareable without a server round-trip.

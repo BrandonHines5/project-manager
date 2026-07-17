@@ -209,6 +209,18 @@ export function PoDrawer({
 
   function requestClose() {
     if (dirty && !confirm("Discard unsaved changes?")) return
+    // Discarding drops not-yet-saved uploads from state — their blobs are
+    // already in Storage, so best-effort remove them (same per-tile cleanup
+    // the X button does). Linked Files-tab rows own their blob elsewhere.
+    const orphaned = attachments
+      .filter((a) => !a.id && !a.project_file_id)
+      .map((a) => a.storage_path)
+    if (orphaned.length) {
+      createSupabaseBrowserClient()
+        .storage.from("project-files")
+        .remove(orphaned)
+        .catch(() => {})
+    }
     onClose()
   }
 

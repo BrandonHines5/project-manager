@@ -368,8 +368,69 @@ export function DecisionDrawer({
   // Inline vendor picker for "Create PO…" on an approved decision.
   const [createPoOpen, setCreatePoOpen] = useState(false)
 
+  // The PO copies the SAVED decision (title/description/cost breakdown), so
+  // visible-but-unsaved edits would silently be missing from it. Fingerprint
+  // the PO-feeding fields against their last-saved values before creating.
+  function poSourceDirty(): boolean {
+    if (!decision) return false
+    if (title !== (decision.title ?? "")) return true
+    if (description !== (decision.description ?? "")) return true
+    const itemKey = (
+      choiceId: string | null,
+      costCodeId: string | null | undefined,
+      desc: string | null | undefined,
+      quantity: number,
+      unitCost: number
+    ) =>
+      JSON.stringify([choiceId, costCodeId ?? null, desc ?? null, quantity, unitCost])
+    const saved = data.cost_items
+      .filter((ci) => ci.decision_id === decision.id)
+      .map((ci) =>
+        itemKey(
+          ci.choice_id,
+          ci.cost_code_id,
+          ci.description,
+          Number(ci.quantity),
+          Number(ci.unit_cost)
+        )
+      )
+      .sort()
+    const current = [
+      ...costItems.map((ci) =>
+        itemKey(
+          null,
+          ci.cost_code_id,
+          ci.description,
+          Number(ci.quantity),
+          Number(ci.unit_cost)
+        )
+      ),
+      ...choices.flatMap((c) =>
+        c.cost_items.map((ci) =>
+          itemKey(
+            // Saved choices carry their DB id; a brand-new unsaved choice has
+            // none, which correctly reads as a difference.
+            c.id ?? "unsaved",
+            ci.cost_code_id,
+            ci.description,
+            Number(ci.quantity),
+            Number(ci.unit_cost)
+          )
+        )
+      ),
+    ].sort()
+    return JSON.stringify(saved) !== JSON.stringify(current)
+  }
+
   function handleCreatePo(companyId: string) {
     if (!decision) return
+    if (poSourceDirty()) {
+      toast.error(
+        "Save your changes first — the PO copies the saved cost breakdown."
+      )
+      setCreatePoOpen(false)
+      return
+    }
     startTransition(async () => {
       try {
         const { id, project_id, already_linked } = await createPoFromDecision({
@@ -3063,8 +3124,15 @@ function CreatePoFooter({
   const assignedCompanyIds = assignments
     .map((a) => a.company_id)
     .filter((x): x is string => !!x)
+  // POs go to subs/vendors only (the server enforces the same rule).
+  const vendorCompanies = companies.filter(
+    (c) => c.type === "sub" || c.type === "vendor"
+  )
   const [companyId, setCompanyId] = useState(
-    assignedCompanyIds.length === 1 ? assignedCompanyIds[0] : ""
+    assignedCompanyIds.length === 1 &&
+      vendorCompanies.some((c) => c.id === assignedCompanyIds[0])
+      ? assignedCompanyIds[0]
+      : ""
   )
   return (
     <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:items-center">
@@ -3072,7 +3140,7 @@ function CreatePoFooter({
         <Label className="mb-1">Create a draft PO for…</Label>
         <Select value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
           <option value="">— Pick a sub/vendor —</option>
-          {companies.map((c) => (
+          {vendorCompanies.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
             </option>
