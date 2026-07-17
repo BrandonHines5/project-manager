@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useTransition } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import {
   Plus,
   Search,
@@ -301,9 +302,7 @@ export function ProjectListSidebar({
         )
         router.refresh()
       } catch (e) {
-        toast.error(
-          e instanceof Error ? e.message : "Could not update labels"
-        )
+        toastActionError(e, "Could not update labels")
       }
     })
   }
@@ -333,7 +332,7 @@ export function ProjectListSidebar({
         toast.success(bits.join(" · "))
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not sync from CRM")
+        toastActionError(e, "Could not sync from CRM")
       }
     })
   }

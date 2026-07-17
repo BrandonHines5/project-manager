@@ -3,6 +3,7 @@
 import { useState, useTransition, useRef, useEffect, useMemo, Fragment } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError, actionErrorMessage } from "@/lib/action-error"
 import {
   Trash2,
   Plus,
@@ -628,7 +629,7 @@ export function DecisionDrawer({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Save failed")
+        toastActionError(e, "Save failed")
       }
     })
   }
@@ -643,7 +644,7 @@ export function DecisionDrawer({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Delete failed")
+        toastActionError(e, "Delete failed")
       }
     })
   }
@@ -664,7 +665,7 @@ export function DecisionDrawer({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Reset failed")
+        toastActionError(e, "Reset failed")
       }
     })
   }
@@ -694,7 +695,7 @@ export function DecisionDrawer({
         }
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Copy failed")
+        toastActionError(e, "Copy failed")
       }
     })
   }
@@ -741,7 +742,7 @@ export function DecisionDrawer({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not submit")
+        toastActionError(e, "Could not submit")
       }
     })
   }
@@ -2556,7 +2557,7 @@ function CommentsThread({
         setBody("")
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not post")
+        toastActionError(e, "Could not post")
       }
     })
   }
@@ -3232,7 +3233,7 @@ function CatalogLinkSearch({
       } catch (e) {
         if (!cancelled) {
           setHits([])
-          setError(e instanceof Error ? e.message : "Search failed")
+          setError(actionErrorMessage(e, "Search failed"))
         }
       } finally {
         if (!cancelled) setSearching(false)

@@ -3,6 +3,7 @@
 import { useState, useTransition, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import {
   Trash2,
   Plus,
@@ -413,7 +414,7 @@ export function ScheduleItemDialog({
           onClose()
         }
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Save failed")
+        toastActionError(e, "Save failed")
       }
     })
   }
@@ -464,9 +465,7 @@ export function ScheduleItemDialog({
           return
         }
       } catch (e) {
-        toast.error(
-          e instanceof Error ? e.message : "Could not check for dependents"
-        )
+        toastActionError(e, "Could not check for dependents")
         return
       }
     }
@@ -481,7 +480,7 @@ export function ScheduleItemDialog({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Delete failed")
+        toastActionError(e, "Delete failed")
       }
     })
   }
@@ -1573,7 +1572,7 @@ function DelayLogInline({
         )
         onLogged()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not log delay")
+        toastActionError(e, "Could not log delay")
       }
     })
   }

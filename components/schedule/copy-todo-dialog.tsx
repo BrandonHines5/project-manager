@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError, actionErrorMessage } from "@/lib/action-error"
 import { Copy, AlertTriangle, Loader2 } from "lucide-react"
 import {
   Dialog,
@@ -56,7 +57,7 @@ export function CopyTodoDialog({
       })
       .catch((e) => {
         if (active) {
-          const msg = e instanceof Error ? e.message : "Could not load projects"
+          const msg = actionErrorMessage(e, "Could not load projects")
           setLoadError(msg)
           toast.error(msg)
         }
@@ -160,7 +161,7 @@ export function CopyTodoDialog({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Copy failed")
+        toastActionError(e, "Copy failed")
       }
     })
   }

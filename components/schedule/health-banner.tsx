@@ -3,6 +3,7 @@
 import { useMemo, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import { Flag, Lock, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn, formatDate, todayISO } from "@/lib/utils"
@@ -76,9 +77,7 @@ export function ScheduleHealthBanner({ data }: { data: ScheduleData }) {
         )
         router.refresh()
       } catch (e) {
-        toast.error(
-          e instanceof Error ? e.message : "Could not set up milestones"
-        )
+        toastActionError(e, "Could not set up milestones")
       }
     })
   }

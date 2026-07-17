@@ -5,6 +5,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { FolderOpen, MessagesSquare, Search } from "lucide-react"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import { Button } from "@/components/ui/button"
 import { Input, Select } from "@/components/ui/input"
 import { EmptyState } from "@/components/ui/empty"
@@ -204,7 +205,7 @@ function UnfiledActions({
         toast.success("Filed to job")
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not file")
+        toastActionError(e, "Could not file")
       }
     })
   }
@@ -216,7 +217,7 @@ function UnfiledActions({
         toast.success("Dismissed")
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not dismiss")
+        toastActionError(e, "Could not dismiss")
       }
     })
   }

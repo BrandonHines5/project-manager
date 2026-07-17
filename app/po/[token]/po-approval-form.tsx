@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Input, Textarea, Field } from "@/components/ui/input"
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card"
 import { formatDate, cn } from "@/lib/utils"
+import { actionErrorMessage } from "@/lib/action-error"
 
 type Comment = {
   id: string
@@ -45,7 +46,7 @@ export function PoApprovalForm({
         router.refresh()
       } catch (e) {
         setError(
-          e instanceof Error ? e.message : "Something went wrong — please try again."
+          actionErrorMessage(e, "Something went wrong — please try again.")
         )
       }
     })
@@ -203,7 +204,7 @@ function CommentThread({ token, comments }: { token: string; comments: Comment[]
         router.refresh()
       } catch (e) {
         setError(
-          e instanceof Error ? e.message : "Something went wrong — please try again."
+          actionErrorMessage(e, "Something went wrong — please try again.")
         )
       }
     })

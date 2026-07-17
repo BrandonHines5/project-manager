@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import { AlertTriangle } from "lucide-react"
 import {
   Dialog,
@@ -93,7 +94,7 @@ export function DeleteWithDependentsDialog({
         toast.success("Deleted")
         onDeleted()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Delete failed")
+        toastActionError(e, "Delete failed")
       }
     })
   }

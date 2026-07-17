@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState, useTransition, type DragEvent } from "react"
 import Link from "next/link"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import {
   ChevronDown,
   ChevronRight,
@@ -309,7 +310,7 @@ export function InsuranceClient({
         `Downloaded ${exportDocIds.length} document${exportDocIds.length === 1 ? "" : "s"}`
       )
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Export failed")
+      toastActionError(e, "Export failed")
     } finally {
       setExporting(false)
     }
@@ -321,7 +322,7 @@ export function InsuranceClient({
         const url = await getInsuranceDocumentUrl(documentId)
         window.open(url, "_blank", "noopener")
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not open document")
+        toastActionError(e, "Could not open document")
       }
     })
   }
@@ -731,9 +732,7 @@ function CompanyRows({
                             await deleteInsurancePolicy(p.id)
                             toast.success("Policy removed")
                           } catch (e) {
-                            toast.error(
-                              e instanceof Error ? e.message : "Delete failed"
-                            )
+                            toastActionError(e, "Delete failed")
                           }
                         })
                       }
@@ -781,9 +780,7 @@ function CompanyRows({
                               await deleteInsuranceDocument(d.id)
                               toast.success("Document deleted")
                             } catch (e) {
-                              toast.error(
-                                e instanceof Error ? e.message : "Delete failed"
-                              )
+                              toastActionError(e, "Delete failed")
                             }
                           })
                         }}
@@ -959,7 +956,7 @@ function ReviewCard({
                   await assignInsuranceDocument(doc.id, companyId)
                   toast.success("Document filed")
                 } catch (e) {
-                  toast.error(e instanceof Error ? e.message : "Assign failed")
+                  toastActionError(e, "Assign failed")
                 }
               })
             }
@@ -985,7 +982,7 @@ function ReviewCard({
               await deleteInsuranceDocument(doc.id)
               toast.success("Document deleted")
             } catch (e) {
-              toast.error(e instanceof Error ? e.message : "Delete failed")
+              toastActionError(e, "Delete failed")
             }
           })
         }}

@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState, useTransition } from "react"
-import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import {
   CalendarDays,
   Plus,
@@ -273,9 +273,7 @@ function TodoRow({
           status: isComplete ? "not_started" : "complete",
         })
       } catch (err) {
-        toast.error(
-          err instanceof Error ? err.message : "Could not update status"
-        )
+        toastActionError(err, "Could not update status")
       }
     })
   }

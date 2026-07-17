@@ -43,6 +43,7 @@ import {
   type SpeechRecognitionLike,
 } from "@/lib/speech/web-speech"
 import { useScreenWakeLock } from "@/lib/hooks/use-wake-lock"
+import { actionErrorMessage } from "@/lib/action-error"
 
 // `isQuestion` marks an assistant turn that is the agent's ask_user clarifying
 // question (vs a help-desk / reporting answer or a plan summary), so the bubble
@@ -248,7 +249,7 @@ export function AIAgent({ dark = false }: { dark?: boolean }) {
       } catch (e) {
         setPhase({
           kind: "error",
-          message: e instanceof Error ? e.message : "Agent failed",
+          message: actionErrorMessage(e, "Agent failed"),
         })
       }
     })
@@ -333,10 +334,10 @@ export function AIAgent({ dark = false }: { dark?: boolean }) {
         console.error("[applyPlan] unexpected failure:", e)
         setPhase({
           kind: "error",
-          message:
-            e instanceof Error
-              ? e.message
-              : "Apply failed — open the dev tools console for details.",
+          message: actionErrorMessage(
+            e,
+            "Apply failed — open the dev tools console for details."
+          ),
         })
       }
     })

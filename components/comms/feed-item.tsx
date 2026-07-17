@@ -13,6 +13,7 @@ import {
   CornerDownRight,
 } from "lucide-react"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import { Avatar } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/input"
@@ -134,7 +135,7 @@ export function FeedItemRow({
         setReplying(false)
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not post reply")
+        toastActionError(e, "Could not post reply")
       }
     })
   }
