@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { getCrmProjectStatus } from "@/lib/supabase/crm"
 import { requireStaff } from "@/lib/auth"
 import { addDays } from "@/lib/utils"
 import {
@@ -232,6 +233,15 @@ export async function createProject(
     redirect(`/projects/${templateResult.id}/schedule`)
   }
 
+  // Mirror the CRM's status from birth. Without this a new job takes the
+  // form's default ("In Work") and only corrects to the dashboard's status on
+  // the next "Sync from CRM". Look the job up by project_number and, when the
+  // CRM has it, adopt its status and store the verbatim word (what the badge
+  // shows). Falls back to the form value when the CRM isn't configured or has
+  // no matching row. Same mapping as syncProjectsFromCrm.
+  const crmStatus = await getCrmProjectStatus(input.project_number)
+  const crmSyncedAt = crmStatus ? new Date().toISOString() : null
+
   const supabase = await createSupabaseServerClient()
   const { data, error } = await supabase
     .from("projects")
@@ -239,7 +249,9 @@ export async function createProject(
       project_number: input.project_number,
       name: input.name,
       address: emptyToNull(input.address),
-      status: input.status,
+      status: crmStatus?.mapped ?? input.status,
+      crm_status: crmStatus?.crmStatus ?? null,
+      crm_status_synced_at: crmSyncedAt,
       project_type: input.project_type ?? null,
       contract_price: input.contract_price ?? null,
       start_date: emptyToNull(input.start_date) ?? null,
@@ -803,6 +815,7 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     { data: srcFollowups, error: followupsErr },
     { data: srcAttachments, error: attachmentsErr },
     { data: srcRoleAssignments, error: roleAssignmentsErr },
+    { data: srcRoleMembers, error: roleMembersErr },
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -875,6 +888,14 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
       .select("schedule_item_id, role_id, schedule_items!inner(project_id)")
       .eq("schedule_items.project_id", parsed.source_project_id)
       .not("role_id", "is", null),
+    // Role members: the "who fills each role" map (Project Manager, Site
+    // Superintendent, and every trade role). Copied verbatim so a job built
+    // from the Template inherits the same people / companies in the same
+    // roles. Roles are org-wide, so only project_id changes on the copy.
+    supabase
+      .from("project_role_members")
+      .select("role_id, profile_id, company_id")
+      .eq("project_id", parsed.source_project_id),
   ])
   const readErr =
     sourceErr ??
@@ -886,7 +907,8 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     costItemsErr ??
     followupsErr ??
     attachmentsErr ??
-    roleAssignmentsErr
+    roleAssignmentsErr ??
+    roleMembersErr
   if (readErr) throw new Error(`Source read failed: ${readErr.message}`)
   if (!source) throw new Error("Source project not found")
 
@@ -956,11 +978,19 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
   //    to empty.
   const ovr = <T,>(o: T | undefined | null, fallback: T): T =>
     o === undefined ? fallback : (o as T)
+  // Mirror the CRM's status for the new job (keyed on its number) so a
+  // template-built job matches the dashboard from birth. The CRM is the source
+  // of truth for status, so it wins over both the caller's override_status and
+  // the template's own status; when the CRM has no row (plain duplicate, or CRM
+  // unconfigured) we fall back to those, preserving prior behavior.
+  const crmStatus = await getCrmProjectStatus(parsed.new_project_number)
   const insertProject = {
     project_number: parsed.new_project_number,
     name: parsed.new_name,
     address: ovr(parsed.override_address, source.address),
-    status: parsed.override_status ?? source.status,
+    status: crmStatus?.mapped ?? parsed.override_status ?? source.status,
+    crm_status: crmStatus?.crmStatus ?? null,
+    crm_status_synced_at: crmStatus ? new Date().toISOString() : null,
     project_type: ovr(parsed.override_project_type, source.project_type),
     contract_price: ovr(parsed.override_contract_price, source.contract_price),
     start_date: parsed.new_start_date ?? source.start_date,
@@ -1132,6 +1162,32 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
       .from("schedule_assignments")
       .insert(newRoleAssignments)
     if (raErr) throw new Error(raErr.message)
+  }
+
+  // 3c. Copy project role members — the "who fills each role" map (Project
+  //     Manager, Site Superintendent, and every trade role). Roles are
+  //     org-wide, so the role_id carries over directly; only project_id changes
+  //     and the profile/company assignee copies verbatim. This is what makes a
+  //     job built from the Template inherit the Template's role assignments
+  //     (the same people / companies in the same roles). The PK is
+  //     (project_id, role_id) and the source rows are already unique per role.
+  type RoleMemberRow = Pick<
+    Tables<"project_role_members">,
+    "role_id" | "profile_id" | "company_id"
+  >
+  const roleMemberRows = (srcRoleMembers ?? []) as RoleMemberRow[]
+  const newRoleMembers = roleMemberRows.map((m) => ({
+    project_id: newProject.id,
+    role_id: m.role_id,
+    profile_id: m.profile_id,
+    company_id: m.company_id,
+    updated_by: profile.id,
+  }))
+  if (newRoleMembers.length) {
+    const { error: rmErr } = await supabase
+      .from("project_role_members")
+      .insert(newRoleMembers)
+    if (rmErr) throw new Error(rmErr.message)
   }
 
   // 4. Copy predecessor edges, mapping both ends through idMap. Items the
@@ -1468,6 +1524,7 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     itemsCopied: idMap.size,
     itemsSkipped: skippedItemIds.size,
     checklistsCopied: newChecklists.length,
+    roleMembersCopied: newRoleMembers.length,
     predecessorsCopied: newPreds.length,
     decisionsCopied,
     decisionsSkipped: (srcDecisions?.length ?? 0) - decisionsCopied,
