@@ -10,6 +10,21 @@ export type OnsitePromptTrigger =
   | "todo_past_due"
   | "todo_due_today"
 
+// A sub/vendor the staffer can text about this item, resolved from the
+// item's SAVED assignments: a directly-assigned company, or the company
+// filling an assigned ROLE on this project. The server action
+// (sendQuoTextToSub) re-resolves and re-verifies the assignment — this list
+// is just UX.
+export type OnsiteTextRecipient = {
+  key: string
+  label: string
+  companyName: string
+  phone: string | null
+  target:
+    | { kind: "company"; company_id: string }
+    | { kind: "role"; role_id: string }
+}
+
 export type OnsitePrompt = {
   id: string
   title: string
@@ -20,6 +35,7 @@ export type OnsitePrompt = {
   end_date: string | null
   due_date: string | null
   question: string
+  recipients: OnsiteTextRecipient[]
 }
 
 const MAX_PROMPTS = 20
@@ -87,6 +103,7 @@ export async function getOnsitePrompts(
       end_date: row.end_date,
       due_date: row.due_date,
       question: buildQuestion(row.title, trigger, row),
+      recipients: [],
     })
   }
 
@@ -101,7 +118,108 @@ export async function getOnsitePrompts(
     return aDate.localeCompare(bDate)
   })
 
-  return prompts.slice(0, MAX_PROMPTS)
+  const kept = prompts.slice(0, MAX_PROMPTS)
+  await attachTextRecipients(supabase, projectId, kept)
+  return kept
+}
+
+/**
+ * Resolves the textable sub/vendor per prompt from its saved assignments —
+ * a directly-assigned company, or the company filling an assigned role on
+ * this project (mirrors the schedule dialog's "Send text to sub"). Only for
+ * the prompts actually shown, so this is a handful of small queries.
+ */
+async function attachTextRecipients(
+  supabase: SupabaseClient<Database>,
+  projectId: string,
+  prompts: OnsitePrompt[]
+): Promise<void> {
+  if (prompts.length === 0) return
+  const itemIds = prompts.map((p) => p.id)
+  const { data: assignments } = await supabase
+    .from("schedule_assignments")
+    .select("schedule_item_id, company_id, role_id")
+    .in("schedule_item_id", itemIds)
+  if (!assignments || assignments.length === 0) return
+
+  const roleIds = Array.from(
+    new Set(assignments.map((a) => a.role_id).filter((v): v is string => !!v))
+  )
+  const [{ data: roles }, { data: roleMembers }] = await Promise.all([
+    roleIds.length
+      ? supabase.from("roles").select("id, name").in("id", roleIds)
+      : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+    roleIds.length
+      ? supabase
+          .from("project_role_members")
+          .select("role_id, company_id")
+          .eq("project_id", projectId)
+          .in("role_id", roleIds)
+      : Promise.resolve({
+          data: [] as { role_id: string; company_id: string | null }[],
+        }),
+  ])
+  const roleName = new Map((roles ?? []).map((r) => [r.id, r.name]))
+  const roleCompany = new Map(
+    (roleMembers ?? []).map((m) => [m.role_id, m.company_id])
+  )
+
+  const companyIds = new Set<string>()
+  for (const a of assignments) {
+    if (a.company_id) companyIds.add(a.company_id)
+    if (a.role_id) {
+      const cid = roleCompany.get(a.role_id)
+      if (cid) companyIds.add(cid)
+    }
+  }
+  if (companyIds.size === 0) return
+  const { data: companies } = await supabase
+    .from("companies")
+    .select("id, name, phone, type")
+    .in("id", Array.from(companyIds))
+  const companyById = new Map((companies ?? []).map((c) => [c.id, c]))
+
+  const byItem = new Map<string, typeof assignments>()
+  for (const a of assignments) {
+    const list = byItem.get(a.schedule_item_id) ?? []
+    list.push(a)
+    byItem.set(a.schedule_item_id, list)
+  }
+
+  for (const prompt of prompts) {
+    const list = byItem.get(prompt.id) ?? []
+    const seen = new Set<string>()
+    // Direct company assignments first — they win the dedupe against a role
+    // resolving to the same company.
+    for (const a of list) {
+      if (!a.company_id) continue
+      const c = companyById.get(a.company_id)
+      if (!c || c.type === "client" || seen.has(c.id)) continue
+      seen.add(c.id)
+      prompt.recipients.push({
+        key: `company:${c.id}`,
+        label: c.name,
+        companyName: c.name,
+        phone: c.phone,
+        target: { kind: "company", company_id: c.id },
+      })
+    }
+    for (const a of list) {
+      if (!a.role_id) continue
+      const cid = roleCompany.get(a.role_id)
+      const c = cid ? companyById.get(cid) : undefined
+      // Role unfilled or filled by staff/client — no SMS target.
+      if (!c || c.type === "client" || seen.has(c.id)) continue
+      seen.add(c.id)
+      prompt.recipients.push({
+        key: `role:${a.role_id}`,
+        label: `${c.name} · ${roleName.get(a.role_id) ?? "Role"}`,
+        companyName: c.name,
+        phone: c.phone,
+        target: { kind: "role", role_id: a.role_id },
+      })
+    }
+  }
 }
 
 function classify(

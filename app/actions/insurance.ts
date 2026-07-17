@@ -13,6 +13,7 @@ import { isRequiredInsuranceType } from "@/lib/insurance/requirements"
 import {
   ingestInsuranceDocument,
   materializePolicies,
+  fillAgentContactFromExtraction,
   INSURANCE_BUCKET,
 } from "@/lib/insurance/ingest"
 import type { CoiExtraction } from "@/lib/insurance/extract"
@@ -32,6 +33,7 @@ export async function processStoredInsuranceDocument(input: {
   fileType: string
   fileSize: number
   companyId?: string | null
+  docKind?: "coi" | "w9" | "sma"
 }) {
   await requireStaff()
   const parsed = z
@@ -43,6 +45,7 @@ export async function processStoredInsuranceDocument(input: {
       fileType: z.string().min(1).max(100),
       fileSize: z.number().int().positive(),
       companyId: Uuid.nullish(),
+      docKind: z.enum(["coi", "w9", "sma"]).optional(),
     })
     .parse(input)
 
@@ -53,6 +56,7 @@ export async function processStoredInsuranceDocument(input: {
     fileSize: parsed.fileSize,
     source: "manual",
     companyId: parsed.companyId ?? undefined,
+    docKind: parsed.docKind ?? "coi",
   })
   revalidatePath(INSURANCE_PATH)
   return result
@@ -90,6 +94,10 @@ export async function assignInsuranceDocument(documentId: string, companyId: str
     .update({ status: "processed", company_id: companyId })
     .eq("id", documentId)
   if (updErr) throw new Error(updErr.message)
+  // Capture the cert's Producer (agency) contact onto the company's blank
+  // agent fields — the manual-assign path should teach the directory just
+  // like the auto-match path does.
+  await fillAgentContactFromExtraction(supabase, companyId, extraction)
   revalidatePath(INSURANCE_PATH)
 }
 
@@ -185,14 +193,19 @@ export async function sendInsuranceRequest(companyId: string): Promise<{
 
   const { data: company, error } = await supabase
     .from("companies")
-    .select("id, name, email, contact_name, insurance_upload_token")
+    .select(
+      "id, name, email, contact_name, insurance_upload_token, insurance_agent_email"
+    )
     .eq("id", companyId)
     .single()
   if (error || !company) {
     return { sent: false, reason: error?.message ?? "Company not found" }
   }
-  if (!company.email) {
-    return { sent: false, reason: "No email on file for this company" }
+  if (!company.email && !company.insurance_agent_email) {
+    return {
+      sent: false,
+      reason: "No email on file for this company or its insurance agent",
+    }
   }
 
   // Current policy per type; mention the ones expiring within 30 days or
@@ -220,8 +233,15 @@ export async function sendInsuranceRequest(companyId: string): Promise<{
     uploadUrl: appUrl(`/insurance-upload/${company.insurance_upload_token}`),
   })
   const replyTo = insuranceReplyTo()
+  // The request goes to the sub AND their insurance agent when an agent
+  // email is on file — the agent usually issues the certificate anyway. A
+  // company with only an agent email still gets the request (agent as To).
+  const agentEmail = company.insurance_agent_email?.trim() || null
+  const to = company.email ?? agentEmail!
+  const cc = company.email && agentEmail && agentEmail !== company.email ? agentEmail : undefined
   return sendEmail({
-    to: company.email,
+    to,
+    ...(cc ? { cc } : {}),
     // Replies (usually with the cert attached) route to the inbound
     // pipeline instead of bouncing off the send-only From address.
     ...(replyTo ? { replyTo } : {}),

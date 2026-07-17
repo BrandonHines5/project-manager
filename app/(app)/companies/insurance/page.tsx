@@ -22,7 +22,9 @@ export default async function InsurancePage() {
   ] = await Promise.all([
     supabase
       .from("companies")
-      .select("id, name, type, email, contact_name, status, notifications_enabled")
+      .select(
+        "id, name, aka, type, email, contact_name, status, notifications_enabled, insurance_agent_name, insurance_agent_email, insurance_agent_phone"
+      )
       .order("name"),
     // Newest-first with a generous cap: if the table ever outgrows it, the
     // rows dropped are the OLDEST history, so current-coverage status (which
@@ -37,10 +39,10 @@ export default async function InsurancePage() {
     supabase
       .from("insurance_documents")
       .select(
-        "id, company_id, file_name, file_type, source, email_from, email_subject, status, extracted_company_name, extraction_error, received_at"
+        "id, company_id, file_name, file_type, source, doc_kind, email_from, email_subject, status, extracted_company_name, extraction_error, received_at"
       )
       .order("received_at", { ascending: false })
-      .limit(200),
+      .limit(300),
   ])
   if (companiesErr) throw new Error(companiesErr.message)
   if (policiesErr) throw new Error(policiesErr.message)
@@ -52,11 +54,15 @@ export default async function InsurancePage() {
         Tables<"companies">,
         | "id"
         | "name"
+        | "aka"
         | "type"
         | "email"
         | "contact_name"
         | "status"
         | "notifications_enabled"
+        | "insurance_agent_name"
+        | "insurance_agent_email"
+        | "insurance_agent_phone"
       >[]}
       policies={policies ?? []}
       documents={documents ?? []}

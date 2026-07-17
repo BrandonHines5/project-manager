@@ -321,12 +321,20 @@ Out of scope (v1): PO payments/bills and lien waivers live in QuickBooks/Adaptiv
       "reminder",
       "upload",
       "coverage",
+      "w9",
+      "sma",
+      "master agreement",
+      "audit",
+      "export",
+      "agent",
     ],
-    body: `The Insurance dashboard (under Companies → Insurance) tracks each sub's certificates of insurance. It records policies by type — general liability and workers' comp are required; auto and umbrella are tracked. The "current" policy for a company + type is the one with the latest expiration; older ones become history.
+    body: `The Insurance dashboard (under Companies → Insurance) tracks each sub's certificates of insurance. It records policies by type — general liability and workers' comp are required; auto and umbrella are tracked. The "current" policy for a company + type is the one with the latest expiration; older ones become history. GL and WC can arrive on two separate certificates with different expiration dates — each coverage type tracks its own dates.
 
-A COI can arrive three ways, all landing in the same review queue: forwarded to a dedicated inbound email address, uploaded by the sub through their private upload link, or uploaded manually by staff. Incoming documents are read by AI to pull out the policy details and auto-match to a company; anything ambiguous lands in the review queue for a staffer to assign.
+A COI can arrive three ways, all landing in the same review queue: forwarded to a dedicated inbound email address, uploaded by the sub through their private upload link, or uploaded manually by staff. Staff can also drag and drop several files at once anywhere on the Insurance page. Incoming certificates are read by AI to pull out the policy details and auto-match to a company (by sender email, by the insured name matching a company's name or AKA, and by remembering how staff filed past certificates); anything ambiguous lands in the review queue for a staffer to assign — and assigning it once teaches the matcher that spelling for next time.
 
-Only companies marked "Approved for Use" are required to carry insurance — the dashboard focuses on them by default ("Show all statuses" reveals the rest). Expiration reminders email a company (with their upload link) when a current policy is within 7 days of expiring. Automatic reminders are gated by a global on/off switch and are off until the site goes live, but the manual "Send request" button always works.`,
+The page also stores each sub's W9 and Subcontractor Master Agreement (SMA): pick the document type when uploading, and the Docs column shows what's on file. For audits, select multiple companies with the checkboxes and "Download documents" to get one ZIP with each company's current certificates plus latest W9 and SMA.
+
+Only companies marked "Approved for Use" are required to carry insurance — the dashboard focuses on them by default ("Show all statuses" reveals the rest). Expiration reminders email a company (with their upload link) when a current policy is within 7 days of expiring, and CC the sub's insurance agent when one is on file (agent contact lives on the company profile and is auto-filled from the "Producer" on uploaded certificates). Automatic reminders are gated by a global on/off switch and are off until the site goes live, but the manual "Send request" button always works.`,
   },
   {
     id: "companies",
@@ -344,7 +352,7 @@ Only companies marked "Approved for Use" are required to carry insurance — the
       "notifications",
       "approved for use",
     ],
-    body: `Companies is your directory of subs and vendors. Each company has a type, one or more trades, contact details (including a phone number used for texting), a status such as "Approved for Use," and a notifications setting.
+    body: `Companies is your directory of subs and vendors. Each company has a type, one or more trades, contact details (including a phone number used for texting), a status such as "Approved for Use," and a notifications setting. A company can also carry an "Also Known As" (AKA): the Name field holds the official name used on payments and insurance, while the AKA is the everyday name that may show up on invoices — both are searchable, and insurance matching checks both. The company profile also stores the sub's insurance agent contact, which gets CC'd on certificate requests.
 
 The notifications setting matters: automated messages (bid invites/reminders, PO links, assignment texts, expiration reminders) respect it — a company with notifications off won't be auto-texted. A staffer's explicit "send" click can still override that for one-off sends. Trades and contact info from here feed bidding, purchase orders, insurance, and the AI assistant when it needs to find the right sub to text.`,
   },
@@ -459,7 +467,7 @@ Most other configuration (a company's notification setting, a project's status, 
 
 2. Reporting — answer questions about your live data: "What's slipping this week?", "Who hasn't bid on the framing package?", "Is the plumber's PO approved?" It reads the data and answers in plain language.
 
-3. Field notes & bulk updates — relay what's happening on site (typed or dictated by voice) and it drafts the actions that follow: schedule updates, new to-dos, assignments, a text to a sub, a bid reminder, and a daily-log note. It can also make the same change across many jobs at once ("add this checklist item to the framing to-do in every open project").
+3. Field notes & bulk updates — relay what's happening on site (typed or dictated by voice) and it drafts the actions that follow: schedule updates, new to-dos, assignments, a text to a sub, a bid reminder, a draft change order when the homeowner asks for extra or changed work ("the client wants to add a covered patio" → a draft change order to price), and a daily-log note. It can also make the same change across many jobs at once ("add this checklist item to the framing to-do in every open project").
 
 Nothing happens automatically. For any change, the assistant shows you a plan of exactly what it will do, and you review and approve it before it runs — changes that modify existing data or send a text require you to type "apply" to confirm. On a project page the dialog auto-scopes to that job (shown as a chip you can clear). On the Onsite tab, a voice-memo walkthrough feeds the same assistant and attaches your photos to the daily log automatically.
 

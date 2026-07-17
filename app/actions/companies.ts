@@ -23,6 +23,9 @@ const CompanyInput = z
   .object({
     id: optStr,
     name: z.string().min(1).max(200),
+    // "Also Known As" — name is the OFFICIAL name (payments, insurance);
+    // aka is the everyday name that may appear on invoices/communication.
+    aka: optStr,
     type: z.enum(["sub", "vendor", "client"]),
     // Kept for back-compat callers; the canonical store is the
     // company_trades table. The save_company_with_trades RPC writes the
@@ -42,6 +45,11 @@ const CompanyInput = z
     postal_code: optStr,
     website: optStr,
     status: optStr,
+    // The sub's insurance agency/agent (ACORD "Producer"). Insurance
+    // requests are CC'd to the agent email when present.
+    insurance_agent_name: optStr,
+    insurance_agent_email: optStr,
+    insurance_agent_phone: optStr,
     // Per-company notification switch. Optional so a partial-update caller
     // can't silently flip it; the edit dialog always sends it.
     notifications_enabled: z.boolean().optional(),
@@ -104,6 +112,7 @@ export async function saveCompany(input: CompanyInputT) {
   // and update paths). notifications_enabled is only written when explicitly
   // provided so a partial caller can't flip it by omission.
   const extra: TablesUpdate<"companies"> = {
+    aka: emptyToNull(parsed.aka),
     contact_name: emptyToNull(parsed.contact_name),
     phone_secondary: emptyToNull(parsed.phone_secondary),
     city: emptyToNull(parsed.city),
@@ -111,6 +120,9 @@ export async function saveCompany(input: CompanyInputT) {
     postal_code: emptyToNull(parsed.postal_code),
     website: emptyToNull(parsed.website),
     status: emptyToNull(parsed.status),
+    insurance_agent_name: emptyToNull(parsed.insurance_agent_name),
+    insurance_agent_email: emptyToNull(parsed.insurance_agent_email),
+    insurance_agent_phone: emptyToNull(parsed.insurance_agent_phone),
   }
   if (parsed.notifications_enabled !== undefined) {
     extra.notifications_enabled = parsed.notifications_enabled

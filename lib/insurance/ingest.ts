@@ -23,6 +23,8 @@ type Admin = SupabaseClient<Database>
 
 export const INSURANCE_BUCKET = "project-files"
 
+export type InsuranceDocKind = "coi" | "w9" | "sma"
+
 export type IngestInput = {
   fileName: string
   fileType: string | null
@@ -36,6 +38,11 @@ export type IngestInput = {
   emailSubject?: string
   // Known company (tokenized sub upload, or staff picked one).
   companyId?: string
+  // What kind of document this is. COIs (default) run Claude extraction and
+  // materialize policy rows; W9s and Subcontractor Master Agreements are
+  // stored as-is — with a company they're 'processed' immediately, without
+  // one they land in the review queue for staff to assign.
+  docKind?: InsuranceDocKind
 }
 
 export type IngestResult =
@@ -85,6 +92,8 @@ export async function ingestInsuranceDocument(
     return { ok: false, error: "Provide either bytes or storagePath" }
   }
 
+  const docKind = input.docKind ?? "coi"
+
   // 2. Record the document (status 'pending' until extraction lands).
   const { data: doc, error: docErr } = await admin
     .from("insurance_documents")
@@ -96,6 +105,7 @@ export async function ingestInsuranceDocument(
       file_type: input.fileType,
       file_size: input.fileSize ?? bytes.length,
       source: input.source,
+      doc_kind: docKind,
       email_from: input.emailFrom ?? null,
       email_subject: input.emailSubject ?? null,
     })
@@ -103,6 +113,21 @@ export async function ingestInsuranceDocument(
     .single()
   if (docErr || !doc) {
     return { ok: false, error: `Could not record document: ${docErr?.message}` }
+  }
+
+  // W9s and SMAs are plain documents — no extraction, no policy rows. With a
+  // known company they're filed immediately; without one they queue for a
+  // staff assign (the review card's company picker completes them).
+  if (docKind !== "coi") {
+    const status = input.companyId ? "processed" : "needs_review"
+    const { error: updErr } = await admin
+      .from("insurance_documents")
+      .update({ status })
+      .eq("id", doc.id)
+    if (updErr) {
+      return { ok: false, error: `Could not record document: ${updErr.message}` }
+    }
+    return { ok: true, documentId: doc.id, status }
   }
 
   // 3. Extract with Claude. Failures are recorded on the row, not thrown —
@@ -166,7 +191,57 @@ export async function ingestInsuranceDocument(
       extraction: extraction as unknown as Json,
     })
     .eq("id", doc.id)
+  await fillAgentContactFromExtraction(admin, companyId, extraction)
   return { ok: true, documentId: doc.id, status: "processed" }
+}
+
+/**
+ * Backfills the company's insurance-agent contact (agency name / email /
+ * phone) from the certificate's Producer block — but only fields that are
+ * currently BLANK. Staff-entered values always win; a new cert never
+ * overwrites them. Best-effort: a failure here never fails the ingest.
+ */
+export async function fillAgentContactFromExtraction(
+  client: Admin,
+  companyId: string,
+  extraction: CoiExtraction
+): Promise<void> {
+  const name = extraction.producer_name?.trim()
+  const email = extraction.producer_email?.trim()
+  const phone = extraction.producer_phone?.trim()
+  if (!name && !email && !phone) return
+  try {
+    const { data: company } = await client
+      .from("companies")
+      .select("id, insurance_agent_name, insurance_agent_email, insurance_agent_phone")
+      .eq("id", companyId)
+      .maybeSingle()
+    if (!company) return
+    const patch: {
+      insurance_agent_name?: string
+      insurance_agent_email?: string
+      insurance_agent_phone?: string
+    } = {}
+    if (name && !company.insurance_agent_name?.trim()) {
+      patch.insurance_agent_name = name
+    }
+    if (email && !company.insurance_agent_email?.trim()) {
+      patch.insurance_agent_email = email
+    }
+    if (phone && !company.insurance_agent_phone?.trim()) {
+      patch.insurance_agent_phone = phone
+    }
+    if (Object.keys(patch).length === 0) return
+    const { error } = await client
+      .from("companies")
+      .update(patch)
+      .eq("id", companyId)
+    if (error) {
+      console.warn("[insurance] agent-contact backfill failed:", error.message)
+    }
+  } catch (e) {
+    console.warn("[insurance] agent-contact backfill failed:", e)
+  }
 }
 
 /**
@@ -213,10 +288,16 @@ export async function materializePolicies(
 }
 
 /**
- * Best-effort company match for email ingestion. Email address is the
- * strongest signal (the sub usually sends from the address on file); the
- * extracted insured name is the fallback. Only returns a company when the
- * match is unambiguous — anything fuzzy goes to the review queue instead.
+ * Best-effort company match for email ingestion. Signals, strongest first:
+ *   1. Sender email exactly matching a company's email on file.
+ *   2. History — a previous certificate whose extracted insured name
+ *      normalizes to the same string was already filed (manually or
+ *      automatically) to a company. Staff assigning a cert in the review
+ *      queue teaches the matcher that spelling permanently.
+ *   3. The extracted insured name equal (exact, then suffix/punctuation-
+ *      insensitive) to a company's official `name` OR its `aka`.
+ * Only returns a company when the match is unambiguous — anything fuzzy
+ * goes to the review queue instead.
  */
 async function matchCompany(
   admin: Admin,
@@ -232,29 +313,58 @@ async function matchCompany(
   }
 
   const name = hints.companyName?.trim()
-  if (name) {
-    // Exact (case-insensitive) first.
-    const { data: exact } = await admin
-      .from("companies")
-      .select("id")
-      .ilike("name", name)
-    if (exact && exact.length === 1) return exact[0].id
+  if (!name) return null
+  const normalized = normalizeCompanyName(name)
 
-    // Then suffix-insensitive EQUALITY (never a contains-match — "ABC"
-    // must not auto-assign to "ABC Plumbing"): strip "LLC"/"Inc"-style
-    // suffixes and punctuation from both sides and require the full
-    // normalized names to be identical. The ilike just narrows candidates.
-    const stripped = stripCompanySuffix(name)
-    if (stripped.length >= 4) {
-      const { data: candidates } = await admin
-        .from("companies")
-        .select("id, name")
-        .ilike("name", `%${escapeLike(stripped)}%`)
-      const equal = (candidates ?? []).filter(
-        (c) => normalizeCompanyName(c.name) === normalizeCompanyName(name)
-      )
-      if (equal.length === 1) return equal[0].id
-    }
+  // History: previously filed certs with the same (normalized) insured name.
+  // This is how the matcher learns names like "Affordable Gutters Plus
+  // Siding and Insulation LLC" → the "Affordable Gutters" company after
+  // staff assign it once. Requires every historical match to agree on ONE
+  // company — a name that was ever filed two different ways stays manual.
+  if (normalized.length >= 4) {
+    const { data: history } = await admin
+      .from("insurance_documents")
+      .select("company_id, extracted_company_name")
+      .eq("status", "processed")
+      .not("company_id", "is", null)
+      .not("extracted_company_name", "is", null)
+      .ilike("extracted_company_name", `%${escapeLike(stripCompanySuffix(name).slice(0, 60))}%`)
+      .limit(50)
+    const agreed = new Set(
+      (history ?? [])
+        .filter(
+          (d) => normalizeCompanyName(d.extracted_company_name ?? "") === normalized
+        )
+        .map((d) => d.company_id as string)
+    )
+    if (agreed.size === 1) return [...agreed][0]
+  }
+
+  // Exact (case-insensitive) on name or AKA first.
+  const { data: exact } = await admin
+    .from("companies")
+    .select("id")
+    .or(`name.ilike.${escapeOrValue(name)},aka.ilike.${escapeOrValue(name)}`)
+  if (exact && exact.length === 1) return exact[0].id
+
+  // Then suffix-insensitive EQUALITY (never a contains-match — "ABC"
+  // must not auto-assign to "ABC Plumbing"): strip "LLC"/"Inc"-style
+  // suffixes and punctuation from both sides and require the full
+  // normalized names to be identical. The ilike just narrows candidates;
+  // the AKA gets the same treatment as the official name.
+  const stripped = stripCompanySuffix(name)
+  if (stripped.length >= 4) {
+    const pattern = `%${escapeLike(stripped)}%`
+    const { data: candidates } = await admin
+      .from("companies")
+      .select("id, name, aka")
+      .or(`name.ilike.${escapeOrValue(pattern)},aka.ilike.${escapeOrValue(pattern)}`)
+    const equal = (candidates ?? []).filter(
+      (c) =>
+        normalizeCompanyName(c.name) === normalized ||
+        (c.aka && normalizeCompanyName(c.aka) === normalized)
+    )
+    if (equal.length === 1) return equal[0].id
   }
   return null
 }
@@ -266,8 +376,16 @@ function stripCompanySuffix(s: string): string {
 function normalizeCompanyName(s: string): string {
   return stripCompanySuffix(s)
     .toLowerCase()
+    .replace(/&/g, " and ")
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
+}
+
+// Values embedded in a PostgREST .or() filter can't contain unescaped commas
+// or parens — quote the value so names like "Smith, Jones & Co" don't break
+// the filter syntax.
+function escapeOrValue(s: string): string {
+  return `"${s.replace(/"/g, '\\"')}"`
 }
 
 /** Pulls the bare address out of "Some Name <person@sub.com>" (or returns the input). */

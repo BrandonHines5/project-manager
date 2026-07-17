@@ -48,6 +48,17 @@ const STATUS_LABEL: Record<Enums<"project_status">, string> = {
   cancelled: "Cancelled",
 }
 
+// Phones are stored as free text ("(501) 555-1234"); dialers want a clean
+// tel: target. Bare 10-digit US numbers get +1 so tapping the link dials
+// correctly from any phone.
+function telHref(phone: string): string {
+  const digits = phone.replace(/\D/g, "")
+  if (phone.trim().startsWith("+")) return `tel:+${digits}`
+  if (digits.length === 10) return `tel:+1${digits}`
+  if (digits.length === 11 && digits.startsWith("1")) return `tel:+${digits}`
+  return `tel:${digits || phone.trim()}`
+}
+
 export function ClientsClient({ clients }: { clients: ClientRow[] }) {
   const [search, setSearch] = useState("")
 
@@ -77,13 +88,13 @@ export function ClientsClient({ clients }: { clients: ClientRow[] }) {
             contacts.
           </p>
         </div>
-        <div className="relative">
+        <div className="relative w-full sm:w-auto">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search clients or jobs…"
-            className="pl-8 w-64"
+            className="pl-8 w-full sm:w-64"
           />
         </div>
       </div>
@@ -118,15 +129,15 @@ export function ClientsClient({ clients }: { clients: ClientRow[] }) {
                         {c.email && (
                           <a
                             href={`mailto:${c.email}`}
-                            className="flex items-center gap-1.5 hover:text-foreground w-fit"
+                            className="flex items-center gap-1.5 text-brand-700 hover:underline w-fit"
                           >
                             <Mail className="h-3.5 w-3.5 shrink-0" /> {c.email}
                           </a>
                         )}
                         {c.phone && (
                           <a
-                            href={`tel:${c.phone}`}
-                            className="flex items-center gap-1.5 hover:text-foreground w-fit"
+                            href={telHref(c.phone)}
+                            className="flex items-center gap-1.5 text-brand-700 hover:underline w-fit"
                           >
                             <Phone className="h-3.5 w-3.5 shrink-0" /> {c.phone}
                           </a>
