@@ -15,14 +15,26 @@ export default async function InsurancePage() {
   await requireStaff()
   const supabase = await createSupabaseServerClient()
 
+  // The dashboard only consumes two document sets, so query them directly
+  // instead of a capped catch-all (which could silently drop an old
+  // unresolved doc or a company's only W9 as COI volume grows):
+  //   * unresolved docs (any kind) — the review queue
+  //   * processed W9s/SMAs — the Docs chips, expanded-row lists, and export
+  // Processed COIs aren't needed here at all: cert links resolve through
+  // insurance_policies.document_id.
+  const DOC_SELECT =
+    "id, company_id, file_name, file_type, source, doc_kind, email_from, email_subject, status, extracted_company_name, extraction_error, received_at"
   const [
     { data: companies, error: companiesErr },
     { data: policies, error: policiesErr },
-    { data: documents, error: documentsErr },
+    { data: unresolvedDocs, error: unresolvedErr },
+    { data: extraDocs, error: extraErr },
   ] = await Promise.all([
     supabase
       .from("companies")
-      .select("id, name, type, email, contact_name, status, notifications_enabled")
+      .select(
+        "id, name, aka, type, email, contact_name, status, notifications_enabled, insurance_agent_name, insurance_agent_email, insurance_agent_phone"
+      )
       .order("name"),
     // Newest-first with a generous cap: if the table ever outgrows it, the
     // rows dropped are the OLDEST history, so current-coverage status (which
@@ -36,15 +48,23 @@ export default async function InsurancePage() {
       .limit(2000),
     supabase
       .from("insurance_documents")
-      .select(
-        "id, company_id, file_name, file_type, source, email_from, email_subject, status, extracted_company_name, extraction_error, received_at"
-      )
+      .select(DOC_SELECT)
+      .in("status", ["pending", "needs_review", "failed"])
       .order("received_at", { ascending: false })
-      .limit(200),
+      .limit(500),
+    supabase
+      .from("insurance_documents")
+      .select(DOC_SELECT)
+      .in("doc_kind", ["w9", "sma"])
+      .eq("status", "processed")
+      .order("received_at", { ascending: false })
+      .limit(2000),
   ])
   if (companiesErr) throw new Error(companiesErr.message)
   if (policiesErr) throw new Error(policiesErr.message)
-  if (documentsErr) throw new Error(documentsErr.message)
+  if (unresolvedErr) throw new Error(unresolvedErr.message)
+  if (extraErr) throw new Error(extraErr.message)
+  const documents = [...(unresolvedDocs ?? []), ...(extraDocs ?? [])]
 
   return (
     <InsuranceClient
@@ -52,14 +72,18 @@ export default async function InsurancePage() {
         Tables<"companies">,
         | "id"
         | "name"
+        | "aka"
         | "type"
         | "email"
         | "contact_name"
         | "status"
         | "notifications_enabled"
+        | "insurance_agent_name"
+        | "insurance_agent_email"
+        | "insurance_agent_phone"
       >[]}
       policies={policies ?? []}
-      documents={documents ?? []}
+      documents={documents}
     />
   )
 }

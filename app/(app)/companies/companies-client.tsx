@@ -59,13 +59,17 @@ export function CompaniesClient({
         const trades = (tradesByCompany[c.id] ?? []).join(" ")
         return (
           c.name.toLowerCase().includes(q) ||
+          (c.aka ?? "").toLowerCase().includes(q) ||
           (c.trade_category ?? "").toLowerCase().includes(q) ||
           trades.includes(q) ||
           (c.contact_name ?? "").toLowerCase().includes(q) ||
           (c.status ?? "").toLowerCase().includes(q) ||
           (c.city ?? "").toLowerCase().includes(q) ||
           (c.email ?? "").toLowerCase().includes(q) ||
-          (c.phone ?? "").toLowerCase().includes(q)
+          (c.phone ?? "").toLowerCase().includes(q) ||
+          (c.insurance_agent_name ?? "").toLowerCase().includes(q) ||
+          (c.insurance_agent_email ?? "").toLowerCase().includes(q) ||
+          (c.insurance_agent_phone ?? "").toLowerCase().includes(q)
         )
       })
   }, [companies, search, typeFilter, tradeFilter, tradesByCompany])
@@ -193,6 +197,11 @@ export function CompaniesClient({
                           />
                         )}
                       </span>
+                      {c.aka && (
+                        <span className="block text-xs font-normal text-muted">
+                          AKA {c.aka}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <TypeBadge type={c.type} />
@@ -268,6 +277,7 @@ function CompanyDialog({
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [name, setName] = useState(company?.name ?? "")
+  const [aka, setAka] = useState(company?.aka ?? "")
   const [type, setType] = useState<Enums<"company_type">>(company?.type ?? "sub")
   const [trades, setTrades] = useState<string[]>(initialTrades)
   const [address, setAddress] = useState(company?.address ?? "")
@@ -283,6 +293,13 @@ function CompanyDialog({
   const [postalCode, setPostalCode] = useState(company?.postal_code ?? "")
   const [website, setWebsite] = useState(company?.website ?? "")
   const [status, setStatus] = useState(company?.status ?? "")
+  const [agentName, setAgentName] = useState(company?.insurance_agent_name ?? "")
+  const [agentEmail, setAgentEmail] = useState(
+    company?.insurance_agent_email ?? ""
+  )
+  const [agentPhone, setAgentPhone] = useState(
+    company?.insurance_agent_phone ?? ""
+  )
   // New companies default to notifications ON; existing ones reflect their flag.
   const [notificationsEnabled, setNotificationsEnabled] = useState(
     company ? company.notifications_enabled : true
@@ -296,6 +313,7 @@ function CompanyDialog({
     const payload: CompanyInputT = {
       id: company?.id,
       name: name.trim(),
+      aka: aka.trim() || null,
       type,
       // Legacy trade_category kept in sync server-side (mirrors the first
       // trade). We send empty here so the server picks the first trade.
@@ -312,6 +330,9 @@ function CompanyDialog({
       postal_code: postalCode || null,
       website: website || null,
       status: status || null,
+      insurance_agent_name: agentName.trim() || null,
+      insurance_agent_email: agentEmail.trim() || null,
+      insurance_agent_phone: agentPhone.trim() || null,
       notifications_enabled: notificationsEnabled,
     }
     startTransition(async () => {
@@ -352,6 +373,18 @@ function CompanyDialog({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Name" className="sm:col-span-2">
               <Input value={name} onChange={(e) => setName(e.target.value)} />
+            </Field>
+            <Field label="Also known as (AKA)" className="sm:col-span-2">
+              <Input
+                value={aka}
+                onChange={(e) => setAka(e.target.value)}
+                placeholder="Everyday name, if different from the official one"
+              />
+              <p className="mt-1 text-xs text-muted">
+                Name is the official name on payments and insurance; AKA is
+                what you call them day to day (it may appear on invoices and
+                texts). Both are searchable.
+              </p>
             </Field>
             <Field label="Type">
               <Select
@@ -443,6 +476,36 @@ function CompanyDialog({
                 />
               </Field>
             </div>
+            <div className="sm:col-span-2 pt-1">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted">
+                Insurance agent
+              </p>
+              <p className="text-xs text-muted">
+                The sub&rsquo;s insurance agency contact. Requests for updated
+                certificates are also sent to this email. Auto-filled from the
+                &ldquo;Producer&rdquo; on uploaded certificates when blank.
+              </p>
+            </div>
+            <Field label="Agent name / agency" className="sm:col-span-2">
+              <Input
+                value={agentName}
+                onChange={(e) => setAgentName(e.target.value)}
+              />
+            </Field>
+            <Field label="Agent email">
+              <Input
+                type="email"
+                value={agentEmail}
+                onChange={(e) => setAgentEmail(e.target.value)}
+              />
+            </Field>
+            <Field label="Agent phone">
+              <Input
+                type="tel"
+                value={agentPhone}
+                onChange={(e) => setAgentPhone(e.target.value)}
+              />
+            </Field>
             <Field label="Notes" className="sm:col-span-2">
               <Textarea
                 value={notes}

@@ -113,7 +113,7 @@ export async function GET(req: Request) {
   const { data: companies, error: compErr } = await supabase
     .from("companies")
     .select(
-      "id, name, email, contact_name, status, notifications_enabled, insurance_upload_token"
+      "id, name, email, contact_name, status, notifications_enabled, insurance_upload_token, insurance_agent_email"
     )
     .in("id", Array.from(new Set(current.map((c) => c.company_id))))
   if (compErr) {
@@ -161,12 +161,18 @@ export async function GET(req: Request) {
       })
       continue
     }
-    if (!company.email) {
+    // The reminder goes to the sub, CC their insurance agent when one is on
+    // file (the agent usually issues the renewal cert). A company with only
+    // an agent email still gets reminded — the agent becomes the To. Blank
+    // or whitespace-only addresses count as absent.
+    const companyEmail = company.email?.trim() || null
+    const agentEmail = company.insurance_agent_email?.trim() || null
+    if (!companyEmail && !agentEmail) {
       summary.push({
         company: company.name,
         policies: policies.length,
         sent: false,
-        reason: "no email on file",
+        reason: "no email on file (company or agent)",
       })
       continue
     }
@@ -224,8 +230,15 @@ export async function GET(req: Request) {
       uploadUrl,
     })
     const replyTo = insuranceReplyTo()
+    const ccAgent =
+      companyEmail &&
+      agentEmail &&
+      agentEmail.toLowerCase() !== companyEmail.toLowerCase()
+        ? agentEmail
+        : undefined
     const result = await sendEmail({
-      to: company.email,
+      to: companyEmail ?? agentEmail!,
+      ...(ccAgent ? { cc: ccAgent } : {}),
       // Replies (usually with the cert attached) route to the inbound
       // pipeline instead of bouncing off the send-only From address.
       ...(replyTo ? { replyTo } : {}),
