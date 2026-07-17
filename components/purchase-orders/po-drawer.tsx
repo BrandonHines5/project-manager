@@ -458,7 +458,7 @@ export function PoDrawer({
             <DialogTitle>{po ? po.title : "New purchase order"}</DialogTitle>
             <DialogDescription>
               The sub approves with a typed signature through a private link.
-              Approved POs roll into committed costs.
+              Approved POs roll into committed costs on the Budget tab.
             </DialogDescription>
           </div>
         </DialogHeader>

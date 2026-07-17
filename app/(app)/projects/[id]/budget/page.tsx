@@ -4,6 +4,7 @@ import { requireStaff } from "@/lib/auth"
 import { EmptyState } from "@/components/ui/empty"
 import { buildBudgetRows } from "@/lib/budget/rollup"
 import type { DecisionForBudget, PoForBudget } from "@/lib/budget/rollup"
+import { canEditBudget } from "@/app/actions/budget"
 import { BudgetClient } from "./budget-client"
 
 export const metadata = { title: "Budget — Hines Homes" }
@@ -28,6 +29,10 @@ export default async function BudgetPage({
       </div>
     )
   }
+
+  // Read vs write: everyone past the financial_access gate can VIEW; only
+  // the budget-editors allowlist (Settings → Budget editors) can MODIFY.
+  const canEdit = await canEditBudget(profile.id)
 
   const supabase = await createSupabaseServerClient()
   const { data: project } = await supabase
@@ -110,6 +115,7 @@ export default async function BudgetPage({
       projectId={projectId}
       projectName={project.name}
       projectNumber={project.project_number}
+      canEdit={canEdit}
       rows={rows}
       totals={totals}
       // Active codes not yet on the table, for the "Add cost code" picker and

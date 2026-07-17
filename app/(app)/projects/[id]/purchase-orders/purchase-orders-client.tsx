@@ -50,7 +50,7 @@ export function PurchaseOrdersClient({ data }: { data: PurchaseOrdersData }) {
         <EmptyState
           icon={<FileText className="h-10 w-10" />}
           title="No purchase orders yet"
-          description="Issue a cost-coded PO to a sub or vendor. They approve with a typed signature through a private link — no login needed. Approved POs roll into committed costs on Pricing."
+          description="Issue a cost-coded PO to a sub or vendor. They approve with a typed signature through a private link — no login needed. Approved POs roll into the Budget tab's POs column."
           action={
             <Button onClick={() => setDrawerState({ mode: "create" })}>
               <Plus className="h-4 w-4" /> New PO
