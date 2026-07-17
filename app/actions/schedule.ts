@@ -2911,9 +2911,11 @@ export async function setScheduleBaseline(input: {
   const supabase = await createSupabaseServerClient()
 
   // Re-baselining overwrites the locked plan and resets slip tracking to zero,
-  // so it's only allowed once the job has real progress: at least one work
-  // item marked complete. The FIRST baseline lock is exempt (work items can't
-  // even be completed until a baseline exists).
+  // so to keep the baseline honest it's only allowed BEFORE the job has real
+  // progress: as soon as ANY work item is marked complete, the baseline is
+  // frozen and can't be moved — otherwise a PM could re-baseline a slipping
+  // job to make it look on-track. The FIRST baseline lock is always allowed
+  // (there's no prior baseline to protect).
   const existingBaselineSetAt = await getBaselineSetAt(supabase, parsed.project_id)
   if (existingBaselineSetAt) {
     const { count, error: cErr } = await supabase
@@ -2923,11 +2925,11 @@ export async function setScheduleBaseline(input: {
       .eq("kind", "work")
       .eq("status", "complete")
     if (cErr) return { ok: false, error: cErr.message }
-    if (!count) {
+    if (count) {
       return {
         ok: false,
         error:
-          "The baseline can only be reset after at least one work item is marked complete.",
+          "This schedule is locked in — a job can't be re-baselined once work items have been marked complete.",
       }
     }
   }
