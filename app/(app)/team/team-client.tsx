@@ -3,6 +3,7 @@
 import { useState, useMemo, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import {
   Search,
   UserCog,
@@ -211,7 +212,7 @@ function NotifyToggle({ profile }: { profile: Tables<"profiles"> }) {
         )
         router.refresh()
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Update failed")
+        toastActionError(err, "Update failed")
       }
     })
   }
@@ -307,7 +308,7 @@ function EditDialog({
         setResetPassword(password)
         toast.success("New password generated. Share it securely.")
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Reset failed")
+        toastActionError(e, "Reset failed")
       }
     })
   }
@@ -348,7 +349,7 @@ function EditDialog({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Save failed")
+        toastActionError(e, "Save failed")
       }
     })
   }
@@ -361,7 +362,7 @@ function EditDialog({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Delete failed")
+        toastActionError(e, "Delete failed")
       }
     })
   }
@@ -637,7 +638,7 @@ function InviteDialog({ onClose }: { onClose: () => void }) {
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Failed to add user")
+        toastActionError(e, "Failed to add user")
       }
     })
   }

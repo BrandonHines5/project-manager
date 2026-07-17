@@ -3,6 +3,7 @@
 import { useMemo, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import { Flag, Lock, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn, formatDate, todayISO } from "@/lib/utils"
@@ -33,9 +34,10 @@ export function ScheduleHealthBanner({ data }: { data: ScheduleData }) {
   const subComplete = data.items.find(
     (i) => i.milestone === "substantial_completion"
   )
-  // Resetting the baseline wipes slip tracking, so it's blocked until the job
-  // has real progress: at least one completed work item (the server enforces
-  // this too). The first lock is always allowed.
+  // Resetting the baseline wipes slip tracking, so to keep it honest it's
+  // locked once the job has real progress: any completed work item freezes the
+  // baseline (the server enforces this too). Before then, re-baselining is
+  // allowed; the first lock is always allowed.
   const hasCompletedWork = useMemo(
     () =>
       data.items.some((i) => i.kind === "work" && i.status === "complete"),
@@ -75,9 +77,7 @@ export function ScheduleHealthBanner({ data }: { data: ScheduleData }) {
         )
         router.refresh()
       } catch (e) {
-        toast.error(
-          e instanceof Error ? e.message : "Could not set up milestones"
-        )
+        toastActionError(e, "Could not set up milestones")
       }
     })
   }
@@ -185,12 +185,12 @@ export function ScheduleHealthBanner({ data }: { data: ScheduleData }) {
           size="sm"
           variant="ghost"
           onClick={() => lockBaseline(true)}
-          disabled={pending || !hasCompletedWork}
+          disabled={pending || hasCompletedWork}
           className="ml-auto text-muted hover:text-foreground"
           title={
             hasCompletedWork
-              ? "Overwrite the baseline with the current schedule"
-              : "Available once at least one work item is marked complete"
+              ? "Locked — a job can't be re-baselined once work items are complete"
+              : "Overwrite the baseline with the current schedule"
           }
         >
           <RefreshCw className="h-3.5 w-3.5" />

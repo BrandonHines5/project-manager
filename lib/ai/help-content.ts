@@ -155,6 +155,8 @@ Bulk actions: select rows to assign people/roles, copy items to another job, or 
 
 Before a baseline is set, work items can't be marked complete (to-dos can). After the baseline, any date change to a work item asks you for a reason (which is logged as a schedule delay). Work items you add after baselining get their initial dates stamped as their own baseline.
 
+Re-baseline: the "Re-baseline" button overwrites the saved baseline with the current schedule and resets slip tracking to zero. You can only re-baseline while the job has no completed work items — once any work item is marked complete, the baseline locks in and can't be re-baselined (so a schedule that's slipping can't be re-baselined to look on-track). The first "Set baseline" is always allowed.
+
 Health banner: at the top of the schedule, the banner compares the current Job Start → Substantial Completion duration against the baseline, with a 30-day buffer. Green ("X Days Remaining in Buffer") means you're within 30 days of the plan; yellow ("X Days Late") means 1–15 days over; red means 16+ over. While Substantial Completion is still incomplete, its projected date is pinned to today, so an untouched, stalled schedule slips one day per day until you update it.
 
 To explain WHY a job is behind, look at the logged delays (each records which item moved, how many days, and the reason category — weather, sub, material, owner decision, permit, or other).`,

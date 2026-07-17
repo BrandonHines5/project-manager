@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Input, Textarea, Field } from "@/components/ui/input"
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card"
 import { formatCurrency, formatDate, cn } from "@/lib/utils"
+import { actionErrorMessage } from "@/lib/action-error"
 
 type LineItem = {
   id: string
@@ -96,7 +97,7 @@ export function BidResponseForm({
         router.refresh()
       } catch (e) {
         setError(
-          e instanceof Error ? e.message : "Something went wrong — please try again."
+          actionErrorMessage(e, "Something went wrong — please try again.")
         )
       }
     })
@@ -384,7 +385,7 @@ function CommentThread({
         router.refresh()
       } catch (e) {
         setError(
-          e instanceof Error ? e.message : "Something went wrong — please try again."
+          actionErrorMessage(e, "Something went wrong — please try again.")
         )
       }
     })

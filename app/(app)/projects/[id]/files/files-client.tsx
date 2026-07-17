@@ -4,6 +4,11 @@ import { useEffect, useState, useMemo, useRef, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import {
+  toastActionError,
+  actionErrorMessage,
+  isStaleDeploymentError,
+} from "@/lib/action-error"
+import {
   Upload,
   FileText,
   Map as MapIcon,
@@ -599,7 +604,7 @@ function PlanCard({
         toast.success("Deleted")
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Delete failed")
+        toastActionError(e, "Delete failed")
       }
     })
   }
@@ -615,7 +620,7 @@ function PlanCard({
         toast.success(next ? "Archived" : "Restored")
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Action failed")
+        toastActionError(e, "Action failed")
       }
     })
   }
@@ -920,7 +925,7 @@ function HistoryDialog({
         if (alive) setVersions(rows)
       })
       .catch((e) => {
-        if (alive) setError(e instanceof Error ? e.message : "Lookup failed")
+        if (alive) setError(actionErrorMessage(e, "Lookup failed"))
       })
     return () => {
       alive = false
@@ -1097,9 +1102,16 @@ function UploadDialog({
           await saveProjectFile(payload)
           uploaded++
         } catch (e) {
-          toast.error(
-            `${file.name}: ${e instanceof Error ? e.message : "Save failed"}`
-          )
+          // Stale-deployment failures get the refresh-prompt toast; real
+          // save errors keep the per-file prefix so a batch names its
+          // casualties.
+          if (isStaleDeploymentError(e)) {
+            toastActionError(e, "Save failed")
+          } else {
+            toast.error(
+              `${file.name}: ${e instanceof Error ? e.message : "Save failed"}`
+            )
+          }
         }
       }
       if (uploaded > 0) {
@@ -1289,7 +1301,7 @@ function Lightbox({
         // Keep parent state in sync so the gallery row + filter chips refresh.
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Tag save failed")
+        toastActionError(e, "Tag save failed")
         // Roll back the optimistic update so chips revert.
         setTags(media.tags)
       }

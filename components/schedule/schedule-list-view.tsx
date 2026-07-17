@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import {
   ChevronRight,
   CheckCircle2,
@@ -456,9 +457,7 @@ function CompleteCheckbox({
               status: isComplete ? "not_started" : "complete",
             })
           } catch (e) {
-            toast.error(
-              e instanceof Error ? e.message : "Status update failed"
-            )
+            toastActionError(e, "Status update failed")
           }
         })
       }}

@@ -3,6 +3,7 @@
 import { useState, useMemo, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import { Plus, Building2, Trash2, Search, BellOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -341,7 +342,7 @@ function CompanyDialog({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Save failed")
+        toastActionError(e, "Save failed")
       }
     })
   }
@@ -357,7 +358,7 @@ function CompanyDialog({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Delete failed")
+        toastActionError(e, "Delete failed")
       }
     })
   }

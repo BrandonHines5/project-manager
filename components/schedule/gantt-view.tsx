@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import { addDays as fnsAddDays, differenceInCalendarDays, parseISO, format, isWeekend, startOfDay } from "date-fns"
 import { CalendarDays, Zap, Minimize2, Printer } from "lucide-react"
 import { EmptyState } from "@/components/ui/empty"
@@ -212,7 +213,7 @@ export function GanttView({
         )
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Move failed")
+        toastActionError(e, "Move failed")
       }
     })
   }

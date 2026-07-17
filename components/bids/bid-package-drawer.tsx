@@ -3,6 +3,7 @@
 import { useState, useTransition, useRef, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import {
   Trash2,
   Plus,
@@ -131,7 +132,7 @@ export function BidPackageDrawer({
         }
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Copy failed")
+        toastActionError(e, "Copy failed")
       }
     })
   }
@@ -345,7 +346,7 @@ export function BidPackageDrawer({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Save failed")
+        toastActionError(e, "Save failed")
       }
     })
   }
@@ -374,7 +375,7 @@ export function BidPackageDrawer({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Send failed")
+        toastActionError(e, "Send failed")
       }
     })
   }
@@ -400,7 +401,7 @@ export function BidPackageDrawer({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Revise failed")
+        toastActionError(e, "Revise failed")
       }
     })
   }
@@ -424,7 +425,7 @@ export function BidPackageDrawer({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Close failed")
+        toastActionError(e, "Close failed")
       }
     })
   }
@@ -445,7 +446,7 @@ export function BidPackageDrawer({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Delete failed")
+        toastActionError(e, "Delete failed")
       }
     })
   }

@@ -3,6 +3,7 @@
 import { useState, useTransition, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import {
   Trash2,
   X,
@@ -269,7 +270,7 @@ export function DailyLogDrawer({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Save failed")
+        toastActionError(e, "Save failed")
       }
     })
   }
@@ -284,7 +285,7 @@ export function DailyLogDrawer({
         router.refresh()
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Delete failed")
+        toastActionError(e, "Delete failed")
       }
     })
   }

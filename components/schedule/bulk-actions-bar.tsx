@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import {
   X,
   Calendar,
@@ -140,7 +141,7 @@ export function BulkActionsBar({
         // (CodeRabbit #30). Mirrors the delete branch.
         if (r.ok > 0) onClear()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Shift failed")
+        toastActionError(e, "Shift failed")
       }
     })
   }
@@ -159,7 +160,7 @@ export function BulkActionsBar({
         summarize(r, `set to ${status.replace("_", " ")}`)
         if (r.ok > 0) onClear()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Status update failed")
+        toastActionError(e, "Status update failed")
       }
     })
   }
@@ -181,7 +182,7 @@ export function BulkActionsBar({
         summarize(r, "deleted")
         if (r.ok > 0) onClear()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Delete failed")
+        toastActionError(e, "Delete failed")
       }
     })
   }
@@ -229,12 +230,9 @@ export function BulkActionsBar({
         )
         if (r.ok > 0) onClear()
       } catch (e) {
-        toast.error(
-          e instanceof Error
-            ? e.message
-            : direction === "assign"
-              ? "Assign failed"
-              : "Unassign failed"
+        toastActionError(
+          e,
+          direction === "assign" ? "Assign failed" : "Unassign failed"
         )
       }
     })
@@ -257,7 +255,7 @@ export function BulkActionsBar({
         summarize(r, `copied to ${targetLabel}`)
         if (r.ok > 0) onClear()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Copy failed")
+        toastActionError(e, "Copy failed")
       }
     })
   }

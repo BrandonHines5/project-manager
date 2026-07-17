@@ -3,6 +3,7 @@
 import { useState, useMemo, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import {
   Plus,
   FilePen,
@@ -582,7 +583,7 @@ function BulkCopyBar({
         onClear()
         router.refresh()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Copy failed")
+        toastActionError(e, "Copy failed")
       }
     })
   }

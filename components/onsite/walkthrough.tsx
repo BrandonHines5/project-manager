@@ -49,6 +49,10 @@ import {
   type AppliedMutation,
 } from "@/lib/ai/types"
 import { PlanCard, AppliedCard } from "@/components/ai/plan-review"
+import {
+  isStaleDeploymentError,
+  STALE_DEPLOYMENT_MESSAGE,
+} from "@/lib/action-error"
 
 type Segment = { id: string; text: string }
 type Photo = {
@@ -116,6 +120,7 @@ const MAX_TRANSCRIPT_CHARS = 19000
 // WiFi→LTE handoff) as the bare "Load failed"; Chrome says "Failed to
 // fetch". Translate to something a PM standing on a slab can act on.
 function friendlyError(e: unknown): string {
+  if (isStaleDeploymentError(e)) return STALE_DEPLOYMENT_MESSAGE
   const raw = e instanceof Error ? e.message : String(e)
   if (/load failed|failed to fetch|network\s?error|fetch failed/i.test(raw)) {
     return "The connection dropped while working — a locked screen or weak signal can cause this. Your notes and photos are safe on this device."

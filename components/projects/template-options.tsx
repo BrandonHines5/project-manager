@@ -16,6 +16,7 @@ import {
   type TemplateAttributes,
   type TemplateTagGroup,
 } from "@/lib/template-tags"
+import { actionErrorMessage } from "@/lib/action-error"
 
 export type TemplateOptionsValue =
   | {
@@ -107,9 +108,7 @@ function TemplateOptionsInner({
       })
       .catch((e) => {
         if (cancelled) return
-        setLoadError(
-          e instanceof Error ? e.message : "Couldn't load template options"
-        )
+        setLoadError(actionErrorMessage(e, "Couldn't load template options"))
       })
     return () => {
       cancelled = true

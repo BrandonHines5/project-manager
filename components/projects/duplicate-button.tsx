@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { toastActionError } from "@/lib/action-error"
 import { Copy } from "lucide-react"
 import {
   Dialog,
@@ -131,7 +132,7 @@ export function DuplicateDialog({
         router.push(`/projects/${result.id}/schedule`)
         onClose()
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Duplicate failed")
+        toastActionError(e, "Duplicate failed")
       }
     })
   }
