@@ -29,7 +29,10 @@ export default async function PricingPage({
   // money-out lives on the Budget tab's POs column (financial_access-gated).
   // Pricing is the client-facing contract picture: contract, approved
   // changes, and payments.
-  const [{ data: decisions }, { data: payments }] = await Promise.all([
+  const [
+    { data: decisions, error: decisionsError },
+    { data: payments, error: paymentsError },
+  ] = await Promise.all([
     supabase
       .from("decisions")
       .select("id, number, title, kind, cost_delta, status, approved_at")
@@ -47,6 +50,10 @@ export default async function PricingPage({
       .is("deleted_at", null)
       .order("paid_on", { ascending: false }),
   ])
+  // A transient query failure must error the page, never render as "no
+  // approved changes / no payments" — this is financial data.
+  if (decisionsError) throw new Error(decisionsError.message)
+  if (paymentsError) throw new Error(paymentsError.message)
 
   const data: PricingData = {
     project_id: projectId,

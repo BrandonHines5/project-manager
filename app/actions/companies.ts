@@ -91,6 +91,9 @@ export async function saveCompany(input: CompanyInputT) {
   // the whole call back. Replaces the previous three separate writes
   // which could leave the company without trades if the second write
   // failed.
+  // The generated RPC arg types read plpgsql args as non-nullable, but the
+  // function accepts (and the update path relies on) nulls — p_id null means
+  // insert, null contact fields clear columns. Cast keeps regen-proof.
   const { data: newId, error } = await supabase.rpc(
     "save_company_with_trades",
     {
@@ -102,7 +105,7 @@ export async function saveCompany(input: CompanyInputT) {
       p_email: emptyToNull(parsed.email),
       p_notes: emptyToNull(parsed.notes),
       p_trades: trades,
-    }
+    } as unknown as Parameters<typeof supabase.rpc<"save_company_with_trades">>[1]
   )
   if (error) throw new Error(error.message)
 

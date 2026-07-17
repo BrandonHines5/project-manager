@@ -236,12 +236,17 @@ export async function setProjectFileClientVisibility(
   const { id, project_id, visible } = result.data
   await requireStaff()
   const supabase = await createSupabaseServerClient()
-  const { error } = await supabase
+  // .select().maybeSingle() so a zero-row update (stale id, wrong project)
+  // errors instead of silently reporting success.
+  const { data: updated, error } = await supabase
     .from("project_files")
     .update({ client_visible: visible })
     .eq("id", id)
     .eq("project_id", project_id)
+    .select("id")
+    .maybeSingle()
   if (error) throw new Error(error.message)
+  if (!updated) throw new Error("File not found")
   revalidatePath(`/projects/${project_id}/files`)
 }
 

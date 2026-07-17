@@ -31,6 +31,10 @@ const Attachment = z.object({
   file_type: optStr,
   file_size: z.number().nullish(),
   caption: optStr,
+  // Set when the attachment LINKS a Files-tab document instead of a fresh
+  // upload — the blob belongs to project_files and must never be removed
+  // from Storage by attachment reconciliation.
+  project_file_id: optStr,
 })
 
 const PurchaseOrderInput = z
@@ -58,6 +62,13 @@ const PurchaseOrderInput = z
   })
 
 export type PurchaseOrderInputT = z.infer<typeof PurchaseOrderInput>
+
+// The PO list renders on both the legacy /purchase-orders route and the
+// unified /purchasing page — revalidate both on every mutation.
+function revalidatePoPaths(projectId: string) {
+  revalidatePath(`/projects/${projectId}/purchase-orders`)
+  revalidatePath(`/projects/${projectId}/purchasing`)
+}
 
 function nz(v: string | null | undefined) {
   return v && v !== "" ? v : null
@@ -171,7 +182,7 @@ export async function savePurchaseOrder(input: PurchaseOrderInputT) {
   // update captions) — same shape as decisions.
   const { data: existingAtts, error: existingAttsErr } = await supabase
     .from("po_attachments")
-    .select("id, storage_path")
+    .select("id, storage_path, project_file_id")
     .eq("purchase_order_id", id)
   if (existingAttsErr) throw new Error(existingAttsErr.message)
   const keepIds = new Set(
@@ -184,11 +195,19 @@ export async function savePurchaseOrder(input: PurchaseOrderInputT) {
       .delete()
       .in("id", toDelete.map((d) => d.id))
     if (error) throw new Error(error.message)
-    const { error: storageErr } = await supabase.storage
-      .from("project-files")
-      .remove(toDelete.map((d) => d.storage_path))
-    if (storageErr) {
-      console.warn("[savePurchaseOrder] storage cleanup failed (non-fatal):", storageErr.message)
+    // Only uploads owned by this PO get their blobs removed — a linked
+    // Files-tab document's blob belongs to project_files, and removing it
+    // would kill the file everywhere it's shown.
+    const ownedPaths = toDelete
+      .filter((d) => !d.project_file_id)
+      .map((d) => d.storage_path)
+    if (ownedPaths.length) {
+      const { error: storageErr } = await supabase.storage
+        .from("project-files")
+        .remove(ownedPaths)
+      if (storageErr) {
+        console.warn("[savePurchaseOrder] storage cleanup failed (non-fatal):", storageErr.message)
+      }
     }
   }
   const newOnes = parsed.attachments.filter((a) => !nz(a.id))
@@ -202,6 +221,7 @@ export async function savePurchaseOrder(input: PurchaseOrderInputT) {
         file_type: a.file_type ?? null,
         file_size: a.file_size ?? null,
         caption: a.caption ?? null,
+        project_file_id: nz(a.project_file_id),
         position: startPos + i,
       }))
     )
@@ -216,15 +236,15 @@ export async function savePurchaseOrder(input: PurchaseOrderInputT) {
     if (error) throw new Error(error.message)
   }
 
-  revalidatePath(`/projects/${parsed.project_id}/purchase-orders`)
+  revalidatePoPaths(parsed.project_id)
   return { id }
 }
 
 /**
  * Copy a purchase order to another job (or duplicate within the same job).
  * The copy is always a fresh DRAFT: token, release/approval/decline/void
- * state and work-complete flags are all reset, and source_bid_recipient_id
- * is dropped (it points at a bid recipient in the SOURCE project). Line items
+ * state and work-complete flags are all reset, and source_bid_recipient_id /
+ * source_decision_id are dropped (provenance belongs to the original). Line items
  * + attachments carry over — cost codes and the vendor company are global
  * catalogs, so cost_code_id and company_id copy verbatim. po_comments are
  * NOT copied. Runs under the caller's session, so RLS limits the target to
@@ -318,14 +338,33 @@ export async function copyPurchaseOrder(
     if (liErr) throw new Error(liErr.message)
   }
 
-  // Attachments — copy each storage blob to a fresh key under the target
-  // project. A failed blob copy is non-fatal.
+  // Attachments — an upload owned by the source PO gets its blob copied to
+  // a fresh key under the target project. A LINKED Files-tab document is
+  // different: same-project copies reuse the path + keep the link (the blob
+  // belongs to project_files, so no duplicate is made); cross-project copies
+  // blob-copy and DROP the link (the project_files row lives in the source
+  // project). A failed blob copy is non-fatal.
   const { data: srcAtts } = await supabase
     .from("po_attachments")
     .select("*")
     .eq("purchase_order_id", id)
     .order("position", { ascending: true })
   for (const a of srcAtts ?? []) {
+    if (a.project_file_id && sameProject) {
+      const { error: aErr } = await supabase.from("po_attachments").insert({
+        purchase_order_id: newId,
+        storage_bucket: a.storage_bucket,
+        storage_path: a.storage_path,
+        file_name: a.file_name,
+        file_type: a.file_type,
+        file_size: a.file_size,
+        caption: a.caption,
+        project_file_id: a.project_file_id,
+        position: a.position,
+      })
+      if (aErr) throw new Error(aErr.message)
+      continue
+    }
     const ext = a.file_name.split(".").pop()?.toLowerCase() ?? "bin"
     const newPath = `projects/${target_project_id}/purchase-orders/${Date.now()}-${Math.random()
       .toString(36)
@@ -356,9 +395,246 @@ export async function copyPurchaseOrder(
     }
   }
 
-  revalidatePath(`/projects/${target_project_id}/purchase-orders`)
-  if (!sameProject) revalidatePath(`/projects/${src.project_id}/purchase-orders`)
+  revalidatePoPaths(target_project_id)
+  if (!sameProject) revalidatePoPaths(src.project_id)
   return { id: newId, project_id: target_project_id, sameProject }
+}
+
+/**
+ * Create a draft PO from an APPROVED selection/change order. Line items copy
+ * the decision's cost breakdown — the approved choice's rows for selections,
+ * the decision-level rows for change orders — at RAW unit_cost: markup_percent
+ * is client-facing pricing and must never reach the sub. source_decision_id
+ * records provenance (mirror of source_bid_recipient_id). Duplicates are a
+ * soft warn, not a block: the return carries how many non-void POs already
+ * point at this decision so the UI can mention it.
+ */
+const CreatePoFromDecisionInput = z.object({
+  decision_id: z.string().uuid(),
+  company_id: z.string().uuid(),
+})
+
+export async function createPoFromDecision(
+  input: z.infer<typeof CreatePoFromDecisionInput>
+) {
+  const { decision_id, company_id } = CreatePoFromDecisionInput.parse(input)
+  const profile = await requireStaff()
+  const supabase = await createSupabaseServerClient()
+
+  const { data: decision, error: dErr } = await supabase
+    .from("decisions")
+    .select("id, project_id, kind, number, title, description, status, selected_choice_id")
+    .eq("id", decision_id)
+    .maybeSingle()
+  if (dErr) throw new Error(dErr.message)
+  if (!decision) throw new Error("Decision not found")
+  if (decision.status !== "approved") {
+    throw new Error("Only an approved selection or change order can become a PO.")
+  }
+
+  const { data: company, error: cErr } = await supabase
+    .from("companies")
+    .select("id")
+    .eq("id", company_id)
+    .maybeSingle()
+  if (cErr) throw new Error(cErr.message)
+  if (!company) throw new Error("Company not found")
+
+  let itemsQuery = supabase
+    .from("decision_cost_items")
+    .select("cost_code_id, description, quantity, unit, unit_cost, position")
+    .eq("decision_id", decision_id)
+    .order("position", { ascending: true })
+  if (decision.kind === "selection") {
+    if (!decision.selected_choice_id) {
+      throw new Error("This selection has no approved option to build the PO from.")
+    }
+    itemsQuery = itemsQuery.eq("choice_id", decision.selected_choice_id)
+  } else {
+    itemsQuery = itemsQuery.is("choice_id", null)
+  }
+  const { data: items, error: iErr } = await itemsQuery
+  if (iErr) throw new Error(iErr.message)
+
+  const { data: priorPos, error: dupErr } = await supabase
+    .from("purchase_orders")
+    .select("id")
+    .eq("source_decision_id", decision_id)
+    .neq("status", "void")
+  if (dupErr) throw new Error(dupErr.message)
+
+  const kindLabel = decision.kind === "selection" ? "Selection" : "CO"
+  const title = `${kindLabel} #${decision.number} — ${decision.title}`.slice(0, 300)
+
+  // Race-safe per-project number, same retry loop as savePurchaseOrder.
+  let newId: string | null = null
+  for (let attempt = 0; attempt < 5 && !newId; attempt++) {
+    const { data: nextNum, error: rpcErr } = await supabase.rpc("next_po_number", {
+      p_project: decision.project_id,
+    })
+    if (rpcErr) throw new Error(rpcErr.message)
+    const { data, error } = await supabase
+      .from("purchase_orders")
+      .insert({
+        project_id: decision.project_id,
+        number: Number(nextNum),
+        title,
+        scope: decision.description,
+        company_id,
+        flat_fee: false,
+        status: "draft",
+        source_decision_id: decision_id,
+        created_by: profile.id,
+      })
+      .select("id")
+      .single()
+    if (!error) {
+      newId = data.id
+      break
+    }
+    if (error.code !== "23505") throw new Error(error.message)
+    await new Promise((r) => setTimeout(r, 25 + Math.random() * 50))
+  }
+  if (!newId) {
+    throw new Error("Could not allocate a PO number after 5 attempts.")
+  }
+
+  if (items?.length) {
+    // decision_cost_items.description is nullable; po_line_items.description
+    // is NOT NULL — fall back to the decision title.
+    const { error } = await supabase.from("po_line_items").insert(
+      items.map((li, i) => ({
+        purchase_order_id: newId!,
+        cost_code_id: li.cost_code_id,
+        description: li.description?.trim() || decision.title,
+        quantity: li.quantity,
+        unit: li.unit,
+        unit_cost: li.unit_cost,
+        position: i,
+      }))
+    )
+    if (error) throw new Error(error.message)
+  }
+
+  revalidatePoPaths(decision.project_id)
+  return {
+    id: newId,
+    project_id: decision.project_id,
+    already_linked: priorPos?.length ?? 0,
+  }
+}
+
+/**
+ * Create a draft PO for a bid recipient WITHOUT awarding the package — the
+ * "sub never responded but we're moving ahead" path. Prefills title/scope/
+ * flat-fee mode + line items from the package; pricing comes from the sub's
+ * submitted quotes when they exist, otherwise 0 for staff to fill in. Stamps
+ * source_bid_recipient_id for the same "From BID-N" chip as awarded POs, but
+ * touches neither the package nor the recipient status — awarding stays the
+ * sanctioned path for submitted bids.
+ */
+const CreatePoForBidRecipientInput = z.object({
+  recipient_id: z.string().uuid(),
+})
+
+export async function createPoForBidRecipient(
+  input: z.infer<typeof CreatePoForBidRecipientInput>
+) {
+  const { recipient_id } = CreatePoForBidRecipientInput.parse(input)
+  const profile = await requireStaff()
+  const supabase = await createSupabaseServerClient()
+
+  const { data: recipient, error: rErr } = await supabase
+    .from("bid_recipients")
+    .select(
+      "id, company_id, status, flat_total, bid_package_id, bid_packages:bid_package_id(id, project_id, number, title, scope, flat_fee)"
+    )
+    .eq("id", recipient_id)
+    .maybeSingle()
+  if (rErr) throw new Error(rErr.message)
+  if (!recipient) throw new Error("Bid recipient not found")
+  const pkg = (
+    recipient as unknown as {
+      bid_packages: {
+        id: string
+        project_id: string
+        number: number
+        title: string
+        scope: string | null
+        flat_fee: boolean
+      } | null
+    }
+  ).bid_packages
+  if (!pkg) throw new Error("Bid package not found")
+  if (recipient.status === "awarded") {
+    throw new Error("This bid was awarded — the award already created its PO.")
+  }
+
+  const { data: lines, error: lErr } = await supabase
+    .from("bid_package_line_items")
+    .select("id, cost_code_id, description, quantity, unit, position")
+    .eq("bid_package_id", pkg.id)
+    .order("position", { ascending: true })
+  if (lErr) throw new Error(lErr.message)
+
+  // Submitted quotes (if any) price the lines; missing quotes default to 0.
+  const { data: quotes, error: qErr } = await supabase
+    .from("bid_line_item_quotes")
+    .select("line_item_id, unit_cost")
+    .eq("bid_recipient_id", recipient_id)
+  if (qErr) throw new Error(qErr.message)
+  const quoteByLine = new Map((quotes ?? []).map((q) => [q.line_item_id, q.unit_cost]))
+
+  let newId: string | null = null
+  for (let attempt = 0; attempt < 5 && !newId; attempt++) {
+    const { data: nextNum, error: rpcErr } = await supabase.rpc("next_po_number", {
+      p_project: pkg.project_id,
+    })
+    if (rpcErr) throw new Error(rpcErr.message)
+    const { data, error } = await supabase
+      .from("purchase_orders")
+      .insert({
+        project_id: pkg.project_id,
+        number: Number(nextNum),
+        title: pkg.title,
+        scope: pkg.scope,
+        company_id: recipient.company_id,
+        flat_fee: pkg.flat_fee,
+        flat_total: pkg.flat_fee ? recipient.flat_total : null,
+        status: "draft",
+        source_bid_recipient_id: recipient_id,
+        created_by: profile.id,
+      })
+      .select("id")
+      .single()
+    if (!error) {
+      newId = data.id
+      break
+    }
+    if (error.code !== "23505") throw new Error(error.message)
+    await new Promise((r) => setTimeout(r, 25 + Math.random() * 50))
+  }
+  if (!newId) {
+    throw new Error("Could not allocate a PO number after 5 attempts.")
+  }
+
+  if (!pkg.flat_fee && lines?.length) {
+    const { error } = await supabase.from("po_line_items").insert(
+      lines.map((li, i) => ({
+        purchase_order_id: newId!,
+        cost_code_id: li.cost_code_id,
+        description: li.description,
+        quantity: li.quantity,
+        unit: li.unit,
+        unit_cost: quoteByLine.get(li.id) ?? 0,
+        position: i,
+      }))
+    )
+    if (error) throw new Error(error.message)
+  }
+
+  revalidatePoPaths(pkg.project_id)
+  return { id: newId, project_id: pkg.project_id }
 }
 
 /**
@@ -472,7 +748,7 @@ export async function releasePurchaseOrder({
     await Promise.all(sendJobs)
   }
 
-  revalidatePath(`/projects/${project_id}/purchase-orders`)
+  revalidatePoPaths(project_id)
 }
 
 /**
@@ -514,7 +790,7 @@ export async function unreleasePurchaseOrder({
     .eq("id", id)
     .eq("status", cur.status)
   if (error) throw new Error(error.message)
-  revalidatePath(`/projects/${project_id}/purchase-orders`)
+  revalidatePoPaths(project_id)
   // Unreleasing an approved PO pulls it out of committed costs.
   if (cur.status === "approved") {
     revalidatePath(`/projects/${project_id}/pricing`)
@@ -553,7 +829,7 @@ export async function staffApprovePurchaseOrder({
     .eq("status", "released")
   if (error) throw new Error(error.message)
   if (!count) throw new Error("Only a released PO can be approved.")
-  revalidatePath(`/projects/${project_id}/purchase-orders`)
+  revalidatePoPaths(project_id)
   revalidatePath(`/projects/${project_id}/pricing`)
 }
 
@@ -577,7 +853,7 @@ export async function voidPurchaseOrder({
     .neq("status", "void")
   if (error) throw new Error(error.message)
   if (!count) throw new Error("This PO is already void.")
-  revalidatePath(`/projects/${project_id}/purchase-orders`)
+  revalidatePoPaths(project_id)
   revalidatePath(`/projects/${project_id}/pricing`)
 }
 
@@ -600,7 +876,7 @@ export async function setPoWorkComplete({
     })
     .eq("id", id)
   if (error) throw new Error(error.message)
-  revalidatePath(`/projects/${project_id}/purchase-orders`)
+  revalidatePoPaths(project_id)
 }
 
 export async function deletePurchaseOrder({
@@ -636,7 +912,7 @@ export async function deletePurchaseOrder({
   if (!count) {
     throw new Error("Only draft POs can be deleted — void it instead.")
   }
-  revalidatePath(`/projects/${project_id}/purchase-orders`)
+  revalidatePoPaths(project_id)
 }
 
 /** Staff reply on a PO's comment thread; emails the sub their link. */
@@ -720,7 +996,7 @@ export async function postPoCommentStaff({
     }
   }
 
-  revalidatePath(`/projects/${project_id}/purchase-orders`)
+  revalidatePoPaths(project_id)
   revalidatePath(`/projects/${project_id}/communications`)
 }
 

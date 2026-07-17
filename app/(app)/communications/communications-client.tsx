@@ -208,6 +208,10 @@ function UnfiledActions({
           project_id: projectId,
         })
         toast.success("Filed to job")
+        // Filed rows keep this component mounted (for Re-file), so reset the
+        // editor — otherwise the picker stays open across the refresh.
+        setOpen(false)
+        setProjectId("")
         router.refresh()
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Could not file")

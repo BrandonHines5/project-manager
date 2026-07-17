@@ -186,7 +186,19 @@ export function DailyLogDrawer({
     if (!files || files.length === 0) return
     const picked = Array.from(files)
     if (fileInputRef.current) fileInputRef.current.value = ""
-    await Promise.all(picked.map((f) => uploadOne(f)))
+    // Bounded worker pool (3 wide) instead of firing every upload at once —
+    // a 20-photo pick on jobsite LTE would otherwise saturate the link and
+    // starve its own retries.
+    const queue = [...picked]
+    const workers = Array.from(
+      { length: Math.min(3, queue.length) },
+      async () => {
+        for (let f = queue.shift(); f; f = queue.shift()) {
+          await uploadOne(f)
+        }
+      }
+    )
+    await Promise.all(workers)
   }
 
   function retryFailedUpload(id: string) {

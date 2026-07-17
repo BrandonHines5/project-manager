@@ -302,7 +302,16 @@ export function BudgetClient({
                             }}
                           />
                         ) : (
-                          <span className="tabular-nums text-muted">—</span>
+                          // Read-only (non-editor, or the uncoded bucket):
+                          // still show the number — only editing is gated.
+                          <span
+                            className={cn(
+                              "tabular-nums",
+                              !r.hasLine && "text-muted"
+                            )}
+                          >
+                            {r.hasLine ? formatCurrency(r.budget) : "—"}
+                          </span>
                         )}
                       </td>
                       <td className="px-2 py-1.5 text-right tabular-nums">

@@ -6,7 +6,7 @@ import { toast } from "sonner"
 import { addDays as fnsAddDays, differenceInCalendarDays, parseISO, format, isWeekend, startOfDay } from "date-fns"
 import { CalendarDays, Zap, Minimize2, Printer } from "lucide-react"
 import { EmptyState } from "@/components/ui/empty"
-import { cn, todayISO, addDays, formatDateRange } from "@/lib/utils"
+import { cn, todayISO, addDays, formatDate, formatDateRange } from "@/lib/utils"
 import { moveScheduleItem, type MoveReasonT } from "@/app/actions/schedule"
 import { computeScheduleAnalysis } from "@/lib/schedule/scheduling"
 import { MoveReasonDialog } from "./move-reason-dialog"
@@ -645,11 +645,10 @@ function GanttPrintDocument({
           ? "#1976d2"
           : "#a1a1aa"
 
-  const printedOn = new Date().toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  })
+  // Same date source as the today marker (todayISO) and the app's standard
+  // fixed-locale formatter — no ambient-locale drift between server render
+  // and hydration, and the header can never disagree with the marker.
+  const printedOn = formatDate(todayISO())
 
   return (
     <div id="gantt-print-root">

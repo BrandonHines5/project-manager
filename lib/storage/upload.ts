@@ -152,25 +152,38 @@ async function uploadResumable(
             ? { status: (err as tus.DetailedError).originalResponse?.getStatus() }
             : err
         )
-        if (status === 409) {
-          resolve({ ok: true })
-          return
-        }
+        // Unlike the single-shot path, a TUS 409 is an offset conflict, not
+        // proof the object landed — tus retries those internally, so one that
+        // still reaches onError is a real failure. Only onSuccess reports ok.
         resolve({
           ok: false,
           error: friendlyMessage(status, err.message),
           // tus already retried transient failures internally; what reaches
           // here is worth a manual retry only for network-ish causes.
-          retriable: status == null || status >= 500 || status === 408 || status === 429,
+          retriable:
+            status == null ||
+            status >= 500 ||
+            status === 408 ||
+            status === 429 ||
+            status === 409,
         })
       },
       onSuccess: () => resolve({ ok: true }),
     })
-    // Resume a previous attempt at the same fingerprint when one exists.
+    // Resume a previous attempt when one exists — but only one that targets
+    // THIS bucket+path. The fingerprint is file-based, so a re-pick of the
+    // same file under a freshly generated path would otherwise resume the old
+    // upload and finish at the OLD objectName while the caller records the
+    // new one.
     upload
       .findPreviousUploads()
       .then((previous) => {
-        if (previous.length > 0) upload.resumeFromPreviousUpload(previous[0])
+        const match = previous.find(
+          (p) =>
+            p.metadata?.bucketName === opts.bucket &&
+            p.metadata?.objectName === opts.path
+        )
+        if (match) upload.resumeFromPreviousUpload(match)
         upload.start()
       })
       .catch(() => upload.start())

@@ -10,7 +10,11 @@ import {
   Send,
   Upload,
   FileIcon,
+  FileText,
   Lock,
+  Unlock,
+  Link2,
+  BookmarkPlus,
   RefreshCcw,
   Ban,
   Trophy,
@@ -34,11 +38,19 @@ import {
   sendBidPackage,
   reviseBidPackage,
   closeBidPackage,
+  reopenBidPackage,
   deleteBidPackage,
   copyBidPackage,
   type BidPackageInputT,
 } from "@/app/actions/bids"
+import { createPoForBidRecipient } from "@/app/actions/purchase-orders"
+import { savePurchasingTemplate } from "@/app/actions/purchasing-templates"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
+import {
+  FilesLinkPanel,
+  type PurchasingFileOption,
+} from "@/components/purchasing/files-picker"
+import { SaveTemplateFooter } from "@/components/purchasing/save-template-footer"
 import {
   BidStatusBadge,
   RecipientStatusBadge,
@@ -63,6 +75,9 @@ type Attachment = {
   file_type?: string | null
   file_size?: number | null
   caption?: string | null
+  // Set when the attachment links a Files-tab document — the blob belongs to
+  // project_files (never removed by attachment cleanup, here or server-side).
+  project_file_id?: string | null
   preview_url?: string
 }
 
@@ -93,6 +108,8 @@ export function BidPackageDrawer({
   const [pending, startTransition] = useTransition()
   const [uploading, setUploading] = useState(false)
   const [copyOpen, setCopyOpen] = useState(false)
+  const [templateOpen, setTemplateOpen] = useState(false)
+  const [filesOpen, setFilesOpen] = useState(false)
 
   function handleCopy(targetProjectId: string) {
     if (!pkg) return
@@ -109,7 +126,9 @@ export function BidPackageDrawer({
             : `Copied to ${targetProject?.project_number ?? "the selected project"}`
         )
         router.refresh()
-        if (!r.sameProject) router.push(`/projects/${targetProjectId}/bids`)
+        if (!r.sameProject) {
+          router.push(`/projects/${targetProjectId}/purchasing?tab=bids`)
+        }
         onClose()
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Copy failed")
@@ -150,9 +169,38 @@ export function BidPackageDrawer({
         file_type: a.file_type,
         file_size: a.file_size,
         caption: a.caption,
+        project_file_id: a.project_file_id,
         preview_url: data.signed_urls[a.storage_path],
       }))
   })
+
+  // Dirty tracking: a JSON snapshot of everything Save persists (recipient
+  // checkboxes are excluded — they only matter to Send, which reads live
+  // state). preview_url is excluded because blob object URLs change per
+  // mount. Used to warn before lossy exits (cancel, award shortcut, close
+  // bidding) — "require save first".
+  const formSnapshot = () =>
+    JSON.stringify({
+      title,
+      scope,
+      dueDate,
+      flatFee,
+      allowMultiple,
+      lineItems,
+      attachments: attachments.map(({ preview_url: _p, ...rest }) => {
+        void _p
+        return rest
+      }),
+    })
+  // Lazy useState = captured exactly once at mount, without touching a ref
+  // during render.
+  const [initialSnapshot] = useState(() => formSnapshot())
+  const dirty = formSnapshot() !== initialSnapshot
+
+  function requestClose() {
+    if (dirty && !confirm("Discard unsaved changes?")) return
+    onClose()
+  }
 
   const recipients = pkg
     ? data.recipients.filter((r) => r.bid_package_id === pkg.id)
@@ -243,8 +291,32 @@ export function BidPackageDrawer({
         file_type: a.file_type,
         file_size: a.file_size,
         caption: a.caption,
+        project_file_id: a.project_file_id,
       })),
     }
+  }
+
+  // Attach a Files-tab document by reference — no upload, no blob copy.
+  function linkProjectFile(f: PurchasingFileOption) {
+    setAttachments((current) => {
+      if (
+        current.some(
+          (a) => a.project_file_id === f.id || a.storage_path === f.storage_path
+        )
+      ) {
+        return current
+      }
+      return [
+        ...current,
+        {
+          storage_path: f.storage_path,
+          file_name: f.file_name,
+          file_type: f.file_type,
+          file_size: f.file_size,
+          project_file_id: f.id,
+        },
+      ]
+    })
   }
 
   function handleSave(sendAfter: boolean) {
@@ -335,9 +407,13 @@ export function BidPackageDrawer({
 
   function handleCloseBidding() {
     if (!pkg) return
+    if (dirty) {
+      toast.error("Save your changes first — closing discards unsaved edits.")
+      return
+    }
     if (
       !confirm(
-        "Close bidding? All recipient links stop working and no further bids can be submitted."
+        "Close bidding? All recipient links stop working and no further bids can be submitted. You can reopen it later — reopening sends fresh links."
       )
     )
       return
@@ -374,8 +450,97 @@ export function BidPackageDrawer({
     })
   }
 
+  function handleReopen() {
+    if (!pkg) return
+    if (
+      !confirm(
+        "Reopen bidding? Every recipient gets a fresh link (the old ones stay dead), and invited subs are re-notified."
+      )
+    )
+      return
+    startTransition(async () => {
+      try {
+        const { notified } = await reopenBidPackage({
+          id: pkg.id,
+          project_id: data.project_id,
+        })
+        toast.success(
+          notified
+            ? `Reopened — new links sent to ${notified} compan${notified === 1 ? "y" : "ies"}`
+            : "Reopened"
+        )
+        router.refresh()
+        onClose()
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Reopen failed")
+      }
+    })
+  }
+
+  // Create a draft PO for a recipient who never responded — moving ahead
+  // without an award. Reads saved DB state, so unsaved edits must be saved
+  // first (and success navigates away from this form).
+  function handleCreatePoForRecipient(recipientId: string) {
+    if (dirty) {
+      toast.error("Save your changes first.")
+      return
+    }
+    if (
+      !confirm(
+        "Create a draft PO for this sub from this bid request? The bid stays open — nothing is awarded."
+      )
+    )
+      return
+    startTransition(async () => {
+      try {
+        const { id, project_id } = await createPoForBidRecipient({
+          recipient_id: recipientId,
+        })
+        toast.success("Draft PO created")
+        router.push(`/projects/${project_id}/purchasing?tab=pos&open=${id}`)
+        router.refresh()
+        onClose()
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Could not create the PO")
+      }
+    })
+  }
+
+  function handleSaveTemplate(name: string) {
+    if (!title.trim()) {
+      toast.error("Title is required")
+      return
+    }
+    startTransition(async () => {
+      try {
+        // Bids carry no pricing — template lines save with unit_cost null;
+        // instantiating as a PO later defaults them to 0.
+        await savePurchasingTemplate({
+          name,
+          title: title.trim(),
+          scope: scope || null,
+          flat_fee: flatFee,
+          line_items: lineItems
+            .filter((li) => li.description.trim() !== "")
+            .map((li) => ({
+              cost_code_id: li.cost_code_id || null,
+              description: li.description.trim(),
+              quantity: li.quantity,
+              unit: li.unit || null,
+              unit_cost: null,
+            })),
+        })
+        toast.success("Template saved")
+        setTemplateOpen(false)
+        router.refresh()
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Could not save template")
+      }
+    })
+  }
+
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+    <Dialog open={open} onOpenChange={(v) => !v && requestClose()}>
       <DialogContent side="right">
         <DialogHeader>
           <div>
@@ -523,14 +688,21 @@ export function BidPackageDrawer({
                       </div>
                     )}
                   </div>
+                  {a.project_file_id && (
+                    <span className="absolute bottom-1 left-1 inline-flex items-center gap-0.5 rounded bg-black/60 text-white px-1 py-0.5 text-[9px]">
+                      <Link2 className="h-2.5 w-2.5" /> Files
+                    </span>
+                  )}
                   {isDraft && (
                     <button
                       type="button"
                       onClick={() => {
                         // Unsaved uploads have no DB row yet — best-effort
                         // delete the orphaned storage object. Saved ones are
-                        // cleaned up by the server action on save.
-                        if (!a.id) {
+                        // cleaned up by the server action on save. Linked
+                        // Files-tab documents own their blob elsewhere and
+                        // must never be removed here.
+                        if (!a.id && !a.project_file_id) {
                           createSupabaseBrowserClient()
                             .storage.from("project-files")
                             .remove([a.storage_path])
@@ -561,7 +733,31 @@ export function BidPackageDrawer({
                   {uploading ? "Uploading…" : "Add files"}
                 </button>
               )}
+              {isDraft && (
+                <button
+                  type="button"
+                  onClick={() => setFilesOpen((v) => !v)}
+                  className="aspect-square rounded-md border border-dashed border-border-strong flex flex-col items-center justify-center text-muted hover:border-brand-500 hover:text-brand-600 cursor-pointer text-xs gap-1"
+                >
+                  <Link2 className="h-5 w-5" />
+                  Link from Files
+                </button>
+              )}
             </div>
+            {isDraft && filesOpen && (
+              <FilesLinkPanel
+                files={data.files}
+                linkedIds={
+                  new Set(
+                    attachments
+                      .map((a) => a.project_file_id)
+                      .filter((x): x is string => !!x)
+                  )
+                }
+                onPick={linkProjectFile}
+                onClose={() => setFilesOpen(false)}
+              />
+            )}
           </div>
 
           {/* Recipients */}
@@ -581,11 +777,22 @@ export function BidPackageDrawer({
               }
               // Received bids can be turned into a PO right from this list
               // (award flow) while the package is still open for awarding.
+              // Awarding closes this form, so unsaved edits must be saved
+              // first — the wrapper enforces it.
               onAwardBid={
                 onAwardBid && pkg && canAwardPackage(pkg)
-                  ? onAwardBid
+                  ? (recipientId) => {
+                      if (dirty) {
+                        toast.error(
+                          "Save your changes first — awarding closes this form."
+                        )
+                        return
+                      }
+                      onAwardBid(recipientId)
+                    }
                   : undefined
               }
+              onCreatePo={pkg ? handleCreatePoForRecipient : undefined}
               bidTotalFor={
                 pkg ? (r) => recipientBidTotal(r, pkg, data) : undefined
               }
@@ -600,30 +807,47 @@ export function BidPackageDrawer({
             onCancel={() => setCopyOpen(false)}
             onCopy={handleCopy}
           />
+        ) : templateOpen ? (
+          <SaveTemplateFooter
+            defaultName={title.trim() || "Untitled scope"}
+            pending={pending}
+            onCancel={() => setTemplateOpen(false)}
+            onSave={handleSaveTemplate}
+          />
         ) : (
         <DialogFooter>
-          {pkg && (
-            <div className="mr-auto flex items-center gap-1">
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={handleDelete}
-                disabled={pending}
-                className="text-danger hover:bg-red-50"
-              >
-                <Trash2 className="h-4 w-4" /> Delete
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => setCopyOpen(true)}
-                disabled={pending}
-              >
-                <Copy className="h-4 w-4" /> Copy to job…
-              </Button>
-            </div>
-          )}
-          <Button type="button" variant="ghost" onClick={onClose}>
+          <div className="mr-auto flex items-center gap-1">
+            {pkg && (
+              <>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={handleDelete}
+                  disabled={pending}
+                  className="text-danger hover:bg-red-50"
+                >
+                  <Trash2 className="h-4 w-4" /> Delete
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setCopyOpen(true)}
+                  disabled={pending}
+                >
+                  <Copy className="h-4 w-4" /> Copy to job…
+                </Button>
+              </>
+            )}
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setTemplateOpen(true)}
+              disabled={pending}
+            >
+              <BookmarkPlus className="h-4 w-4" /> Save as template
+            </Button>
+          </div>
+          <Button type="button" variant="ghost" onClick={requestClose}>
             Cancel
           </Button>
           {isDraft ? (
@@ -651,6 +875,7 @@ export function BidPackageDrawer({
                 variant="ghost"
                 onClick={handleCloseBidding}
                 disabled={pending}
+                title={dirty ? "Save your changes first" : undefined}
               >
                 <Ban className="h-4 w-4" /> Close bidding
               </Button>
@@ -679,14 +904,26 @@ export function BidPackageDrawer({
               </Button>
             </>
           ) : (
-            // awarded / closed — metadata edits only.
-            <Button
-              type="button"
-              onClick={() => handleSave(false)}
-              disabled={pending || uploading}
-            >
-              {pending ? "Saving…" : "Save"}
-            </Button>
+            // awarded / closed — metadata edits only (closed can also reopen).
+            <>
+              {status === "closed" && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={handleReopen}
+                  disabled={pending}
+                >
+                  <Unlock className="h-4 w-4" /> Reopen bidding
+                </Button>
+              )}
+              <Button
+                type="button"
+                onClick={() => handleSave(false)}
+                disabled={pending || uploading}
+              >
+                {pending ? "Saving…" : "Save"}
+              </Button>
+            </>
           )}
         </DialogFooter>
         )}
@@ -892,6 +1129,7 @@ function RecipientPicker({
   selected,
   onToggle,
   onAwardBid,
+  onCreatePo,
   bidTotalFor,
 }: {
   companies: BidsData["companies"]
@@ -900,6 +1138,8 @@ function RecipientPicker({
   selected: Set<string>
   onToggle: (companyId: string) => void
   onAwardBid?: (recipientId: string) => void
+  // Draft PO for an invited-but-unresponded sub, without awarding.
+  onCreatePo?: (recipientId: string) => void
   bidTotalFor?: (r: BidsData["recipients"][number]) => number | null
 }) {
   const byCompany = useMemo(
@@ -1042,6 +1282,17 @@ function RecipientPicker({
                         onClick={() => onAwardBid(existing.id)}
                       >
                         <Trophy className="h-3 w-3" /> Award &amp; create PO
+                      </Button>
+                    )}
+                    {existing.status === "invited" && onCreatePo && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => onCreatePo(existing.id)}
+                        title="Create a draft PO for this sub without awarding the bid"
+                      >
+                        <FileText className="h-3 w-3" /> Create PO
                       </Button>
                     )}
                   </span>

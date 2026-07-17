@@ -106,7 +106,7 @@ company/their project; **Create/Edit/Approve** = write; **None** = RLS denies.
 | Contract price | View | View (client pricing view) | None | None |
 | Approved change-order / selection deltas | View | View own project's (approved only) | None | None |
 | Payment ledger (money **in**) | View (`pp_staff_all`) | View own project's (`pp_client_read`) | None | None |
-| **Committed costs** (approved-PO $ by cost code — money **out**, shown on the **Budget tab's POs column**, not Pricing) | View **only with `profiles.financial_access = true`** (app gate); **modify** further requires the budget-editors allowlist (`app_settings.budget_editors`) | **Never** | **Never** | **Never** |
+| **Committed costs** (approved-PO $ by cost code — money **out**, shown on the **Budget tab's POs column**, not Pricing) | View **only with `profiles.financial_access = true`** (app gate). The column is derived from approved POs, so PO CRUD (staff-wide) is what changes it; the budget-editors allowlist (`app_settings.budget_editors`) gates editable Budget data and imports, not PO actions | **Never** | **Never** | **Never** |
 
 > Clients see contract price, approved change-order deltas, and their own
 > payment ledger — never committed costs. Committed costs additionally require

@@ -265,6 +265,7 @@ export async function pushPurchaseOrderToQbo(input: {
       synced_at: new Date().toISOString(),
     })
     revalidatePath(`/projects/${input.project_id}/purchase-orders`)
+    revalidatePath(`/projects/${input.project_id}/purchasing`)
     return {
       ok: true,
       qbo_po_id: result.qbo_po_id,
@@ -280,6 +281,7 @@ export async function pushPurchaseOrderToQbo(input: {
       last_error: msg,
     })
     revalidatePath(`/projects/${input.project_id}/purchase-orders`)
+    revalidatePath(`/projects/${input.project_id}/purchasing`)
     return { ok: false, error: msg }
   }
 }

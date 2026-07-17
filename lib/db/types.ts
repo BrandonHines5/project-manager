@@ -181,6 +181,7 @@ export type Database = {
           file_type: string | null
           id: string
           position: number
+          project_file_id: string | null
           storage_bucket: string
           storage_path: string
         }
@@ -193,6 +194,7 @@ export type Database = {
           file_type?: string | null
           id?: string
           position?: number
+          project_file_id?: string | null
           storage_bucket?: string
           storage_path: string
         }
@@ -205,6 +207,7 @@ export type Database = {
           file_type?: string | null
           id?: string
           position?: number
+          project_file_id?: string | null
           storage_bucket?: string
           storage_path?: string
         }
@@ -214,6 +217,13 @@ export type Database = {
             columns: ["bid_package_id"]
             isOneToOne: false
             referencedRelation: "bid_packages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bid_package_attachments_project_file_id_fkey"
+            columns: ["project_file_id"]
+            isOneToOne: false
+            referencedRelation: "project_files"
             referencedColumns: ["id"]
           },
         ]
@@ -1800,6 +1810,7 @@ export type Database = {
           file_type: string | null
           id: string
           position: number
+          project_file_id: string | null
           purchase_order_id: string
           storage_bucket: string
           storage_path: string
@@ -1812,6 +1823,7 @@ export type Database = {
           file_type?: string | null
           id?: string
           position?: number
+          project_file_id?: string | null
           purchase_order_id: string
           storage_bucket?: string
           storage_path: string
@@ -1824,11 +1836,19 @@ export type Database = {
           file_type?: string | null
           id?: string
           position?: number
+          project_file_id?: string | null
           purchase_order_id?: string
           storage_bucket?: string
           storage_path?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "po_attachments_project_file_id_fkey"
+            columns: ["project_file_id"]
+            isOneToOne: false
+            referencedRelation: "project_files"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "po_attachments_purchase_order_id_fkey"
             columns: ["purchase_order_id"]
@@ -2550,6 +2570,7 @@ export type Database = {
           released_at: string | null
           scope: string | null
           source_bid_recipient_id: string | null
+          source_decision_id: string | null
           status: Database["public"]["Enums"]["po_status"]
           title: string
           token: string | null
@@ -2577,6 +2598,7 @@ export type Database = {
           released_at?: string | null
           scope?: string | null
           source_bid_recipient_id?: string | null
+          source_decision_id?: string | null
           status?: Database["public"]["Enums"]["po_status"]
           title: string
           token?: string | null
@@ -2604,6 +2626,7 @@ export type Database = {
           released_at?: string | null
           scope?: string | null
           source_bid_recipient_id?: string | null
+          source_decision_id?: string | null
           status?: Database["public"]["Enums"]["po_status"]
           title?: string
           token?: string | null
@@ -2646,6 +2669,54 @@ export type Database = {
             columns: ["source_bid_recipient_id"]
             isOneToOne: false
             referencedRelation: "bid_recipients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "purchase_orders_source_decision_id_fkey"
+            columns: ["source_decision_id"]
+            isOneToOne: false
+            referencedRelation: "decisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      purchasing_templates: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          flat_fee: boolean
+          id: string
+          line_items: Json
+          name: string
+          scope: string | null
+          title: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          flat_fee?: boolean
+          id?: string
+          line_items?: Json
+          name: string
+          scope?: string | null
+          title: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          flat_fee?: boolean
+          id?: string
+          line_items?: Json
+          name?: string
+          scope?: string | null
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "purchasing_templates_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -3523,16 +3594,12 @@ export type Database = {
       normalize_phone: { Args: { p: string }; Returns: string }
       save_company_with_trades: {
         Args: {
-          // Hand-kept nullability: these args accept NULL at runtime
-          // (p_id null = insert new company; see migration 0032), but newer
-          // supabase-gen versions emit them as plain string. Restore the
-          // `| null` unions if a regeneration drops them.
-          p_address: string | null
-          p_email: string | null
-          p_id: string | null
+          p_address: string
+          p_email: string
+          p_id: string
           p_name: string
-          p_notes: string | null
-          p_phone: string | null
+          p_notes: string
+          p_phone: string
           p_trades: string[]
           p_type: Database["public"]["Enums"]["company_type"]
         }
@@ -3594,8 +3661,8 @@ export type Database = {
         | "plot_plan"
         | "permit"
         | "contract"
-        | "quotes"
         | "other"
+        | "quotes"
       insurance_type: "general_liability" | "workers_comp" | "auto" | "umbrella"
       payment_method: "check" | "wire" | "card" | "cash" | "other"
       po_status: "draft" | "released" | "approved" | "declined" | "void"
@@ -3780,8 +3847,8 @@ export const Constants = {
         "plot_plan",
         "permit",
         "contract",
-        "quotes",
         "other",
+        "quotes",
       ],
       insurance_type: ["general_liability", "workers_comp", "auto", "umbrella"],
       payment_method: ["check", "wire", "card", "cash", "other"],

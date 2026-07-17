@@ -25,10 +25,11 @@ async function requireFinancialStaff() {
 // Budget editors) can MODIFY it. Semantics mirror invoice_payment_recipients:
 //   * key never set → every financial_access staffer can edit (the pre-
 //     allowlist behavior, so nothing breaks on deploy)
-//   * explicit list → only those ids (validated against live staff rows so a
-//     departed editor's id can't linger)
-//   * explicit []  → read-only for everyone (any staff can reopen it in
-//     Settings, so there's no lockout)
+//   * explicit list → only those ids; only CURRENT editors may change the
+//     list (an excluded staffer can't re-add themselves)
+//   * explicit []  → read-only for everyone (any financial_access staffer
+//     can reopen it in Settings, so there's no lockout)
+//   * read failure / malformed row → fail closed to read-only, never open
 // Same app-layer trust tier as financial_access itself — documented, not RLS.
 
 const BUDGET_EDITORS_KEY = "budget_editors"
@@ -40,18 +41,24 @@ type SupabaseServer = Awaited<ReturnType<typeof createSupabaseServerClient>>
 async function loadBudgetEditorIds(
   supabase: SupabaseServer
 ): Promise<string[] | null> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("app_settings")
     .select("value")
     .eq("key", BUDGET_EDITORS_KEY)
     .maybeSingle()
+  // Fail CLOSED on a read failure — a transient error must make budgets
+  // read-only, never silently widen edit rights to everyone.
+  if (error) {
+    throw new Error(`Could not load the budget-editor list: ${error.message}`)
+  }
   if (!data?.value) return null
   try {
     return editorIdsSchema.parse(JSON.parse(data.value))
   } catch {
-    // Malformed settings row — fail open to the pre-allowlist behavior
-    // rather than locking the budget for everyone.
-    return null
+    // Malformed settings row — fail closed (read-only for everyone). Any
+    // financial_access staffer can re-save a valid list in Settings →
+    // Budget editors, so this can't strand the org (see saveBudgetEditors).
+    return []
   }
 }
 
@@ -114,9 +121,16 @@ export async function getBudgetEditorConfig(): Promise<BudgetEditorConfig> {
 }
 
 export async function saveBudgetEditors(ids: string[]) {
-  const profile = await requireStaff()
+  const profile = await requireFinancialStaff()
   const parsed = editorIdsSchema.parse(ids)
   const supabase = await createSupabaseServerClient()
+  // Allowlist administration is limited to CURRENT editors so an excluded
+  // staffer can't quietly re-add themselves. Unset/empty/malformed lists
+  // stay fixable by any financial_access staffer — no lockout state.
+  const current = await loadBudgetEditorIds(supabase)
+  if (current !== null && current.length > 0 && !current.includes(profile.id)) {
+    throw new Error("Only current budget editors can change the editor list.")
+  }
   const { error } = await supabase.from("app_settings").upsert(
     {
       key: BUDGET_EDITORS_KEY,

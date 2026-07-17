@@ -273,13 +273,21 @@ Clients only ever see logs marked "client"; subcontractors have no access to dai
       "my bids",
       "reminder",
     ],
-    body: `Bid packages (on a project's Bids tab) collect competitive pricing from subs. A package can be structured as cost-coded line items or a single flat fee, and moves through: draft → sent → awarded or closed.
+    body: `Bid packages live on a project's "Bids & POs" tab (one page shared with purchase orders — a toggle switches between the two lists, and the "New…" button is one form that can create either). A package can be structured as cost-coded line items or a single flat fee, and moves through: draft → sent → awarded or closed.
 
 Each invited company becomes a recipient with its own private link. Subs respond on a public page at /bid/{token} — no login required — or, if they're a trade user, from their own "My Bids" view. They never see competitors' quotes. Sending or reminding respects each company's notification setting.
 
 Revise & re-request: editing a released package isn't silent — it wipes existing quotes and re-invites the non-declined recipients so everyone re-bids on the same terms.
 
-Award: awarding a package can also spin up a draft purchase order pre-filled from the winning quote, linked back to the bid. You can also send a reminder to recipients who were invited but haven't responded yet.`,
+Award: awarding a package can also spin up a draft purchase order pre-filled from the winning quote, linked back to the bid. You can also send a reminder to recipients who were invited but haven't responded yet — or use "Create PO" on an unresponded recipient to issue them a draft PO without awarding (the bid stays open).
+
+Close & reopen: closing a package kills every recipient link. "Reopen bidding" on a closed package brings it back — everyone gets a fresh link (old ones stay dead) and invited subs are re-notified. Earlier quotes survive the close/reopen round trip.
+
+Attachments can be uploaded directly or LINKED from the project's Files tab ("Link from Files") — a linked plan isn't duplicated, and it stays in Files even if removed from the bid. Anything attached becomes visible to the invited subs.
+
+Templates: "Save as template" in the editor stores the title/scope/line items org-wide; "Start from template" in the New form prefills either a bid request or a PO from the same template.
+
+The editor tracks unsaved changes: closing, closing bidding, or jumping to the award flow with unsaved edits warns you to save first.`,
   },
   {
     id: "purchase-orders",
@@ -298,9 +306,13 @@ Award: awarding a package can also spin up a draft purchase order pre-filled fro
       "work complete",
       "my pos",
     ],
-    body: `Purchase orders (a project's Purchase Orders tab) commit work to a sub. Each has a number (plus an optional custom number) and moves through: draft → released → approved or declined (and can be voided). Structural edits are only allowed while a PO is still a draft — to change a released PO you unrelease it first.
+    body: `Purchase orders live on a project's "Bids & POs" tab (one page shared with bid requests — a toggle switches lists, and the "New…" button is one form that can create either). Each PO has a number (plus an optional custom number) and moves through: draft → released → approved or declined (and can be voided). Structural edits are only allowed while a PO is still a draft — to change a released PO you unrelease it first.
 
 Releasing a PO emails/texts the sub a public link (/po/{token}). The sub approves it with a typed signature and a disclaimer checkbox, or declines with a reason. Staff can also approve on the sub's behalf. Unreleasing pulls it back to draft and revokes the link; voiding keeps the record but kills the link. "Work complete" is a separate flag from approval.
+
+Where POs come from: create one by hand, award a bid (pre-filled from the winning quote), use "Create PO" on a bid recipient who never responded (prefilled from the package, bid stays open), or open an APPROVED selection/change order and click "Create PO…" — the draft copies the approved cost breakdown at raw cost (client markup never reaches the sub) and shows a "From Selection #N" chip linking back.
+
+Attachments can be uploaded or linked from the project's Files tab ("Link from Files") without re-uploading. "Save as template" / "Start from template" share the same org-wide templates as bid requests (a template saved from a PO keeps its pricing; used as a bid, pricing is dropped).
 
 Committed costs: approved POs roll up by cost code in the Budget tab's POs column, visible only to staff who have financial access — never to clients. Subs see their own non-draft POs on "My POs."
 

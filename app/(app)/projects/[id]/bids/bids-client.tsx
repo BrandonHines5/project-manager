@@ -10,6 +10,7 @@ import { formatCurrency, formatDate } from "@/lib/utils"
 import type { Tables, Enums } from "@/lib/db/types"
 import { BidPackageDrawer } from "@/components/bids/bid-package-drawer"
 import { BidComparison } from "@/components/bids/bid-comparison"
+import type { PurchasingFileOption } from "@/components/purchasing/files-picker"
 
 export type BidsData = {
   project_id: string
@@ -30,10 +31,21 @@ export type BidsData = {
   cost_codes: Pick<Tables<"cost_codes">, "id" | "code" | "name" | "position" | "is_active">[]
   // Projects the caller can see — destinations for "Copy to job…".
   projects: Pick<Tables<"projects">, "id" | "name" | "project_number">[]
+  // Current, non-archived Files-tab documents — the drawer's "Link from
+  // Files" picker.
+  files: PurchasingFileOption[]
   signed_urls: Record<string, string>
 }
 
-export function BidsClient({ data }: { data: BidsData }) {
+// `embedded` hides the header row — the unified /purchasing page renders its
+// own header with the Bids/POs toggle and a shared "New…" button.
+export function BidsClient({
+  data,
+  embedded = false,
+}: {
+  data: BidsData
+  embedded?: boolean
+}) {
   const [drawerState, setDrawerState] = useState<
     { mode: "create" } | { mode: "edit"; packageId: string } | null
   >(
@@ -59,13 +71,15 @@ export function BidsClient({ data }: { data: BidsData }) {
     : undefined
 
   return (
-    <div className="max-w-7xl mx-auto px-4 md:px-6 py-5">
-      <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
-        <h2 className="text-lg font-semibold">Bid requests</h2>
-        <Button size="sm" onClick={() => setDrawerState({ mode: "create" })}>
-          <Plus className="h-3.5 w-3.5" /> New bid request
-        </Button>
-      </div>
+    <div className={embedded ? "" : "max-w-7xl mx-auto px-4 md:px-6 py-5"}>
+      {!embedded && (
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+          <h2 className="text-lg font-semibold">Bid requests</h2>
+          <Button size="sm" onClick={() => setDrawerState({ mode: "create" })}>
+            <Plus className="h-3.5 w-3.5" /> New bid request
+          </Button>
+        </div>
+      )}
 
       {data.packages.length === 0 ? (
         <EmptyState

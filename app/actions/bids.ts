@@ -27,6 +27,10 @@ const Attachment = z.object({
   file_type: optStr,
   file_size: z.number().nullish(),
   caption: optStr,
+  // Set when the attachment LINKS a Files-tab document instead of a fresh
+  // upload — the blob belongs to project_files and must never be removed
+  // from Storage by attachment reconciliation.
+  project_file_id: optStr,
 })
 
 const BidPackageInput = z.object({
@@ -42,6 +46,13 @@ const BidPackageInput = z.object({
 })
 
 export type BidPackageInputT = z.infer<typeof BidPackageInput>
+
+// The bid list renders on both the legacy /bids route and the unified
+// /purchasing page — revalidate both on every mutation.
+function revalidateBidPaths(projectId: string) {
+  revalidatePath(`/projects/${projectId}/bids`)
+  revalidatePath(`/projects/${projectId}/purchasing`)
+}
 
 function nz(v: string | null | undefined) {
   return v && v !== "" ? v : null
@@ -115,7 +126,7 @@ async function reconcileAttachments(
 ) {
   const { data: existing, error: existingErr } = await supabase
     .from("bid_package_attachments")
-    .select("id, storage_path")
+    .select("id, storage_path, project_file_id")
     .eq("bid_package_id", packageId)
   if (existingErr) throw new Error(existingErr.message)
   const keep = new Set(
@@ -128,11 +139,19 @@ async function reconcileAttachments(
       .delete()
       .in("id", toDelete.map((d) => d.id))
     if (error) throw new Error(error.message)
-    const { error: storageErr } = await supabase.storage
-      .from("project-files")
-      .remove(toDelete.map((d) => d.storage_path))
-    if (storageErr) {
-      console.warn("[saveBidPackage] storage cleanup failed (non-fatal):", storageErr.message)
+    // Only uploads owned by this package get their blobs removed — a linked
+    // Files-tab document's blob belongs to project_files, and removing it
+    // would kill the file everywhere it's shown.
+    const ownedPaths = toDelete
+      .filter((d) => !d.project_file_id)
+      .map((d) => d.storage_path)
+    if (ownedPaths.length) {
+      const { error: storageErr } = await supabase.storage
+        .from("project-files")
+        .remove(ownedPaths)
+      if (storageErr) {
+        console.warn("[saveBidPackage] storage cleanup failed (non-fatal):", storageErr.message)
+      }
     }
   }
   const newOnes = attachments.filter((a) => !nz(a.id))
@@ -146,6 +165,7 @@ async function reconcileAttachments(
         file_type: a.file_type ?? null,
         file_size: a.file_size ?? null,
         caption: a.caption ?? null,
+        project_file_id: nz(a.project_file_id),
         position: startPos + i,
       }))
     )
@@ -235,7 +255,7 @@ export async function saveBidPackage(input: BidPackageInputT) {
 
   await reconcileAttachments(supabase, id, parsed.attachments)
 
-  revalidatePath(`/projects/${parsed.project_id}/bids`)
+  revalidateBidPaths(parsed.project_id)
   return { id }
 }
 
@@ -331,14 +351,33 @@ export async function copyBidPackage(input: z.infer<typeof CopyBidPackageInput>)
     if (liErr) throw new Error(liErr.message)
   }
 
-  // Attachments — copy each storage blob to a fresh key under the target
-  // project, then record the row. A failed blob copy is non-fatal.
+  // Attachments — an upload owned by the source package gets its blob copied
+  // to a fresh key under the target project. A LINKED Files-tab document is
+  // different: same-project copies reuse the path + keep the link (the blob
+  // belongs to project_files, so no duplicate is made); cross-project copies
+  // blob-copy and DROP the link (the project_files row lives in the source
+  // project). A failed blob copy is non-fatal.
   const { data: srcAtts } = await supabase
     .from("bid_package_attachments")
     .select("*")
     .eq("bid_package_id", id)
     .order("position", { ascending: true })
   for (const a of srcAtts ?? []) {
+    if (a.project_file_id && sameProject) {
+      const { error: aErr } = await supabase.from("bid_package_attachments").insert({
+        bid_package_id: newId,
+        storage_bucket: a.storage_bucket,
+        storage_path: a.storage_path,
+        file_name: a.file_name,
+        file_type: a.file_type,
+        file_size: a.file_size,
+        caption: a.caption,
+        project_file_id: a.project_file_id,
+        position: a.position,
+      })
+      if (aErr) throw new Error(aErr.message)
+      continue
+    }
     const ext = a.file_name.split(".").pop()?.toLowerCase() ?? "bin"
     const newPath = `projects/${target_project_id}/bids/${Date.now()}-${Math.random()
       .toString(36)
@@ -369,8 +408,8 @@ export async function copyBidPackage(input: z.infer<typeof CopyBidPackageInput>)
     }
   }
 
-  revalidatePath(`/projects/${target_project_id}/bids`)
-  if (!sameProject) revalidatePath(`/projects/${src.project_id}/bids`)
+  revalidateBidPaths(target_project_id)
+  if (!sameProject) revalidateBidPaths(src.project_id)
   return { id: newId, project_id: target_project_id, sameProject }
 }
 
@@ -504,7 +543,7 @@ export async function sendBidPackage({
   }
   await Promise.all(sendJobs)
 
-  revalidatePath(`/projects/${project_id}/bids`)
+  revalidateBidPaths(project_id)
   return { sent: sends.length }
 }
 
@@ -616,7 +655,7 @@ export async function reviseBidPackage(input: BidPackageInputT) {
   }
   await Promise.all(sendJobs)
 
-  revalidatePath(`/projects/${parsed.project_id}/bids`)
+  revalidateBidPaths(parsed.project_id)
   return { id, reset: affected.length }
 }
 
@@ -718,7 +757,7 @@ export async function awardBid({
   }
   await Promise.all(sendJobs)
 
-  revalidatePath(`/projects/${project_id}/bids`)
+  revalidateBidPaths(project_id)
   revalidatePath(`/projects/${project_id}/purchase-orders`)
   return { po_id: result.po_id ?? null, po_number: result.po_number ?? null }
 }
@@ -750,7 +789,106 @@ export async function closeBidPackage({
     .update({ token: null })
     .eq("bid_package_id", id)
   if (tokErr) throw new Error(tokErr.message)
-  revalidatePath(`/projects/${project_id}/bids`)
+  revalidateBidPaths(project_id)
+}
+
+/**
+ * Reopen a CLOSED bid package: back to 'sent' with fresh recipient tokens.
+ * Close revoked every token (the public links 404), so reopen mints NEW
+ * ones — never restores the old strings, which keeps close's revocation
+ * guarantee meaningful. Quotes, statuses, and notes all survived the close,
+ * so bidding resumes exactly where it stopped; recipients still 'invited'
+ * are re-notified with their new link (the old one is dead).
+ */
+export async function reopenBidPackage({
+  id,
+  project_id,
+}: {
+  id: string
+  project_id: string
+}): Promise<{ notified: number }> {
+  const profile = await requireStaff()
+  const supabase = await createSupabaseServerClient()
+
+  // CAS closed → sent with a count guard (mirror of closeBidPackage) so a
+  // double-click can't run the re-token + re-notify block twice.
+  const { error, count } = await supabase
+    .from("bid_packages")
+    .update({ status: "sent", closed_at: null }, { count: "exact" })
+    .eq("id", id)
+    .eq("status", "closed")
+  if (error) throw new Error(error.message)
+  if (!count) throw new Error("Only a closed bid package can be reopened.")
+
+  const { data: recipients, error: rErr } = await supabase
+    .from("bid_recipients")
+    .select("id, status, company_id")
+    .eq("bid_package_id", id)
+  if (rErr) throw new Error(rErr.message)
+
+  // One row at a time: token carries a unique index, and each recipient
+  // must get their own fresh secret.
+  const tokenByRecipient = new Map<string, string>()
+  for (const r of recipients ?? []) {
+    const token = generateAccessToken()
+    const { error: tErr } = await supabase
+      .from("bid_recipients")
+      .update({ token })
+      .eq("id", r.id)
+      .is("token", null)
+    if (tErr) throw new Error(tErr.message)
+    tokenByRecipient.set(r.id, token)
+  }
+
+  // Re-notify recipients who haven't responded — their old link is dead and
+  // silence would read as "the bid vanished". Submitted/declined recipients
+  // aren't nagged; their my-bids card regains its link automatically.
+  let notified = 0
+  const { data: pkg } = await supabase
+    .from("bid_packages")
+    .select("title, due_date")
+    .eq("id", id)
+    .maybeSingle()
+  const invited = (recipients ?? []).filter((r) => r.status === "invited")
+  if (invited.length && pkg) {
+    const { data: companies } = await supabase
+      .from("companies")
+      .select("id, name, email, phone, notifications_enabled")
+      .in("id", invited.map((r) => r.company_id))
+    const companyById = new Map((companies ?? []).map((c) => [c.id, c]))
+    for (const r of invited) {
+      const company = companyById.get(r.company_id)
+      const token = tokenByRecipient.get(r.id)
+      if (!company || !token || !company.notifications_enabled) continue
+      const link = appUrl(`/bid/${token}`)
+      const subject = `Bidding reopened: ${pkg.title}`
+      const text = `Bidding has reopened for "${pkg.title}"${
+        pkg.due_date ? ` (due ${pkg.due_date})` : ""
+      }. Your previous link no longer works — review and respond here: ${link}`
+      const log = {
+        project_id,
+        company_id: company.id,
+        sent_by: profile.id,
+        kind: "bid_invite",
+        counterparty_name: company.name,
+      }
+      if (company.email) {
+        const res = await sendEmail({ to: company.email, subject, text, log })
+        if (res.sent) notified++
+      }
+      const e164 = company.phone ? normalizeE164(company.phone) : null
+      if (e164) {
+        await sendQuoSms({
+          to: e164,
+          content: `Hines Homes: bidding reopened for "${pkg.title}". New link: ${link}`,
+          log,
+        })
+      }
+    }
+  }
+
+  revalidateBidPaths(project_id)
+  return { notified }
 }
 
 export async function deleteBidPackage({
@@ -767,7 +905,7 @@ export async function deleteBidPackage({
   // the trash purge removes the objects when the entry expires unrestored.
   const { error } = await supabase.from("bid_packages").delete().eq("id", id)
   if (error) throw new Error(error.message)
-  revalidatePath(`/projects/${project_id}/bids`)
+  revalidateBidPaths(project_id)
 }
 
 /** Staff reply on a recipient's comment thread; emails the sub their link. */
@@ -855,7 +993,7 @@ export async function postBidCommentStaff({
     }
   }
 
-  revalidatePath(`/projects/${project_id}/bids`)
+  revalidateBidPaths(project_id)
   revalidatePath(`/projects/${project_id}/communications`)
 }
 

@@ -204,6 +204,12 @@ export function ScheduleItemDialog({
   const [recurrence, setRecurrence] = useState<RecurrenceRule | null>(
     isRecurrenceRule(item?.recurrence_rule) ? item!.recurrence_rule : null
   )
+  // After-completion recurrence and a parent-linked due date are competing
+  // due-date authorities (a parent move would overwrite the rolled date), so
+  // the recurrence wins: the anchor is suppressed here and stripped
+  // server-side (saveScheduleItem does the same normalization).
+  const afterCompletionRecurrence =
+    recurrence?.anchor_mode === "after_completion"
   const [assignments, setAssignments] = useState<Assignment[]>(() => {
     if (!item) return []
     return data.assignments
@@ -315,7 +321,8 @@ export function ScheduleItemDialog({
       )
       return null
     }
-    const anchored = kind === "todo" && !!parentId && anchorEnabled
+    const anchored =
+      kind === "todo" && !!parentId && anchorEnabled && !afterCompletionRecurrence
     // A recurrence rule advances from the due date — without one there is no
     // anchor and the repeat never fires. Anchored to-dos derive their due date
     // from the parent work item, so the chosen anchor date must actually
@@ -679,9 +686,13 @@ export function ScheduleItemDialog({
                   </Select>
                 </Field>
                 <Field
-                  label={anchorEnabled ? "Linked due date" : "Due date"}
+                  label={
+                    anchorEnabled && !afterCompletionRecurrence
+                      ? "Linked due date"
+                      : "Due date"
+                  }
                 >
-                  {anchorEnabled ? (
+                  {anchorEnabled && !afterCompletionRecurrence ? (
                     <AnchoredDuePreview
                       parent={data.items.find((i) => i.id === parentId) ?? null}
                       anchor={anchor}
@@ -697,17 +708,32 @@ export function ScheduleItemDialog({
                 </Field>
                 {parentId && (
                   <div className="sm:col-span-2 -mt-2 space-y-2">
-                    <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
+                    <label
+                      className={cn(
+                        "flex items-center gap-2 text-xs select-none",
+                        afterCompletionRecurrence
+                          ? "opacity-60"
+                          : "cursor-pointer"
+                      )}
+                    >
                       <input
                         type="checkbox"
-                        checked={anchorEnabled}
+                        checked={anchorEnabled && !afterCompletionRecurrence}
+                        disabled={afterCompletionRecurrence}
                         onChange={(e) => setAnchorEnabled(e.target.checked)}
                         className="h-4 w-4"
                       />
                       Link due date to parent (auto-updates when parent
                       moves)
                     </label>
-                    {anchorEnabled && (
+                    {afterCompletionRecurrence && (
+                      <p className="text-[11px] text-muted">
+                        Unavailable with “after completion” recurrence — the
+                        next due date comes from when you complete this to-do,
+                        not from the parent&apos;s dates.
+                      </p>
+                    )}
+                    {anchorEnabled && !afterCompletionRecurrence && (
                       <div className="grid grid-cols-1 sm:grid-cols-[140px_120px_1fr] gap-2 items-end">
                         <Field label="Anchor">
                           <Select

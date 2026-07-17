@@ -158,6 +158,12 @@ async function recentProjectForCompany(
     const cutoff = new Date(
       Date.now() - COMM_RECENCY_WINDOW_DAYS * 86_400_000
     ).toISOString()
+    // The phone-number thread filter needs normalization (last10), so it
+    // can't run in SQL — fetch the company's whole recency window instead.
+    // 500 is far above any real 7-day volume; if it's ever hit, the window
+    // may be truncated and the all-agree check below can't be trusted, so
+    // bail to "no evidence" rather than conclude from a partial set.
+    const RECENCY_FETCH_CAP = 500
     const { data, error } = await admin
       .from("communications")
       .select(
@@ -168,8 +174,9 @@ async function recentProjectForCompany(
       .neq("status", "ignored")
       .gte("occurred_at", cutoff)
       .order("occurred_at", { ascending: false })
-      .limit(30)
+      .limit(RECENCY_FETCH_CAP)
     if (error || !data?.length) return null
+    if (data.length >= RECENCY_FETCH_CAP) return null
 
     const thread = data.filter((r) =>
       r.direction === "outbound"
