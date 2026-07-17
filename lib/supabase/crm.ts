@@ -43,13 +43,24 @@ export async function getCrmProjectStatus(
 ): Promise<CrmProjectStatus | null> {
   const crm = createCrmClient()
   if (!crm) return null
-  const { data, error } = await crm
-    .from("projects")
-    .select("project_status")
-    .eq("project_number", projectNumber)
-    .maybeSingle()
-  if (error || !data) return null
-  const crmStatus =
-    (data as { project_status: string | null }).project_status?.trim() || null
-  return { crmStatus, mapped: crmStatusToEnum(crmStatus) }
+  // Fail OPEN. This lookup is best-effort — a project must stay creatable even
+  // when the CRM is slow or unreachable, so bound the query with a short
+  // timeout and swallow any thrown/rejected client error, returning null so
+  // the caller falls back to the submitted / source status. (A returned
+  // PostgREST `error` is likewise non-fatal below.) Creation never depended on
+  // the CRM before this helper, and it must not start to.
+  try {
+    const { data, error } = await crm
+      .from("projects")
+      .select("project_status")
+      .eq("project_number", projectNumber)
+      .abortSignal(AbortSignal.timeout(4000))
+      .maybeSingle()
+    if (error || !data) return null
+    const crmStatus =
+      (data as { project_status: string | null }).project_status?.trim() || null
+    return { crmStatus, mapped: crmStatusToEnum(crmStatus) }
+  } catch {
+    return null
+  }
 }
