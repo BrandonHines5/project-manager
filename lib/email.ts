@@ -46,6 +46,11 @@ export async function sendEmail(opts: {
 }): Promise<{ sent: boolean; reason?: string }> {
   const toList = Array.isArray(opts.to) ? opts.to : [opts.to]
   const ccList = opts.cc ? (Array.isArray(opts.cc) ? opts.cc : [opts.cc]) : undefined
+  // Every outbound recipient belongs in the communications audit — CC'd
+  // addresses (e.g. a sub's insurance agent) included, marked as such.
+  const logToAddress = ccList?.length
+    ? `${toList.join(", ")} (cc: ${ccList.join(", ")})`
+    : toList.join(", ")
   const replyToList = opts.replyTo
     ? Array.isArray(opts.replyTo)
       ? opts.replyTo
@@ -81,7 +86,7 @@ export async function sendEmail(opts: {
             profile_id: opts.log.profile_id,
             sent_by: opts.log.sent_by,
             from_address: fromMailbox,
-            to_address: toList.join(", "),
+            to_address: logToAddress,
             counterparty_name: opts.log.counterparty_name,
             subject: opts.subject,
             body: opts.text,
@@ -161,7 +166,7 @@ export async function sendEmail(opts: {
         profile_id: opts.log.profile_id,
         sent_by: opts.log.sent_by,
         from_address: fromLine,
-        to_address: toList.join(", "),
+        to_address: logToAddress,
         counterparty_name: opts.log.counterparty_name,
         subject: opts.subject,
         body: opts.text,

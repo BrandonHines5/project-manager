@@ -37,7 +37,11 @@ export default async function OnsitePage({
         {project.address ? ` (${project.address})` : ""} that need a quick
         yes/no/date update right now.
       </p>
-      <OnsiteClient projectId={project.id} prompts={prompts} />
+      <OnsiteClient
+        projectId={project.id}
+        projectAddress={project.address}
+        prompts={prompts}
+      />
     </div>
   )
 }

@@ -572,11 +572,15 @@ export type Database = {
       companies: {
         Row: {
           address: string | null
+          aka: string | null
           city: string | null
           contact_name: string | null
           created_at: string
           email: string | null
           id: string
+          insurance_agent_email: string | null
+          insurance_agent_name: string | null
+          insurance_agent_phone: string | null
           insurance_upload_token: string
           name: string
           notes: string | null
@@ -592,11 +596,15 @@ export type Database = {
         }
         Insert: {
           address?: string | null
+          aka?: string | null
           city?: string | null
           contact_name?: string | null
           created_at?: string
           email?: string | null
           id?: string
+          insurance_agent_email?: string | null
+          insurance_agent_name?: string | null
+          insurance_agent_phone?: string | null
           insurance_upload_token?: string
           name: string
           notes?: string | null
@@ -612,11 +620,15 @@ export type Database = {
         }
         Update: {
           address?: string | null
+          aka?: string | null
           city?: string | null
           contact_name?: string | null
           created_at?: string
           email?: string | null
           id?: string
+          insurance_agent_email?: string | null
+          insurance_agent_name?: string | null
+          insurance_agent_phone?: string | null
           insurance_upload_token?: string
           name?: string
           notes?: string | null
@@ -1500,6 +1512,7 @@ export type Database = {
         Row: {
           company_id: string | null
           created_at: string
+          doc_kind: string
           email_from: string | null
           email_subject: string | null
           extracted_company_name: string | null
@@ -1518,6 +1531,7 @@ export type Database = {
         Insert: {
           company_id?: string | null
           created_at?: string
+          doc_kind?: string
           email_from?: string | null
           email_subject?: string | null
           extracted_company_name?: string | null
@@ -1536,6 +1550,7 @@ export type Database = {
         Update: {
           company_id?: string | null
           created_at?: string
+          doc_kind?: string
           email_from?: string | null
           email_subject?: string | null
           extracted_company_name?: string | null
