@@ -74,6 +74,10 @@ body {
    clean black-on-white document (with the project's brand logo).
    --------------------------------------------------------------------------- */
 #pricing-print-root { display: none; }
+/* Gantt PDF export — same pattern as the pricing document below; the print
+   root lives inside GanttView and only mounts on the schedule page's Gantt
+   view (its landscape @page rule is mounted with it). */
+#gantt-print-root { display: none; }
 
 @media print {
   @page { margin: 0.6in; }
@@ -82,6 +86,43 @@ body {
   body * { visibility: hidden; }
   #pricing-print-root,
   #pricing-print-root * { visibility: visible; }
+  #gantt-print-root,
+  #gantt-print-root * { visibility: visible; }
+
+  #gantt-print-root {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    color: #18181b;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  #gantt-print-root .gp-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    border-bottom: 2px solid #0d2543;
+    padding-bottom: 8px;
+    margin-bottom: 10px;
+  }
+  #gantt-print-root .gp-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #0d2543;
+  }
+  #gantt-print-root .gp-project { font-size: 12px; font-weight: 600; margin-top: 2px; }
+  #gantt-print-root .gp-sub { font-size: 10px; color: #6b7888; margin-top: 1px; }
+  #gantt-print-root .gp-legend { display: flex; gap: 12px; font-size: 9px; color: #3f3f46; }
+  #gantt-print-root .gp-legend span { display: inline-flex; align-items: center; gap: 4px; }
+  #gantt-print-root .gp-legend i {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+  }
 
   #pricing-print-root {
     display: block;

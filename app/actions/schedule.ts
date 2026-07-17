@@ -29,6 +29,9 @@ const Recurrence = z
     interval: z.number().int().positive().optional(),
     until: z.string().optional(),
     count: z.number().int().positive().optional(),
+    // z.object STRIPS unknown keys — anchor_mode must be declared here or
+    // every dialog save silently downgrades the rule to fixed-schedule.
+    anchor_mode: z.enum(["fixed", "after_completion"]).optional(),
   })
   .nullable()
   .optional()
@@ -356,8 +359,17 @@ export async function saveScheduleItem(input: ScheduleItemInputT) {
   // due_date is recomputed from the parent and any manual `due_date` value
   // the form sent is ignored.
   const parentIdResolved = nz(parsed.parent_id)
+  // A parent-anchored due date and an after-completion recurrence are two
+  // competing due-date authorities (a later parent move would overwrite the
+  // rolled date). The recurrence wins — drop the anchor pair. The dialog
+  // hides the anchor fields in this mode; this is the server-side guarantee.
+  const afterCompletion =
+    parsed.recurrence_rule?.anchor_mode === "after_completion"
   const anchor =
-    parsed.kind === "todo" && parentIdResolved && parsed.parent_anchor
+    parsed.kind === "todo" &&
+    parentIdResolved &&
+    parsed.parent_anchor &&
+    !afterCompletion
       ? parsed.parent_anchor
       : null
   const offset =

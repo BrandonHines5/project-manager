@@ -26,6 +26,7 @@ import {
   Eye,
   BookMarked,
   Users,
+  FileText,
 } from "lucide-react"
 import { formatCurrency } from "@/lib/utils"
 import {
@@ -56,6 +57,7 @@ import {
   searchCatalogItems,
   type CatalogItemHit,
 } from "@/app/actions/catalog"
+import { createPoFromDecision } from "@/app/actions/purchase-orders"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
 import { formatTags, parseTagsInput, collectBaseTags } from "@/lib/template-tags"
 import { TemplateTagsInput } from "@/components/template-tags-input"
@@ -363,6 +365,93 @@ export function DecisionDrawer({
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [copyOpen, setCopyOpen] = useState(false)
+  // Inline vendor picker for "Create PO…" on an approved decision.
+  const [createPoOpen, setCreatePoOpen] = useState(false)
+
+  // The PO copies the SAVED decision (title/description/cost breakdown), so
+  // visible-but-unsaved edits would silently be missing from it. Fingerprint
+  // the PO-feeding fields against their last-saved values before creating.
+  function poSourceDirty(): boolean {
+    if (!decision) return false
+    if (title !== (decision.title ?? "")) return true
+    if (description !== (decision.description ?? "")) return true
+    const itemKey = (
+      choiceId: string | null,
+      costCodeId: string | null | undefined,
+      desc: string | null | undefined,
+      quantity: number,
+      unitCost: number
+    ) =>
+      JSON.stringify([choiceId, costCodeId ?? null, desc ?? null, quantity, unitCost])
+    const saved = data.cost_items
+      .filter((ci) => ci.decision_id === decision.id)
+      .map((ci) =>
+        itemKey(
+          ci.choice_id,
+          ci.cost_code_id,
+          ci.description,
+          Number(ci.quantity),
+          Number(ci.unit_cost)
+        )
+      )
+      .sort()
+    const current = [
+      ...costItems.map((ci) =>
+        itemKey(
+          null,
+          ci.cost_code_id,
+          ci.description,
+          Number(ci.quantity),
+          Number(ci.unit_cost)
+        )
+      ),
+      ...choices.flatMap((c) =>
+        c.cost_items.map((ci) =>
+          itemKey(
+            // Saved choices carry their DB id; a brand-new unsaved choice has
+            // none, which correctly reads as a difference.
+            c.id ?? "unsaved",
+            ci.cost_code_id,
+            ci.description,
+            Number(ci.quantity),
+            Number(ci.unit_cost)
+          )
+        )
+      ),
+    ].sort()
+    return JSON.stringify(saved) !== JSON.stringify(current)
+  }
+
+  function handleCreatePo(companyId: string) {
+    if (!decision) return
+    if (poSourceDirty()) {
+      toast.error(
+        "Save your changes first — the PO copies the saved cost breakdown."
+      )
+      setCreatePoOpen(false)
+      return
+    }
+    startTransition(async () => {
+      try {
+        const { id, project_id, already_linked } = await createPoFromDecision({
+          decision_id: decision.id,
+          company_id: companyId,
+        })
+        toast.success(
+          already_linked
+            ? `Draft PO created (note: ${already_linked} earlier PO${
+                already_linked === 1 ? "" : "s"
+              } already came from this item)`
+            : "Draft PO created"
+        )
+        router.push(`/projects/${project_id}/purchasing?tab=pos&open=${id}`)
+        router.refresh()
+        onClose()
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Could not create the PO")
+      }
+    })
+  }
 
   // Staff can flip into a read-only "client preview" to sanity-check what the
   // owner will see. Every isClient/canEdit branch below flows from these
@@ -1326,7 +1415,16 @@ export function DecisionDrawer({
             onCopy={handleCopy}
           />
         )}
-        {canEdit && !copyOpen && (
+        {canEdit && !copyOpen && createPoOpen && decision && (
+          <CreatePoFooter
+            companies={data.companies}
+            assignments={assignments}
+            pending={pending}
+            onCancel={() => setCreatePoOpen(false)}
+            onCreate={handleCreatePo}
+          />
+        )}
+        {canEdit && !copyOpen && !createPoOpen && (
           <DialogFooter>
             {mode === "edit" && decision && (
               <div className="mr-auto flex items-center gap-1">
@@ -1353,14 +1451,27 @@ export function DecisionDrawer({
               Cancel
             </Button>
             {status === "approved" && (
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={handleReset}
-                disabled={pending}
-              >
-                <RotateCcw className="h-4 w-4" /> Reset to draft
-              </Button>
+              <>
+                {decision && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setCreatePoOpen(true)}
+                    disabled={pending}
+                    title="Create a draft purchase order from the approved cost breakdown"
+                  >
+                    <FileText className="h-4 w-4" /> Create PO…
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={handleReset}
+                  disabled={pending}
+                >
+                  <RotateCcw className="h-4 w-4" /> Reset to draft
+                </Button>
+              </>
             )}
             {status !== "approved" && status !== "rejected" && (
               <>
@@ -2987,6 +3098,70 @@ function CopyDecisionFooter({
         <Button type="button" onClick={() => onCopy(target)} disabled={pending}>
           <Copy className="h-4 w-4" />
           {pending ? "Copying…" : "Create copy"}
+        </Button>
+      </div>
+    </DialogFooter>
+  )
+}
+
+// Inline footer for "Create PO…" on an approved decision — picks the vendor
+// the draft PO goes to. Preselects the assigned company when the decision has
+// exactly one company assignment. Same inline-not-nested-Dialog pattern as
+// CopyDecisionFooter.
+function CreatePoFooter({
+  companies,
+  assignments,
+  pending,
+  onCancel,
+  onCreate,
+}: {
+  companies: DecisionsData["companies"]
+  assignments: AssignmentDraft[]
+  pending: boolean
+  onCancel: () => void
+  onCreate: (companyId: string) => void
+}) {
+  const assignedCompanyIds = assignments
+    .map((a) => a.company_id)
+    .filter((x): x is string => !!x)
+  // POs go to subs/vendors only (the server enforces the same rule).
+  const vendorCompanies = companies.filter(
+    (c) => c.type === "sub" || c.type === "vendor"
+  )
+  const [companyId, setCompanyId] = useState(
+    assignedCompanyIds.length === 1 &&
+      vendorCompanies.some((c) => c.id === assignedCompanyIds[0])
+      ? assignedCompanyIds[0]
+      : ""
+  )
+  return (
+    <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+      <div className="flex-1 min-w-0">
+        <Label className="mb-1">Create a draft PO for…</Label>
+        <Select value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
+          <option value="">— Pick a sub/vendor —</option>
+          {vendorCompanies.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </Select>
+        <p className="mt-1 text-[11px] text-muted">
+          Line items copy from the approved cost breakdown at raw cost — markup
+          never reaches the sub.
+        </p>
+      </div>
+      <div className="flex items-center gap-2 sm:self-end">
+        <Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>
+          Cancel
+        </Button>
+        <Button
+          type="button"
+          onClick={() => onCreate(companyId)}
+          disabled={pending || !companyId}
+        >
+          <FileText className="h-4 w-4" />
+          {pending ? "Creating…" : "Create PO"}
         </Button>
       </div>
     </DialogFooter>

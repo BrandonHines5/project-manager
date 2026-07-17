@@ -177,9 +177,11 @@ To explain WHY a job is behind, look at the logged delays (each records which it
       "roll",
       "series",
     ],
-    body: `A to-do can be set to repeat (daily, weekly, biweekly, or monthly, with an optional end date or occurrence count). Recurring to-dos work on a "roll on complete" model: only the current occurrence exists at any time. When you complete it — by any method (checkbox, the detail sheet, bulk, an onsite quick update, or applying an AI plan) — the app automatically creates the next occurrence, advancing the due date past today, resetting the checklist, and copying the assignments.
+    body: `A to-do can be set to repeat (daily, weekly, biweekly, or monthly, with an optional end date or occurrence count). Recurring to-dos work on a "roll on complete" model: only the current occurrence exists at any time. When you complete it — by any method (checkbox, the detail sheet, bulk, an onsite quick update, or applying an AI plan) — the app automatically creates the next occurrence, resetting the checklist and copying the assignments.
 
-Nothing is pre-created and nothing is virtual, so your list only ever shows the next real occurrence. A recurrence rule with no due date does nothing — the dialog won't let you save one without a due date.`,
+The "Repeats from" setting controls WHEN the next occurrence comes due. "Fixed schedule" (the default) keeps the cadence anchored to the due date — something due every May 1 is due next May 1 no matter when you actually checked it off (missed slots are skipped, never stacked). "After completion" counts the interval from the day you completed it — air filters changed April 10 come due again 3 months from April 10, even if they'd been scheduled for April 1.
+
+Nothing is pre-created and nothing is virtual, so your list only ever shows the next real occurrence. A recurrence rule with no due date does nothing — the dialog won't let you save one without a due date. For a yearly cadence, use monthly with "every 12".`,
   },
   {
     id: "assignments",
@@ -273,13 +275,21 @@ Clients only ever see logs marked "client"; subcontractors have no access to dai
       "my bids",
       "reminder",
     ],
-    body: `Bid packages (on a project's Bids tab) collect competitive pricing from subs. A package can be structured as cost-coded line items or a single flat fee, and moves through: draft → sent → awarded or closed.
+    body: `Bid packages live on a project's "Bids & POs" tab (one page shared with purchase orders — a toggle switches between the two lists, and the "New…" button is one form that can create either). A package can be structured as cost-coded line items or a single flat fee, and moves through: draft → sent → awarded or closed.
 
 Each invited company becomes a recipient with its own private link. Subs respond on a public page at /bid/{token} — no login required — or, if they're a trade user, from their own "My Bids" view. They never see competitors' quotes. Sending or reminding respects each company's notification setting.
 
 Revise & re-request: editing a released package isn't silent — it wipes existing quotes and re-invites the non-declined recipients so everyone re-bids on the same terms.
 
-Award: awarding a package can also spin up a draft purchase order pre-filled from the winning quote, linked back to the bid. You can also send a reminder to recipients who were invited but haven't responded yet.`,
+Award: awarding a package can also spin up a draft purchase order pre-filled from the winning quote, linked back to the bid. You can also send a reminder to recipients who were invited but haven't responded yet — or use "Create PO" on an unresponded recipient to issue them a draft PO without awarding (the bid stays open).
+
+Close & reopen: closing a package kills every recipient link. "Reopen bidding" on a closed package brings it back — everyone gets a fresh link (old ones stay dead) and invited subs are re-notified. Earlier quotes survive the close/reopen round trip.
+
+Attachments can be uploaded directly or LINKED from the project's Files tab ("Link from Files") — a linked plan isn't duplicated, and it stays in Files even if removed from the bid. Anything attached becomes visible to the invited subs.
+
+Templates: "Save as template" in the editor stores the title/scope/line items org-wide; "Start from template" in the New form prefills either a bid request or a PO from the same template.
+
+The editor tracks unsaved changes: closing, closing bidding, or jumping to the award flow with unsaved edits warns you to save first.`,
   },
   {
     id: "purchase-orders",
@@ -298,11 +308,15 @@ Award: awarding a package can also spin up a draft purchase order pre-filled fro
       "work complete",
       "my pos",
     ],
-    body: `Purchase orders (a project's Purchase Orders tab) commit work to a sub. Each has a number (plus an optional custom number) and moves through: draft → released → approved or declined (and can be voided). Structural edits are only allowed while a PO is still a draft — to change a released PO you unrelease it first.
+    body: `Purchase orders live on a project's "Bids & POs" tab (one page shared with bid requests — a toggle switches lists, and the "New…" button is one form that can create either). Each PO has a number (plus an optional custom number) and moves through: draft → released → approved or declined (and can be voided). Structural edits are only allowed while a PO is still a draft — to change a released PO you unrelease it first.
 
 Releasing a PO emails/texts the sub a public link (/po/{token}). The sub approves it with a typed signature and a disclaimer checkbox, or declines with a reason. Staff can also approve on the sub's behalf. Unreleasing pulls it back to draft and revokes the link; voiding keeps the record but kills the link. "Work complete" is a separate flag from approval.
 
-Committed costs: approved POs roll up by cost code on the project's Pricing tab, visible only to staff who have financial access — never to clients. Subs see their own non-draft POs on "My POs."
+Where POs come from: create one by hand, award a bid (pre-filled from the winning quote), use "Create PO" on a bid recipient who never responded (prefilled from the package, bid stays open), or open an APPROVED selection/change order and click "Create PO…" — the draft copies the approved cost breakdown at raw cost (client markup never reaches the sub) and shows a "From Selection #N" chip linking back.
+
+Attachments can be uploaded or linked from the project's Files tab ("Link from Files") without re-uploading. "Save as template" / "Start from template" share the same org-wide templates as bid requests (a template saved from a PO keeps its pricing; used as a bid, pricing is dropped).
+
+Committed costs: approved POs roll up by cost code in the Budget tab's POs column, visible only to staff who have financial access — never to clients. Subs see their own non-draft POs on "My POs."
 
 Out of scope (v1): PO payments/bills and lien waivers live in QuickBooks/Adaptive, not here. Client invoicing lives in QuickBooks.`,
   },

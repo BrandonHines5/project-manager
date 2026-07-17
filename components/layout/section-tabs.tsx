@@ -49,8 +49,9 @@ const SECTIONS: Section[] = [
     aggregateHref: "/communications",
     aggregateRoles: ["staff"],
   },
-  { label: "Bids", slug: "bids", hideForRoles: ["client", "trade"] },
-  { label: "POs", slug: "purchase-orders", hideForRoles: ["client", "trade"] },
+  // One tab for both — the page hosts a Bid requests | Purchase orders
+  // toggle. Old /bids and /purchase-orders links redirect to it.
+  { label: "Bids & POs", slug: "purchasing", hideForRoles: ["client", "trade"] },
   {
     label: "Budget",
     slug: "budget",

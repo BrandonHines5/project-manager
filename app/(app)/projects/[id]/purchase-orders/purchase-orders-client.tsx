@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/ui/empty"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import type { Tables, Enums } from "@/lib/db/types"
 import { PoDrawer } from "@/components/purchase-orders/po-drawer"
+import type { PurchasingFileOption } from "@/components/purchasing/files-picker"
 
 export type PurchaseOrdersData = {
   project_id: string
@@ -24,13 +25,41 @@ export type PurchaseOrdersData = {
   projects: Pick<Tables<"projects">, "id" | "name" | "project_number">[]
   // source_bid_recipient_id -> the bid package it was awarded from.
   source_bids: Record<string, { number: number; title: string }>
+  // source_decision_id -> the approved selection/change order it was created
+  // from (resolved with a separate query, never an embed — see CLAUDE.md's
+  // PGRST201 note).
+  source_decisions: Record<
+    string,
+    { kind: Enums<"decision_kind">; number: number; title: string }
+  >
+  // Current, non-archived Files-tab documents — the drawer's "Link from
+  // Files" picker.
+  files: PurchasingFileOption[]
   signed_urls: Record<string, string>
 }
 
-export function PurchaseOrdersClient({ data }: { data: PurchaseOrdersData }) {
+// `embedded` hides the header row — the unified /purchasing page renders its
+// own header with the Bids/POs toggle and a shared "New…" button.
+export function PurchaseOrdersClient({
+  data,
+  embedded = false,
+}: {
+  data: PurchaseOrdersData
+  embedded?: boolean
+}) {
   const [drawerState, setDrawerState] = useState<
     { mode: "create" } | { mode: "edit"; poId: string } | null
   >(() => (data.open_po_id ? { mode: "edit", poId: data.open_po_id } : null))
+  // Same-route deep links (?open= changes while this tree stays mounted —
+  // e.g. after the unified create dialog pushes to the new record) must
+  // still open the drawer. Render-time derived-state sync.
+  const [prevOpenId, setPrevOpenId] = useState(data.open_po_id)
+  if (data.open_po_id !== prevOpenId) {
+    setPrevOpenId(data.open_po_id)
+    if (data.open_po_id) {
+      setDrawerState({ mode: "edit", poId: data.open_po_id })
+    }
+  }
 
   const editingPo =
     drawerState?.mode === "edit"
@@ -38,19 +67,21 @@ export function PurchaseOrdersClient({ data }: { data: PurchaseOrdersData }) {
       : undefined
 
   return (
-    <div className="max-w-7xl mx-auto px-4 md:px-6 py-5">
-      <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
-        <h2 className="text-lg font-semibold">Purchase orders</h2>
-        <Button size="sm" onClick={() => setDrawerState({ mode: "create" })}>
-          <Plus className="h-3.5 w-3.5" /> New PO
-        </Button>
-      </div>
+    <div className={embedded ? "" : "max-w-7xl mx-auto px-4 md:px-6 py-5"}>
+      {!embedded && (
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+          <h2 className="text-lg font-semibold">Purchase orders</h2>
+          <Button size="sm" onClick={() => setDrawerState({ mode: "create" })}>
+            <Plus className="h-3.5 w-3.5" /> New PO
+          </Button>
+        </div>
+      )}
 
       {data.pos.length === 0 ? (
         <EmptyState
           icon={<FileText className="h-10 w-10" />}
           title="No purchase orders yet"
-          description="Issue a cost-coded PO to a sub or vendor. They approve with a typed signature through a private link — no login needed. Approved POs roll into committed costs on Pricing."
+          description="Issue a cost-coded PO to a sub or vendor. They approve with a typed signature through a private link — no login needed. Approved POs roll into the Budget tab's POs column."
           action={
             <Button onClick={() => setDrawerState({ mode: "create" })}>
               <Plus className="h-4 w-4" /> New PO
@@ -105,6 +136,17 @@ export function PurchaseOrdersClient({ data }: { data: PurchaseOrdersData }) {
                         <span>
                           From BID-
                           {data.source_bids[po.source_bid_recipient_id].number}
+                        </span>
+                      )}
+                    {po.source_decision_id &&
+                      data.source_decisions[po.source_decision_id] && (
+                        <span>
+                          From{" "}
+                          {data.source_decisions[po.source_decision_id].kind ===
+                          "selection"
+                            ? "Selection"
+                            : "CO"}{" "}
+                          #{data.source_decisions[po.source_decision_id].number}
                         </span>
                       )}
                   </div>

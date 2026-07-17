@@ -1,7 +1,11 @@
 import "server-only"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { Database, Json } from "@/lib/db/types"
-import { isRecurrenceRule, rollRecurrence } from "@/lib/schedule/recurrence"
+import {
+  isRecurrenceRule,
+  rollRecurrence,
+  ruleAnchorMode,
+} from "@/lib/schedule/recurrence"
 
 type Client = SupabaseClient<Database>
 
@@ -32,11 +36,20 @@ function companyTodayISO(): string {
  * `anchorDueOverride` exists for callers that rewrite due_date as part of
  * completing (the onsite quick-update flow) — pass the ORIGINAL due date so
  * the series cadence stays anchored.
+ *
+ * `completionDateOverride` (YYYY-MM-DD) is for "already done on …" flows:
+ * in after_completion mode the next due counts from the day the work
+ * actually happened, not the day it was recorded. Fixed-mode rules ignore
+ * it — their catch-up must keep skipping to a FUTURE slot, and a backdated
+ * "today" could resurrect an already-passed occurrence.
  */
 export async function rollRecurringTodo(
   supabase: Client,
   itemId: string,
-  opts: { anchorDueOverride?: string | null } = {}
+  opts: {
+    anchorDueOverride?: string | null
+    completionDateOverride?: string | null
+  } = {}
 ): Promise<string | null> {
   try {
     const { data: item, error } = await supabase
@@ -65,7 +78,13 @@ export async function rollRecurringTodo(
       .select("id")
     if (stripErr || (stripped ?? []).length !== 1) return null
 
-    const rolled = rollRecurrence(rule, anchorDue, companyTodayISO())
+    const completionISO =
+      ruleAnchorMode(rule) === "after_completion" &&
+      opts.completionDateOverride &&
+      /^\d{4}-\d{2}-\d{2}$/.test(opts.completionDateOverride)
+        ? opts.completionDateOverride
+        : companyTodayISO()
+    const rolled = rollRecurrence(rule, anchorDue, completionISO)
     if (!rolled) return null // series ended (count exhausted / past `until`)
 
     const [{ data: checklist }, { data: assignments }] = await Promise.all([

@@ -152,10 +152,11 @@ export function GlobalCommunicationsClient({
                   canReply
                 />
               </ul>
-              {!item.projectId && item.id.startsWith("comm:") && (
+              {item.id.startsWith("comm:") && (
                 <UnfiledActions
                   communicationId={item.id.slice("comm:".length)}
                   projects={projects}
+                  filed={!!item.projectId}
                 />
               )}
             </li>
@@ -181,13 +182,18 @@ export function GlobalCommunicationsClient({
  * Optional per-message filing. Quo/email traffic that couldn't be tied to a
  * single job stays in this global log by default; staff can quietly file one
  * to a job when it matters, or dismiss obvious spam. Nothing here nags.
+ * Already-FILED rows get a quiet "Re-file" instead — auto-attribution (the
+ * recent-conversation heuristic) can occasionally pick the wrong job, and
+ * this is the correction path.
  */
 function UnfiledActions({
   communicationId,
   projects,
+  filed,
 }: {
   communicationId: string
   projects: Project[]
+  filed: boolean
 }) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
@@ -203,6 +209,10 @@ function UnfiledActions({
           project_id: projectId,
         })
         toast.success("Filed to job")
+        // Filed rows keep this component mounted (for Re-file), so reset the
+        // editor — otherwise the picker stays open across the refresh.
+        setOpen(false)
+        setProjectId("")
         router.refresh()
       } catch (e) {
         toastActionError(e, "Could not file")
@@ -223,6 +233,23 @@ function UnfiledActions({
   }
 
   if (!open) {
+    if (filed) {
+      // Wrong-job correction only — no "Not filed" copy, no Dismiss (a
+      // dismissed row vanishes from the job feed too, which is rarely what
+      // a mis-filed message needs).
+      return (
+        <div className="pl-1 text-[11px] text-muted">
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            className="inline-flex items-center gap-1 hover:text-brand-600 hover:underline cursor-pointer"
+          >
+            <FolderOpen className="h-3 w-3" />
+            Re-file to a different job
+          </button>
+        </div>
+      )
+    }
     return (
       <div className="flex items-center gap-2 pl-1 text-[11px] text-muted">
         <span>Not filed to a job</span>
@@ -262,11 +289,13 @@ function UnfiledActions({
         ))}
       </Select>
       <Button size="sm" onClick={file} disabled={pending || !projectId}>
-        File
+        {filed ? "Re-file" : "File"}
       </Button>
-      <Button size="sm" variant="ghost" onClick={dismiss} disabled={pending}>
-        Dismiss
-      </Button>
+      {!filed && (
+        <Button size="sm" variant="ghost" onClick={dismiss} disabled={pending}>
+          Dismiss
+        </Button>
+      )}
       <Button
         size="sm"
         variant="ghost"

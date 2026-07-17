@@ -122,10 +122,14 @@ export async function answerCompletion(
 
   // Recurring to-do completed: spawn its next occurrence. The update above
   // may have rewritten due_date to the completion date, so anchor the roll to
-  // the ORIGINAL due date to keep the series cadence.
+  // the ORIGINAL due date to keep the series cadence. "Already done on…"
+  // also passes the real completion date so an after_completion rule counts
+  // its interval from the day the work happened, not the day it was logged.
   if (isTodo && newStatus === "complete") {
     await rollRecurringTodo(supabase, data.schedule_item_id, {
       anchorDueOverride: item.due_date,
+      completionDateOverride:
+        data.answer === "already_done" ? data.actual_end_date : null,
     })
   }
 

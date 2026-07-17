@@ -106,11 +106,13 @@ company/their project; **Create/Edit/Approve** = write; **None** = RLS denies.
 | Contract price | View | View (client pricing view) | None | None |
 | Approved change-order / selection deltas | View | View own project's (approved only) | None | None |
 | Payment ledger (money **in**) | View (`pp_staff_all`) | View own project's (`pp_client_read`) | None | None |
-| **Committed costs** (approved-PO $ by cost code — money **out**) | View **only with `profiles.financial_access = true`** (app gate) | **Never** | **Never** | **Never** |
+| **Committed costs** (approved-PO $ by cost code — money **out**, shown on the **Budget tab's POs column**, not Pricing) | View **only with `profiles.financial_access = true`** (app gate). The column is derived from approved POs, so PO CRUD (staff-wide) is what changes it; the budget-editors allowlist (`app_settings.budget_editors`) gates editable Budget data and imports, not PO actions | **Never** | **Never** | **Never** |
 
 > Clients see contract price, approved change-order deltas, and their own
 > payment ledger — never committed costs. Committed costs additionally require
-> the per-staffer `financial_access` flag (an app-layer gate, not RLS).
+> the per-staffer `financial_access` flag (an app-layer gate, not RLS), and
+> live on the Budget tab (the Pricing tab shows only the client-facing
+> contract picture).
 
 ## Companies, Insurance, Communications, Files
 
@@ -165,8 +167,9 @@ company/their project; **Create/Edit/Approve** = write; **None** = RLS denies.
    co-owner acts first flips it for the household (and it's blocked past the due
    date). This is exactly what the client-portal signup disclaimer acknowledges.
 5. **Two money boundaries:** clients never see committed costs; within staff, a
-   `financial_access = false` staffer sees the Pricing tab but not the committed
-   costs section (and the AI agent never launders PO dollars around this).
+   `financial_access = false` staffer never reaches the Budget tab where they
+   live (and the AI agent never launders PO dollars around this). Budget
+   WRITES are further limited to the budget-editors allowlist.
 6. **Insurance is staff-only** in-app; the only non-staff touchpoint is the
    tokenized COI upload.
 7. **Trades see only their own company — never competitors'** pricing or

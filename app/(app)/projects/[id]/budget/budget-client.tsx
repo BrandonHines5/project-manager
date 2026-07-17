@@ -39,10 +39,16 @@ import { UNCODED_KEY, type BudgetRow, type BudgetTotals } from "@/lib/budget/rol
 
 type CodeOption = { id: string; code: string; name: string }
 
+// The Forecasted-remaining column carries its own tint so the one editable
+// money column reads as editable at a glance. Shared by the header, body,
+// and totals cells so the stripe is continuous.
+const FORECAST_COL_CLASS = "bg-brand-50/70"
+
 export function BudgetClient({
   projectId,
   projectName,
   projectNumber,
+  canEdit,
   rows,
   totals,
   availableCodes,
@@ -51,6 +57,9 @@ export function BudgetClient({
   projectId: string
   projectName: string
   projectNumber: string
+  // Budget-editors allowlist (Settings → Budget editors): false = read-only
+  // view — all numbers, none of the edit affordances.
+  canEdit: boolean
   rows: BudgetRow[]
   totals: BudgetTotals
   availableCodes: CodeOption[]
@@ -173,15 +182,17 @@ export function BudgetClient({
           <Button variant="secondary" size="sm" onClick={downloadTemplate}>
             <FileSpreadsheet className="h-3.5 w-3.5" /> Template
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}>
-            <Upload className="h-3.5 w-3.5" /> Import
-          </Button>
+          {canEdit && (
+            <Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}>
+              <Upload className="h-3.5 w-3.5" /> Import
+            </Button>
+          )}
           {rows.length > 0 && (
             <Button variant="secondary" size="sm" onClick={exportTable}>
               <Download className="h-3.5 w-3.5" /> Export
             </Button>
           )}
-          {availableCodes.length > 0 && (
+          {canEdit && availableCodes.length > 0 && (
             <Select
               className="w-44 h-8 text-xs"
               value=""
@@ -233,11 +244,17 @@ export function BudgetClient({
         <EmptyState
           icon={<Wallet className="h-8 w-8" />}
           title="No budget yet"
-          description="Import a budget spreadsheet, or add cost codes one at a time. Once the SpecMagician bid tool is finished, budgets will transfer from there."
+          description={
+            canEdit
+              ? "Import a budget spreadsheet, or add cost codes one at a time. Once the SpecMagician bid tool is finished, budgets will transfer from there."
+              : "A budget editor can import a spreadsheet or add cost codes; you'll see the numbers here once they do."
+          }
           action={
-            <Button size="sm" onClick={() => setImportOpen(true)}>
-              <Upload className="h-3.5 w-3.5" /> Import spreadsheet
-            </Button>
+            canEdit ? (
+              <Button size="sm" onClick={() => setImportOpen(true)}>
+                <Upload className="h-3.5 w-3.5" /> Import spreadsheet
+              </Button>
+            ) : undefined
           }
         />
       ) : (
@@ -252,7 +269,9 @@ export function BudgetClient({
                   <th className="text-right px-2 py-2.5">New budget</th>
                   <th className="text-right px-2 py-2.5">Actuals</th>
                   <th className="text-right px-2 py-2.5">POs</th>
-                  <th className="text-right px-2 py-2.5">Forecasted remaining</th>
+                  <th className={cn("text-right px-2 py-2.5", FORECAST_COL_CLASS)}>
+                    Forecasted remaining
+                  </th>
                   <th className="text-right px-2 py-2.5">Total forecasted</th>
                   <th className="text-right px-2 py-2.5">Variance</th>
                   <th className="w-8" aria-label="Row actions" />
@@ -262,7 +281,8 @@ export function BudgetClient({
                 {rows.map((r) => {
                   // The uncoded bucket has no cost_code_id to store a line
                   // against — its budget/forecast cells are display-only.
-                  const editable = r.key !== UNCODED_KEY
+                  // Non-editors get the same display-only treatment.
+                  const editable = canEdit && r.key !== UNCODED_KEY
                   return (
                     <tr key={r.key} className="group">
                       <td className="px-4 py-1.5 whitespace-nowrap">{r.label}</td>
@@ -283,7 +303,16 @@ export function BudgetClient({
                             }}
                           />
                         ) : (
-                          <span className="tabular-nums text-muted">—</span>
+                          // Read-only (non-editor, or the uncoded bucket):
+                          // still show the number — only editing is gated.
+                          <span
+                            className={cn(
+                              "tabular-nums",
+                              !r.hasLine && "text-muted"
+                            )}
+                          >
+                            {r.hasLine ? formatCurrency(r.budget) : "—"}
+                          </span>
                         )}
                       </td>
                       <td className="px-2 py-1.5 text-right tabular-nums">
@@ -317,7 +346,7 @@ export function BudgetClient({
                           formatCurrency(r.pos)
                         )}
                       </td>
-                      <td className="px-2 py-1.5 text-right">
+                      <td className={cn("px-2 py-1.5 text-right", FORECAST_COL_CLASS)}>
                         {editable ? (
                           <MoneyCell
                             value={r.forecastRemaining}
@@ -334,8 +363,14 @@ export function BudgetClient({
                             }
                           />
                         ) : (
-                          <span className="tabular-nums">
+                          <span
+                            className={cn(
+                              "tabular-nums",
+                              r.forecastOverride != null && "text-warning font-medium"
+                            )}
+                          >
                             {formatCurrency(r.forecastRemaining)}
+                            {r.forecastOverride != null && " *"}
                           </span>
                         )}
                       </td>
@@ -355,7 +390,7 @@ export function BudgetClient({
                         )}
                       </td>
                       <td className="px-1 py-1.5 text-right">
-                        {r.hasLine && (
+                        {canEdit && r.hasLine && (
                           <button
                             type="button"
                             className="invisible group-hover:visible rounded p-1 text-muted hover:text-danger cursor-pointer"
@@ -393,7 +428,12 @@ export function BudgetClient({
                   <td className="px-2 py-2.5 text-right tabular-nums">
                     {formatCurrency(totals.pos)}
                   </td>
-                  <td className="px-2 py-2.5 text-right tabular-nums">
+                  <td
+                    className={cn(
+                      "px-2 py-2.5 text-right tabular-nums",
+                      FORECAST_COL_CLASS
+                    )}
+                  >
                     {formatCurrency(totals.forecastRemaining)}
                   </td>
                   <td className="px-2 py-2.5 text-right tabular-nums">
@@ -420,7 +460,7 @@ export function BudgetClient({
           <span className="font-medium text-foreground">Changes</span> roll up
           from approved selections and change orders by cost code.{" "}
           <span className="font-medium text-foreground">POs</span> are approved
-          purchase orders (committed costs — same numbers as the Pricing tab).
+          purchase orders (committed costs).
         </p>
         <p>
           <span className="font-medium text-foreground">Actual costs to date</span>{" "}
@@ -430,8 +470,10 @@ export function BudgetClient({
         </p>
         <p>
           <span className="font-medium text-foreground">Forecasted remaining</span>{" "}
-          defaults to New budget − Actuals. Click the cell to set your own
-          number (shown in amber); clear the cell to go back to the default.
+          (the highlighted column) defaults to New budget − Actuals.{" "}
+          {canEdit
+            ? "Click a cell to set your own number (shown in amber); clear the cell to go back to the default."
+            : "Amber numbers are editor overrides. The budget is read-only for you — budget editors are picked in Settings → Budget editors."}
         </p>
       </div>
 

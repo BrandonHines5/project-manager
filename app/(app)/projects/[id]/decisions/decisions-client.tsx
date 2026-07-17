@@ -15,6 +15,9 @@ import {
   Download,
   Copy,
   Pencil,
+  ArrowUp,
+  ArrowDown,
+  ChevronsUpDown,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -29,12 +32,16 @@ import {
   saveDecisionDisclaimer,
 } from "@/app/actions/decisions"
 import { makeXlsx, type XlsxCell } from "@/lib/export/xlsx"
+import { TemplateTagBadges } from "@/components/template-tag-badges"
 
 export type DecisionsData = {
   project_id: string
   role: UserRole
   me_id: string
   me_name: string
+  // Template projects show each decision's template-tag chips on the list
+  // (the drawer edits them everywhere; they're inert on real jobs).
+  is_template: boolean
   open_decision_id: string | null
   decisions: Tables<"decisions">[]
   followups: Tables<"decision_followup_templates">[]
@@ -71,6 +78,24 @@ export type DecisionsData = {
 type KindFilter = "all" | "change_order" | "selection"
 type StatusFilter = "all" | "open" | Enums<"decision_status">
 
+type SortKey =
+  | "number"
+  | "kind"
+  | "title"
+  | "status"
+  | "due"
+  | "cost"
+  | "comments"
+
+// Workflow order, not alphabetical — the enum's alphabetical order
+// (approved < draft < pending_client < rejected) is meaningless to users.
+const STATUS_RANK: Record<Enums<"decision_status">, number> = {
+  draft: 0,
+  pending_client: 1,
+  approved: 2,
+  rejected: 3,
+}
+
 export function DecisionsClient({ data }: { data: DecisionsData }) {
   const [drawerState, setDrawerState] = useState<
     | { mode: "create"; kind?: "change_order" | "selection" }
@@ -84,6 +109,27 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
   const [kindFilter, setKindFilter] = useState<KindFilter>("all")
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all")
   const [query, setQuery] = useState("")
+  // Click-to-sort on the table headings. Default matches the server order
+  // (newest number first).
+  const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({
+    key: "number",
+    dir: "desc",
+  })
+  function toggleSort(key: SortKey) {
+    setSort((cur) =>
+      cur.key === key
+        ? { key, dir: cur.dir === "asc" ? "desc" : "asc" }
+        : // Fresh column: text-ish columns start ascending, numeric-ish
+          // columns start with the big/new values on top.
+          {
+            key,
+            dir:
+              key === "number" || key === "cost" || key === "comments"
+                ? "desc"
+                : "asc",
+          }
+    )
+  }
   // Multi-select for the bulk "copy to job" bar (staff only).
   const [selectedIds, setSelectedIds] = useState<Set<string>>(
     () => new Set()
@@ -142,6 +188,49 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
     }
     return m
   }, [data.comments])
+
+  // Declared after commentCounts on purpose — the comments column sorts on it.
+  const sorted = useMemo(() => {
+    const dir = sort.dir === "asc" ? 1 : -1
+    // Nullable columns keep nulls at the bottom in BOTH directions — an
+    // undated decision shouldn't jump to the top just because you flipped
+    // the Due sort.
+    const cmp = (a: (typeof filtered)[number], b: (typeof filtered)[number]) => {
+      switch (sort.key) {
+        case "number":
+          return (a.number - b.number) * dir
+        case "kind":
+          return a.kind.localeCompare(b.kind) * dir
+        case "title":
+          return a.title.localeCompare(b.title, undefined, { sensitivity: "base" }) * dir
+        case "status":
+          return (STATUS_RANK[a.status] - STATUS_RANK[b.status]) * dir
+        case "due": {
+          if (!a.due_date && !b.due_date) return 0
+          if (!a.due_date) return 1
+          if (!b.due_date) return -1
+          return a.due_date.localeCompare(b.due_date) * dir
+        }
+        case "cost": {
+          const av = a.cost_delta == null ? null : Number(a.cost_delta) || 0
+          const bv = b.cost_delta == null ? null : Number(b.cost_delta) || 0
+          if (av == null && bv == null) return 0
+          if (av == null) return 1
+          if (bv == null) return -1
+          return (av - bv) * dir
+        }
+        case "comments":
+          return (
+            ((commentCounts.get(a.id) ?? 0) - (commentCounts.get(b.id) ?? 0)) *
+            dir
+          )
+      }
+    }
+    return [...filtered].sort(
+      // Stable tie-break: newest number first, regardless of direction.
+      (a, b) => cmp(a, b) || b.number - a.number
+    )
+  }, [filtered, sort, commentCounts])
 
   // Titles for due-date-linked schedule items. Clients can't read the
   // schedule, so their lookup misses and the tooltip falls back to a
@@ -288,25 +377,61 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
                     <span className="sr-only">Select</span>
                   </th>
                 )}
-                <th className="text-left font-medium px-4 py-2.5 w-16">#</th>
+                <SortableTh
+                  label="#"
+                  sortKey="number"
+                  sort={sort}
+                  onSort={toggleSort}
+                  className="w-16"
+                />
                 {/* The KindChip repeats in the drawer; the Title column is what
                     a phone needs, so Type joins Due/Comments as md-and-up. */}
-                <th className="text-left font-medium px-4 py-2.5 w-32 hidden md:table-cell">
-                  Type
-                </th>
-                <th className="text-left font-medium px-4 py-2.5">Title</th>
-                <th className="text-left font-medium px-4 py-2.5 w-28 md:w-36">Status</th>
-                <th className="text-left font-medium px-4 py-2.5 w-28 hidden md:table-cell">
-                  Due
-                </th>
-                <th className="text-right font-medium px-4 py-2.5 w-32">Cost delta</th>
-                <th className="text-left font-medium px-4 py-2.5 w-24 hidden md:table-cell">
-                  Comments
-                </th>
+                <SortableTh
+                  label="Type"
+                  sortKey="kind"
+                  sort={sort}
+                  onSort={toggleSort}
+                  className="w-32 hidden md:table-cell"
+                />
+                <SortableTh
+                  label="Title"
+                  sortKey="title"
+                  sort={sort}
+                  onSort={toggleSort}
+                />
+                <SortableTh
+                  label="Status"
+                  sortKey="status"
+                  sort={sort}
+                  onSort={toggleSort}
+                  className="w-28 md:w-36"
+                />
+                <SortableTh
+                  label="Due"
+                  sortKey="due"
+                  sort={sort}
+                  onSort={toggleSort}
+                  className="w-28 hidden md:table-cell"
+                />
+                <SortableTh
+                  label="Cost delta"
+                  sortKey="cost"
+                  sort={sort}
+                  onSort={toggleSort}
+                  className="w-32"
+                  align="right"
+                />
+                <SortableTh
+                  label="Comments"
+                  sortKey="comments"
+                  sort={sort}
+                  onSort={toggleSort}
+                  className="w-24 hidden md:table-cell"
+                />
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {filtered.map((d) => {
+              {sorted.map((d) => {
                 const commentCount = commentCounts.get(d.id) ?? 0
                 return (
                   <tr
@@ -341,6 +466,11 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
                       {d.allowance_amount != null && (
                         <div className="text-[11px] text-muted font-normal mt-0.5">
                           Allowance {formatCurrency(Number(d.allowance_amount))}
+                        </div>
+                      )}
+                      {data.is_template && (
+                        <div className="mt-0.5 flex flex-wrap gap-1">
+                          <TemplateTagBadges tags={d.template_tags} />
                         </div>
                       )}
                     </td>
@@ -739,6 +869,61 @@ function Stat({
         {value}
       </span>
     </div>
+  )
+}
+
+// Click-to-sort column heading. aria-sort lives on the th; the whole label
+// is a real button for keyboard access. Inactive columns show a muted
+// both-ways chevron so sortability is discoverable.
+function SortableTh({
+  label,
+  sortKey,
+  sort,
+  onSort,
+  className,
+  align,
+}: {
+  label: string
+  sortKey: SortKey
+  sort: { key: SortKey; dir: "asc" | "desc" }
+  onSort: (key: SortKey) => void
+  className?: string
+  align?: "left" | "right"
+}) {
+  const active = sort.key === sortKey
+  return (
+    <th
+      className={cn(
+        "font-medium px-4 py-2.5",
+        align === "right" ? "text-right" : "text-left",
+        className
+      )}
+      aria-sort={
+        active ? (sort.dir === "asc" ? "ascending" : "descending") : undefined
+      }
+    >
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={cn(
+          "inline-flex items-center gap-1 uppercase cursor-pointer hover:text-foreground",
+          align === "right" && "justify-end",
+          active && "text-foreground"
+        )}
+        title={`Sort by ${label.toLowerCase()}`}
+      >
+        {label}
+        {active ? (
+          sort.dir === "asc" ? (
+            <ArrowUp className="h-3 w-3" />
+          ) : (
+            <ArrowDown className="h-3 w-3" />
+          )
+        ) : (
+          <ChevronsUpDown className="h-3 w-3 opacity-40" />
+        )}
+      </button>
+    </th>
   )
 }
 

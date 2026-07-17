@@ -13,11 +13,13 @@ import {
   Upload,
   FileIcon,
   Link2,
+  BookmarkPlus,
   PenLine,
   Undo2,
   Ban,
   CheckCircle2,
   Gavel,
+  ClipboardCheck,
   MessageSquare,
   Lock,
   Copy,
@@ -48,7 +50,13 @@ import {
   type PurchaseOrderInputT,
 } from "@/app/actions/purchase-orders"
 import { pushPurchaseOrderToQbo } from "@/app/actions/quickbooks"
+import { savePurchasingTemplate } from "@/app/actions/purchasing-templates"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
+import {
+  FilesLinkPanel,
+  type PurchasingFileOption,
+} from "@/components/purchasing/files-picker"
+import { SaveTemplateFooter } from "@/components/purchasing/save-template-footer"
 import { PoStatusBadge } from "@/app/(app)/projects/[id]/purchase-orders/purchase-orders-client"
 import type { Tables } from "@/lib/db/types"
 import type { PurchaseOrdersData } from "@/app/(app)/projects/[id]/purchase-orders/purchase-orders-client"
@@ -69,6 +77,9 @@ type Attachment = {
   file_type?: string | null
   file_size?: number | null
   caption?: string | null
+  // Set when the attachment links a Files-tab document — the blob belongs to
+  // project_files (never removed by attachment cleanup, here or server-side).
+  project_file_id?: string | null
   preview_url?: string
 }
 
@@ -92,9 +103,17 @@ export function PoDrawer({
   const [approveOpen, setApproveOpen] = useState(false)
   const [signerName, setSignerName] = useState("")
   const [copyOpen, setCopyOpen] = useState(false)
+  const [templateOpen, setTemplateOpen] = useState(false)
+  const [filesOpen, setFilesOpen] = useState(false)
 
   function handleCopy(targetProjectId: string) {
     if (!po) return
+    // The copy reads SAVED state and closes this form — unsaved edits would
+    // be silently absent from the copy and then discarded.
+    if (dirty) {
+      toast.error("Save your changes first — the copy uses the saved version.")
+      return
+    }
     startTransition(async () => {
       try {
         const r = await copyPurchaseOrder({
@@ -102,14 +121,18 @@ export function PoDrawer({
           target_project_id: targetProjectId,
         })
         const targetProject = data.projects.find((p) => p.id === targetProjectId)
-        toast.success(
-          r.sameProject
+        const skippedNote = r.skipped_attachments
+          ? ` — ${r.skipped_attachments} attachment${r.skipped_attachments === 1 ? "" : "s"} could not be copied`
+          : ""
+        toast[r.skipped_attachments ? "warning" : "success"](
+          (r.sameProject
             ? "Copied — new draft created in this project"
-            : `Copied to ${targetProject?.project_number ?? "the selected project"}`
+            : `Copied to ${targetProject?.project_number ?? "the selected project"}`) +
+            skippedNote
         )
         router.refresh()
         if (!r.sameProject) {
-          router.push(`/projects/${targetProjectId}/purchase-orders`)
+          router.push(`/projects/${targetProjectId}/purchasing?tab=pos`)
         }
         onClose()
       } catch (e) {
@@ -156,9 +179,50 @@ export function PoDrawer({
         file_type: a.file_type,
         file_size: a.file_size,
         caption: a.caption,
+        project_file_id: a.project_file_id,
         preview_url: data.signed_urls[a.storage_path],
       }))
   })
+
+  // Dirty tracking (preview_url excluded — blob URLs change per mount).
+  // Structural fields are only editable in draft, so dirtiness effectively
+  // exists only pre-release; used to confirm before discarding on close.
+  const formSnapshot = () =>
+    JSON.stringify({
+      title,
+      customNumber,
+      companyId,
+      scope,
+      approvalDeadline,
+      flatFee,
+      flatTotal,
+      lineItems,
+      attachments: attachments.map(({ preview_url: _p, ...rest }) => {
+        void _p
+        return rest
+      }),
+    })
+  // Lazy useState = captured exactly once at mount, without touching a ref
+  // during render.
+  const [initialSnapshot] = useState(() => formSnapshot())
+  const dirty = formSnapshot() !== initialSnapshot
+
+  function requestClose() {
+    if (dirty && !confirm("Discard unsaved changes?")) return
+    // Discarding drops not-yet-saved uploads from state — their blobs are
+    // already in Storage, so best-effort remove them (same per-tile cleanup
+    // the X button does). Linked Files-tab rows own their blob elsewhere.
+    const orphaned = attachments
+      .filter((a) => !a.id && !a.project_file_id)
+      .map((a) => a.storage_path)
+    if (orphaned.length) {
+      createSupabaseBrowserClient()
+        .storage.from("project-files")
+        .remove(orphaned)
+        .catch(() => {})
+    }
+    onClose()
+  }
 
   const effectiveItems = lineItems.filter((li) => li.description.trim() !== "")
   const runningTotal = flatFee
@@ -173,6 +237,10 @@ export function PoDrawer({
   const sourceBid =
     po?.source_bid_recipient_id != null
       ? data.source_bids[po.source_bid_recipient_id]
+      : undefined
+  const sourceDecision =
+    po?.source_decision_id != null
+      ? data.source_decisions[po.source_decision_id]
       : undefined
   const myComments = po
     ? data.comments.filter((c) => c.purchase_order_id === po.id)
@@ -262,8 +330,64 @@ export function PoDrawer({
         file_type: a.file_type,
         file_size: a.file_size,
         caption: a.caption,
+        project_file_id: a.project_file_id,
       })),
     }
+  }
+
+  // Attach a Files-tab document by reference — no upload, no blob copy.
+  function linkProjectFile(f: PurchasingFileOption) {
+    setAttachments((current) => {
+      if (
+        current.some(
+          (a) => a.project_file_id === f.id || a.storage_path === f.storage_path
+        )
+      ) {
+        return current
+      }
+      return [
+        ...current,
+        {
+          storage_path: f.storage_path,
+          file_name: f.file_name,
+          file_type: f.file_type,
+          file_size: f.file_size,
+          project_file_id: f.id,
+        },
+      ]
+    })
+  }
+
+  function handleSaveTemplate(name: string) {
+    if (!title.trim()) {
+      toast.error("Title is required")
+      return
+    }
+    startTransition(async () => {
+      try {
+        await savePurchasingTemplate({
+          name,
+          title: title.trim(),
+          scope: scope || null,
+          flat_fee: flatFee,
+          line_items: lineItems
+            .filter((li) => li.description.trim() !== "")
+            .map((li) => ({
+              cost_code_id: li.cost_code_id || null,
+              description: li.description.trim(),
+              quantity: li.quantity,
+              unit: li.unit || null,
+              unit_cost: li.unit_cost,
+            })),
+          project_id: data.project_id,
+        })
+        toast.success("Template saved")
+        setTemplateOpen(false)
+        router.refresh()
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Could not save template")
+      }
+    })
   }
 
   function handleSave(releaseAfter: boolean) {
@@ -427,7 +551,7 @@ export function PoDrawer({
   }
 
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+    <Dialog open={open} onOpenChange={(v) => !v && requestClose()}>
       <DialogContent side="right">
         <DialogHeader>
           <div>
@@ -446,7 +570,7 @@ export function PoDrawer({
               )}
               {sourceBid && (
                 <Link
-                  href={`/projects/${data.project_id}/bids`}
+                  href={`/projects/${data.project_id}/purchasing?tab=bids`}
                   className="inline-flex"
                 >
                   <Badge tone="brand" className="hover:opacity-80">
@@ -455,11 +579,23 @@ export function PoDrawer({
                   </Badge>
                 </Link>
               )}
+              {sourceDecision && po && (
+                <Link
+                  href={`/projects/${data.project_id}/decisions?open=${po.source_decision_id}`}
+                  className="inline-flex"
+                >
+                  <Badge tone="brand" className="hover:opacity-80">
+                    <ClipboardCheck className="h-3 w-3" /> From{" "}
+                    {sourceDecision.kind === "selection" ? "Selection" : "CO"} #
+                    {sourceDecision.number}: {sourceDecision.title}
+                  </Badge>
+                </Link>
+              )}
             </div>
             <DialogTitle>{po ? po.title : "New purchase order"}</DialogTitle>
             <DialogDescription>
               The sub approves with a typed signature through a private link.
-              Approved POs roll into committed costs.
+              Approved POs roll into committed costs on the Budget tab.
             </DialogDescription>
           </div>
         </DialogHeader>
@@ -634,14 +770,21 @@ export function PoDrawer({
                       </div>
                     )}
                   </div>
+                  {a.project_file_id && (
+                    <span className="absolute bottom-1 left-1 inline-flex items-center gap-0.5 rounded bg-black/60 text-white px-1 py-0.5 text-[9px]">
+                      <Link2 className="h-2.5 w-2.5" /> Files
+                    </span>
+                  )}
                   {isDraft && (
                     <button
                       type="button"
                       onClick={() => {
                         // Unsaved uploads have no DB row yet — best-effort
                         // delete the orphaned storage object. Saved ones are
-                        // cleaned up by the server action on save.
-                        if (!a.id) {
+                        // cleaned up by the server action on save. Linked
+                        // Files-tab documents own their blob elsewhere and
+                        // must never be removed here.
+                        if (!a.id && !a.project_file_id) {
                           createSupabaseBrowserClient()
                             .storage.from("project-files")
                             .remove([a.storage_path])
@@ -672,7 +815,31 @@ export function PoDrawer({
                   {uploading ? "Uploading…" : "Add files"}
                 </button>
               )}
+              {isDraft && (
+                <button
+                  type="button"
+                  onClick={() => setFilesOpen((v) => !v)}
+                  className="aspect-square rounded-md border border-dashed border-border-strong flex flex-col items-center justify-center text-muted hover:border-brand-500 hover:text-brand-600 cursor-pointer text-xs gap-1"
+                >
+                  <Link2 className="h-5 w-5" />
+                  Link from Files
+                </button>
+              )}
             </div>
+            {isDraft && filesOpen && (
+              <FilesLinkPanel
+                files={data.files}
+                linkedIds={
+                  new Set(
+                    attachments
+                      .map((a) => a.project_file_id)
+                      .filter((x): x is string => !!x)
+                  )
+                }
+                onPick={linkProjectFile}
+                onClose={() => setFilesOpen(false)}
+              />
+            )}
           </div>
 
           {/* Comments */}
@@ -689,6 +856,13 @@ export function PoDrawer({
             pending={pending}
             onCancel={() => setCopyOpen(false)}
             onCopy={handleCopy}
+          />
+        ) : templateOpen ? (
+          <SaveTemplateFooter
+            defaultName={title.trim() || "Untitled scope"}
+            pending={pending}
+            onCancel={() => setTemplateOpen(false)}
+            onSave={handleSaveTemplate}
           />
         ) : approveOpen && po ? (
           <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:items-center">
@@ -723,19 +897,19 @@ export function PoDrawer({
           </DialogFooter>
         ) : (
           <DialogFooter className="flex-wrap">
-            {po && (
-              <div className="mr-auto flex items-center gap-1">
-                {isDraft && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={handleDelete}
-                    disabled={pending}
-                    className="text-danger hover:bg-red-50"
-                  >
-                    <Trash2 className="h-4 w-4" /> Delete
-                  </Button>
-                )}
+            <div className="mr-auto flex items-center gap-1">
+              {po && isDraft && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={handleDelete}
+                  disabled={pending}
+                  className="text-danger hover:bg-red-50"
+                >
+                  <Trash2 className="h-4 w-4" /> Delete
+                </Button>
+              )}
+              {po && (
                 <Button
                   type="button"
                   variant="ghost"
@@ -744,9 +918,17 @@ export function PoDrawer({
                 >
                   <Copy className="h-4 w-4" /> Copy to job…
                 </Button>
-              </div>
-            )}
-            <Button type="button" variant="ghost" onClick={onClose}>
+              )}
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setTemplateOpen(true)}
+                disabled={pending}
+              >
+                <BookmarkPlus className="h-4 w-4" /> Save as template
+              </Button>
+            </div>
+            <Button type="button" variant="ghost" onClick={requestClose}>
               Cancel
             </Button>
             {isDraft && (

@@ -8,6 +8,18 @@
 
 export type RecurrenceFreq = "daily" | "weekly" | "biweekly" | "monthly"
 
+/**
+ * When the next occurrence lands after completing one:
+ *   - "fixed" (default, and the behavior of every rule saved before the key
+ *     existed): the cadence counts from the DUE date, anchor-aligned — a
+ *     May 1 yearly-style to-do is due next May 1 no matter when it was
+ *     actually checked off.
+ *   - "after_completion": the next due date = the COMPLETION date + one
+ *     interval — air filters changed April 10 are due again July 10, even
+ *     though they'd been scheduled for April 1.
+ */
+export type RecurrenceAnchorMode = "fixed" | "after_completion"
+
 export type RecurrenceRule = {
   freq: RecurrenceFreq
   /** Default 1; e.g. weekly interval 2 = every 2 weeks. */
@@ -16,6 +28,13 @@ export type RecurrenceRule = {
   until?: string
   /** Total occurrences REMAINING including the current one. */
   count?: number
+  /** Absent = "fixed" — see RecurrenceAnchorMode. */
+  anchor_mode?: RecurrenceAnchorMode
+}
+
+/** Normalized anchor mode: anything but a literal "after_completion" is fixed. */
+export function ruleAnchorMode(rule: RecurrenceRule): RecurrenceAnchorMode {
+  return rule.anchor_mode === "after_completion" ? "after_completion" : "fixed"
 }
 
 const FREQS: readonly string[] = ["daily", "weekly", "biweekly", "monthly"]
@@ -115,10 +134,17 @@ function normalizeCount(count: number | undefined): number {
 
 export function isRecurrenceRule(v: unknown): v is RecurrenceRule {
   if (typeof v !== "object" || v === null) return false
-  const r = v as { freq?: unknown; until?: unknown }
+  const r = v as { freq?: unknown; until?: unknown; anchor_mode?: unknown }
   if (typeof r.freq !== "string" || !FREQS.includes(r.freq)) return false
   if (r.until !== undefined) {
     if (typeof r.until !== "string" || !ISO_DATE_RE.test(r.until)) return false
+  }
+  if (
+    r.anchor_mode !== undefined &&
+    r.anchor_mode !== "fixed" &&
+    r.anchor_mode !== "after_completion"
+  ) {
+    return false
   }
   return true
 }
@@ -140,6 +166,9 @@ export function describeRecurrence(rule: RecurrenceRule): string {
       base = interval > 1 ? `Monthly (every ${interval} months)` : "Monthly"
       break
   }
+  if (ruleAnchorMode(rule) === "after_completion") {
+    base = `${base}, after completion`
+  }
   // `count` = occurrences remaining; it takes precedence over `until`.
   const count = normalizeCount(rule.count)
   if (Number.isFinite(count) && count >= 1) {
@@ -155,10 +184,15 @@ export function describeRecurrence(rule: RecurrenceRule): string {
  * Returns the next occurrence's due date + the rule to store on it, or null
  * when the series has ended (count exhausted, or next date past `until`).
  *
- * Catch-up: candidates are occurrence k >= 1 after the anchor, and the next
- * due date is the smallest candidate STRICTLY greater than
- * max(anchorDueISO, todayISO) — if the to-do sat overdue for weeks, the
- * missed slots are skipped but the cadence stays aligned to the anchor.
+ * "fixed" mode (default) catch-up: candidates are occurrence k >= 1 after
+ * the anchor, and the next due date is the smallest candidate STRICTLY
+ * greater than max(anchorDueISO, todayISO) — if the to-do sat overdue for
+ * weeks, the missed slots are skipped but the cadence stays aligned to the
+ * anchor (every May 1 stays every May 1).
+ *
+ * "after_completion" mode: the next due date is simply the completion date
+ * plus one interval — filters changed April 10 are due again July 10. The
+ * cadence re-anchors on every completion, so no catch-up scan is needed.
  */
 export function rollRecurrence(
   rule: RecurrenceRule,
@@ -181,28 +215,42 @@ export function rollRecurrence(
   const interval = normalizeInterval(rule.interval)
   const until = validUntil(rule)
   const today = parseISODate(todayISO)
-  const threshold = today && today.epochDay > anchor.epochDay ? today : anchor
 
   let nextDue: string | null = null
-  if (rule.freq === "monthly") {
-    const thresholdISO = formatYMD(threshold.y, threshold.m, threshold.d)
-    // Skip near the threshold instead of walking month-by-month from the
-    // anchor (k below is a safe underestimate of the answer's index).
-    const monthsAhead = monthIndex(threshold) - monthIndex(anchor)
-    let k = Math.max(1, Math.floor((monthsAhead - 1) / interval))
-    for (let i = 0; i < ROLL_ITERATION_CAP; i++, k++) {
-      const occ = monthlyOccurrence(anchor, k * interval)
-      if (occ > thresholdISO) {
-        nextDue = occ
-        break
-      }
+  if (ruleAnchorMode(rule) === "after_completion") {
+    // Completion date + one interval (fall back to the anchor if todayISO is
+    // somehow malformed — keeps the function total). Monthly re-anchors the
+    // day-of-month on the completion date; short months clamp per occurrence.
+    const completion = today ?? anchor
+    if (rule.freq === "monthly") {
+      nextDue = monthlyOccurrence(completion, interval)
+    } else {
+      const step = stepDays(rule.freq, interval)
+      if (step == null) return null
+      nextDue = formatEpochDay(completion.epochDay + step)
     }
   } else {
-    const step = stepDays(rule.freq, interval)
-    if (step == null) return null
-    const diff = threshold.epochDay - anchor.epochDay
-    const k = Math.max(1, Math.floor(diff / step) + 1)
-    nextDue = formatEpochDay(anchor.epochDay + k * step)
+    const threshold = today && today.epochDay > anchor.epochDay ? today : anchor
+    if (rule.freq === "monthly") {
+      const thresholdISO = formatYMD(threshold.y, threshold.m, threshold.d)
+      // Skip near the threshold instead of walking month-by-month from the
+      // anchor (k below is a safe underestimate of the answer's index).
+      const monthsAhead = monthIndex(threshold) - monthIndex(anchor)
+      let k = Math.max(1, Math.floor((monthsAhead - 1) / interval))
+      for (let i = 0; i < ROLL_ITERATION_CAP; i++, k++) {
+        const occ = monthlyOccurrence(anchor, k * interval)
+        if (occ > thresholdISO) {
+          nextDue = occ
+          break
+        }
+      }
+    } else {
+      const step = stepDays(rule.freq, interval)
+      if (step == null) return null
+      const diff = threshold.epochDay - anchor.epochDay
+      const k = Math.max(1, Math.floor(diff / step) + 1)
+      nextDue = formatEpochDay(anchor.epochDay + k * step)
+    }
   }
 
   if (nextDue == null) return null
@@ -237,6 +285,13 @@ export function expandRecurrence(
   const rs = parseISODate(rangeStart)
   const re = parseISODate(rangeEnd)
   if (!anchor || !rs || !re) return []
+
+  // after_completion occurrences are unknowable in advance — each one is
+  // scheduled from a real completion date. Only the current (anchor) row
+  // actually exists, so that's all a calendar can honestly show.
+  if (ruleAnchorMode(rule) === "after_completion") {
+    return anchorISO >= rangeStart && anchorISO <= rangeEnd ? [anchorISO] : []
+  }
 
   const interval = normalizeInterval(rule.interval)
   const until = validUntil(rule)

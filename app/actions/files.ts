@@ -11,13 +11,24 @@ const FileInput = z
   .object({
     id: optStr,
     project_id: z.string(),
-    category: z.enum(["house_plans", "plot_plan", "permit", "contract", "other"]),
+    category: z.enum([
+      "house_plans",
+      "plot_plan",
+      "permit",
+      "contract",
+      "quotes",
+      "other",
+    ]),
     title: z.string().min(1).max(300),
     description: optStr,
     storage_path: z.string(),
     file_name: z.string(),
     file_type: optStr,
     file_size: z.number().nullish(),
+    // Per-file client visibility. Omitted: edits keep the stored value,
+    // fresh uploads default true (clients saw everything before the flag
+    // existed), revisions inherit the prior head's value.
+    client_visible: z.boolean().optional(),
     // When set, the new upload is treated as a revision of the referenced
     // file. The previous head's is_current flips false; the chain root
     // (parent_file_id) stays the original v1, so a "view history" lookup is
@@ -48,6 +59,9 @@ export async function saveProjectFile(input: FileInputT) {
         category: parsed.category,
         title: parsed.title,
         description: parsed.description ?? null,
+        ...(parsed.client_visible !== undefined
+          ? { client_visible: parsed.client_visible }
+          : {}),
       })
       .eq("id", parsed.id)
     if (error) throw new Error(error.message)
@@ -60,10 +74,11 @@ export async function saveProjectFile(input: FileInputT) {
   // demote the previous head before inserting the new row.
   let parentFileId: string | null = null
   let nextVersion = 1
+  let inheritedVisible: boolean | null = null
   if (parsed.replaces_id) {
     const { data: prior, error: priorErr } = await supabase
       .from("project_files")
-      .select("id, project_id, parent_file_id, version")
+      .select("id, project_id, parent_file_id, version, client_visible")
       .eq("id", parsed.replaces_id)
       .maybeSingle()
     if (priorErr) throw new Error(priorErr.message)
@@ -78,6 +93,9 @@ export async function saveProjectFile(input: FileInputT) {
     // points back to the original.
     parentFileId = prior.parent_file_id ?? prior.id
     nextVersion = prior.version + 1
+    // A shared plan stays shared (and a hidden one hidden) across revisions
+    // unless the uploader explicitly changes it.
+    inheritedVisible = prior.client_visible
 
     // Demote the prior head BEFORE the insert so the partial index on
     // (project_id, category) where is_current = true never sees two heads
@@ -102,6 +120,7 @@ export async function saveProjectFile(input: FileInputT) {
     parent_file_id: parentFileId,
     version: nextVersion,
     is_current: true,
+    client_visible: parsed.client_visible ?? inheritedVisible ?? true,
   })
   if (insErr) {
     // Roll back the demote on insert failure so we don't strand the chain
@@ -190,6 +209,44 @@ export async function setProjectFileArchived(input: z.input<typeof ArchiveInput>
     .eq("id", id)
     .eq("project_id", project_id)
   if (error) throw new Error(error.message)
+  revalidatePath(`/projects/${project_id}/files`)
+}
+
+/**
+ * Show or hide a file from the client portal. Enforcement is RLS
+ * (pf_client_read + the storage-object policy both check client_visible) —
+ * this just flips the flag.
+ */
+const VisibilityInput = z.object({
+  id: z.string().min(1),
+  project_id: z.string().min(1),
+  visible: z.boolean(),
+})
+
+export async function setProjectFileClientVisibility(
+  input: z.input<typeof VisibilityInput>
+) {
+  const result = VisibilityInput.safeParse(input)
+  if (!result.success) {
+    const first = result.error.issues[0]
+    throw new Error(
+      `Invalid visibility payload at ${first.path.join(".") || "(root)"}: ${first.message}`
+    )
+  }
+  const { id, project_id, visible } = result.data
+  await requireStaff()
+  const supabase = await createSupabaseServerClient()
+  // .select().maybeSingle() so a zero-row update (stale id, wrong project)
+  // errors instead of silently reporting success.
+  const { data: updated, error } = await supabase
+    .from("project_files")
+    .update({ client_visible: visible })
+    .eq("id", id)
+    .eq("project_id", project_id)
+    .select("id")
+    .maybeSingle()
+  if (error) throw new Error(error.message)
+  if (!updated) throw new Error("File not found")
   revalidatePath(`/projects/${project_id}/files`)
 }
 

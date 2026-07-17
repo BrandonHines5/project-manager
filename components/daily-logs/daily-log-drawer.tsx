@@ -33,6 +33,8 @@ import {
 } from "@/app/actions/daily-logs"
 import { CommentsThread } from "@/components/comms/comments-thread"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
+import { uploadToStorage } from "@/lib/storage/upload"
+import { downscalePhoto } from "@/lib/images/downscale"
 import type { Tables, Enums } from "@/lib/db/types"
 import type { DailyLogsData } from "@/app/(app)/projects/[id]/daily-logs/daily-logs-client"
 
@@ -69,7 +71,15 @@ export function DailyLogDrawer({
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
-  const [uploading, setUploading] = useState(false)
+  // Count, not boolean — uploads run concurrently and Save must stay locked
+  // until the LAST one settles.
+  const [uploadingCount, setUploadingCount] = useState(0)
+  const uploading = uploadingCount > 0
+  // Files whose upload gave up after automatic retries (low-signal sites) —
+  // kept here so a tap can retry without re-picking from the camera roll.
+  const [failedUploads, setFailedUploads] = useState<
+    { id: string; file: File; error: string }[]
+  >([])
 
   const [logDate, setLogDate] = useState(log?.log_date ?? todayISO())
   const [visibility, setVisibility] = useState<Enums<"daily_log_visibility">>(
@@ -120,46 +130,87 @@ export function DailyLogDrawer({
     setSubs(subs.filter((_, i) => i !== idx))
   }
 
-  async function onPickFiles(files: FileList | null) {
-    if (!files || files.length === 0) return
-    setUploading(true)
+  // Uploads run concurrently, each with automatic retry/backoff (and
+  // resumable chunks for large videos) via uploadToStorage. Photos are
+  // downscaled first — a 6 MB jobsite photo is a few hundred KB at 1600px,
+  // which is the single biggest win on weak LTE. Files that still fail
+  // after the automatic retries land in `failedUploads` with a one-tap
+  // Retry, so bad signal never means re-picking from the camera roll.
+  async function uploadOne(file: File) {
+    setUploadingCount((n) => n + 1)
     try {
       const supabase = createSupabaseBrowserClient()
-      const newAtts: Attachment[] = []
-      for (const file of Array.from(files)) {
-        const ext = file.name.split(".").pop()?.toLowerCase() ?? "bin"
-        const path = `projects/${data.project_id}/daily-logs/${Date.now()}-${Math.random()
-          .toString(36)
-          .slice(2, 8)}.${ext}`
-        const { error } = await supabase.storage
-          .from("project-files")
-          .upload(path, file, {
-            cacheControl: "3600",
-            upsert: false,
-            contentType: file.type || undefined,
-          })
-        if (error) {
-          toast.error(`Upload failed: ${file.name} - ${error.message}`)
-          continue
-        }
-        newAtts.push({
+      let body: Blob = file
+      let fileType = file.type || "application/octet-stream"
+      let ext = file.name.split(".").pop()?.toLowerCase() ?? "bin"
+      if (file.type.startsWith("image/")) {
+        const scaled = await downscalePhoto(file)
+        body = scaled.blob
+        fileType = scaled.fileType
+        if (fileType === "image/jpeg") ext = "jpg"
+      }
+      const path = `projects/${data.project_id}/daily-logs/${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}.${ext}`
+      const result = await uploadToStorage(supabase, {
+        bucket: "project-files",
+        path,
+        body,
+        contentType: fileType,
+      })
+      if (!result.ok) {
+        setFailedUploads((cur) => [
+          ...cur,
+          { id: crypto.randomUUID(), file, error: result.error },
+        ])
+        toast.error(`Upload failed: ${file.name} — ${result.error}`)
+        return
+      }
+      setAttachments((cur) => [
+        ...cur,
+        {
           storage_path: path,
           file_name: file.name,
-          file_type: file.type || null,
-          file_size: file.size,
-          preview_url: URL.createObjectURL(file),
-        })
-      }
-      if (newAtts.length) {
-        setAttachments([...attachments, ...newAtts])
-        toast.success(
-          `${newAtts.length} file${newAtts.length === 1 ? "" : "s"} uploaded`
-        )
-      }
+          file_type: fileType,
+          file_size: body.size,
+          preview_url: fileType.startsWith("image/")
+            ? URL.createObjectURL(body)
+            : undefined,
+        },
+      ])
     } finally {
-      setUploading(false)
-      if (fileInputRef.current) fileInputRef.current.value = ""
+      setUploadingCount((n) => n - 1)
     }
+  }
+
+  async function onPickFiles(files: FileList | null) {
+    if (!files || files.length === 0) return
+    const picked = Array.from(files)
+    if (fileInputRef.current) fileInputRef.current.value = ""
+    // Bounded worker pool (3 wide) instead of firing every upload at once —
+    // a 20-photo pick on jobsite LTE would otherwise saturate the link and
+    // starve its own retries.
+    const queue = [...picked]
+    const workers = Array.from(
+      { length: Math.min(3, queue.length) },
+      async () => {
+        for (let f = queue.shift(); f; f = queue.shift()) {
+          await uploadOne(f)
+        }
+      }
+    )
+    await Promise.all(workers)
+  }
+
+  function retryFailedUpload(id: string) {
+    const failed = failedUploads.find((f) => f.id === id)
+    if (!failed) return
+    setFailedUploads((cur) => cur.filter((f) => f.id !== id))
+    void uploadOne(failed.file)
+  }
+
+  function discardFailedUpload(id: string) {
+    setFailedUploads((cur) => cur.filter((f) => f.id !== id))
   }
 
   function removeAttachment(idx: number) {
@@ -385,13 +436,43 @@ export function DailyLogDrawer({
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                className="aspect-square rounded-md border border-dashed border-border-strong flex flex-col items-center justify-center text-muted hover:border-brand-500 hover:text-brand-600 cursor-pointer text-xs gap-1 disabled:opacity-50"
+                className="aspect-square rounded-md border border-dashed border-border-strong flex flex-col items-center justify-center text-muted hover:border-brand-500 hover:text-brand-600 cursor-pointer text-xs gap-1"
               >
                 <Upload className="h-5 w-5" />
-                {uploading ? "Uploading…" : "Add files"}
+                {uploading
+                  ? `Uploading ${uploadingCount}…`
+                  : "Add files"}
               </button>
             </div>
+            {failedUploads.length > 0 && (
+              <ul className="mt-2 space-y-1">
+                {failedUploads.map((f) => (
+                  <li
+                    key={f.id}
+                    className="flex flex-wrap items-center gap-2 rounded-md border border-danger/40 bg-red-50 px-2 py-1.5 text-xs"
+                  >
+                    <span className="truncate font-medium">{f.file.name}</span>
+                    <span className="text-muted truncate">{f.error}</span>
+                    <span className="ml-auto flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => retryFailedUpload(f.id)}
+                        className="text-brand-600 hover:underline cursor-pointer"
+                      >
+                        Retry
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => discardFailedUpload(f.id)}
+                        className="text-muted hover:text-foreground cursor-pointer"
+                      >
+                        Discard
+                      </button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
             {!attachments.some((a) => (a.file_type ?? "").startsWith("image/")) && (
               <p className="text-xs text-muted mt-1.5">
                 No photos yet — consider adding a few site photos so the log tells
@@ -554,24 +635,38 @@ function VisibilityToggle({
       <div className="mt-1 grid grid-cols-2 gap-2">
         <button
           type="button"
+          aria-pressed={value === "internal"}
           onClick={() => onChange("internal")}
           className={cn(
             "rounded-md border p-3 text-left cursor-pointer flex gap-3 items-start",
+            // Solid dark fill when selected — the old zinc-50 tint was easy
+            // to miss, and "which visibility is on?" must be unmistakable.
             value === "internal"
-              ? "border-zinc-700 bg-zinc-50"
+              ? "border-zinc-800 bg-zinc-800 text-white"
               : "border-border-strong hover:bg-background/60"
           )}
         >
-          <EyeOff className="h-5 w-5 mt-0.5 text-zinc-600" />
+          <EyeOff
+            className={cn(
+              "h-5 w-5 mt-0.5",
+              value === "internal" ? "text-zinc-300" : "text-zinc-600"
+            )}
+          />
           <div>
             <div className="font-medium text-sm">Internal only</div>
-            <div className="text-xs text-muted">
+            <div
+              className={cn(
+                "text-xs",
+                value === "internal" ? "text-zinc-300" : "text-muted"
+              )}
+            >
               Hidden from the client portal
             </div>
           </div>
         </button>
         <button
           type="button"
+          aria-pressed={value === "client"}
           onClick={() => onChange("client")}
           className={cn(
             "rounded-md border p-3 text-left cursor-pointer flex gap-3 items-start",

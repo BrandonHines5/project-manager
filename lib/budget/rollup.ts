@@ -7,8 +7,8 @@
 //                        cost codes on their line items (see allocation notes)
 //   New Budget           Budget + Changes
 //   Actual Costs to Date project_cost_actuals (QBO once live; import today)
-//   Purchase Orders      approved-PO committed costs (same math as the
-//                        Pricing tab's Committed costs card)
+//   Purchase Orders      approved-PO committed costs (the app's only
+//                        committed-costs rollup — Pricing doesn't show one)
 //   Forecasted Remaining forecast_override ?? (New Budget − Actuals)
 //   Total Forecasted     Actuals + Forecasted Remaining
 //   Variance             Total Forecasted − New Budget (positive = over)

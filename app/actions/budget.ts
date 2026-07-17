@@ -8,7 +8,7 @@ import { parseSpreadsheet } from "@/lib/import/spreadsheet"
 
 // Budget data is money-out (what we expect to pay), same sensitivity as
 // committed costs — so beyond the staff-only RLS, every action here requires
-// profiles.financial_access, exactly like the Pricing tab's committed card.
+// profiles.financial_access, like the Budget tab's POs column.
 // RLS does not enforce financial_access anywhere (app-layer convention).
 async function requireFinancialStaff() {
   const profile = await requireStaff()
@@ -16,6 +16,138 @@ async function requireFinancialStaff() {
     throw new Error("Financial access is required to edit budgets.")
   }
   return profile
+}
+
+// ---- Budget editors allowlist ---------------------------------------------
+//
+// Everyone with financial_access can READ the Budget tab; only the profiles
+// on this allowlist (app_settings key 'budget_editors', picked in Settings →
+// Budget editors) can MODIFY it. Semantics mirror invoice_payment_recipients:
+//   * key never set → every financial_access staffer can edit (the pre-
+//     allowlist behavior, so nothing breaks on deploy)
+//   * explicit list → only those ids; only CURRENT editors may change the
+//     list (an excluded staffer can't re-add themselves)
+//   * explicit []  → read-only for everyone (any financial_access staffer
+//     can reopen it in Settings, so there's no lockout)
+//   * read failure / malformed row → fail closed to read-only, never open
+// Same app-layer trust tier as financial_access itself — documented, not RLS.
+
+const BUDGET_EDITORS_KEY = "budget_editors"
+const editorIdsSchema = z.array(z.string().uuid()).max(50)
+
+type SupabaseServer = Awaited<ReturnType<typeof createSupabaseServerClient>>
+
+/** Stored allowlist, or null when the key was never set (= everyone). */
+async function loadBudgetEditorIds(
+  supabase: SupabaseServer
+): Promise<string[] | null> {
+  const { data, error } = await supabase
+    .from("app_settings")
+    .select("value")
+    .eq("key", BUDGET_EDITORS_KEY)
+    .maybeSingle()
+  // Fail CLOSED on a read failure — a transient error must make budgets
+  // read-only, never silently widen edit rights to everyone.
+  if (error) {
+    throw new Error(`Could not load the budget-editor list: ${error.message}`)
+  }
+  if (!data?.value) return null
+  try {
+    return editorIdsSchema.parse(JSON.parse(data.value))
+  } catch {
+    // Malformed settings row — fail closed (read-only for everyone). Any
+    // financial_access staffer can re-save a valid list in Settings →
+    // Budget editors, so this can't strand the org (see saveBudgetEditors).
+    return []
+  }
+}
+
+/**
+ * Whether this profile may modify budgets. Page + actions share this.
+ * ("use server" makes every export callable from the client, so it guards
+ * itself even though the Budget page is the only intended caller.)
+ */
+export async function canEditBudget(profileId: string): Promise<boolean> {
+  await requireStaff()
+  const supabase = await createSupabaseServerClient()
+  // A transient settings-read failure renders the page read-only rather than
+  // erroring it. Mutations still go through requireBudgetEditor, which lets
+  // that same failure throw — reads degrade, writes fail loudly.
+  try {
+    const ids = await loadBudgetEditorIds(supabase)
+    return ids === null || ids.includes(profileId)
+  } catch {
+    return false
+  }
+}
+
+async function requireBudgetEditor() {
+  const profile = await requireFinancialStaff()
+  const supabase = await createSupabaseServerClient()
+  const ids = await loadBudgetEditorIds(supabase)
+  if (ids !== null && !ids.includes(profile.id)) {
+    throw new Error(
+      "Only budget editors can change the budget — it's read-only for you."
+    )
+  }
+  return profile
+}
+
+export type BudgetEditorConfig = {
+  staff: { id: string; full_name: string | null; financial_access: boolean }[]
+  selected: string[]
+  /** False when the key was never set (= everyone with financial access). */
+  explicit: boolean
+}
+
+export async function getBudgetEditorConfig(): Promise<BudgetEditorConfig> {
+  await requireStaff()
+  const supabase = await createSupabaseServerClient()
+  const [{ data: staff, error }, ids] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("id, full_name, financial_access")
+      .eq("role", "staff")
+      .order("full_name"),
+    loadBudgetEditorIds(supabase),
+  ])
+  if (error) throw new Error(error.message)
+  const staffRows = (staff ?? []).map((s) => ({
+    id: s.id,
+    full_name: s.full_name,
+    financial_access: !!s.financial_access,
+  }))
+  return {
+    staff: staffRows,
+    // Unset key: pre-check the effective editors (financial_access staff) so
+    // the picker shows today's reality; the first Save makes it explicit.
+    selected:
+      ids ?? staffRows.filter((s) => s.financial_access).map((s) => s.id),
+    explicit: ids !== null,
+  }
+}
+
+export async function saveBudgetEditors(ids: string[]) {
+  const profile = await requireFinancialStaff()
+  const parsed = editorIdsSchema.parse(ids)
+  const supabase = await createSupabaseServerClient()
+  // Allowlist administration is limited to CURRENT editors so an excluded
+  // staffer can't quietly re-add themselves. Unset/empty/malformed lists
+  // stay fixable by any financial_access staffer — no lockout state.
+  const current = await loadBudgetEditorIds(supabase)
+  if (current !== null && current.length > 0 && !current.includes(profile.id)) {
+    throw new Error("Only current budget editors can change the editor list.")
+  }
+  const { error } = await supabase.from("app_settings").upsert(
+    {
+      key: BUDGET_EDITORS_KEY,
+      value: JSON.stringify(parsed),
+      updated_by: profile.id,
+    },
+    { onConflict: "key" }
+  )
+  if (error) throw new Error(error.message)
+  revalidatePath("/settings/budget")
 }
 
 const money = z.coerce.number().finite()
@@ -27,7 +159,7 @@ const BudgetLineInput = z.object({
 })
 
 export async function saveBudgetLine(input: z.infer<typeof BudgetLineInput>) {
-  const profile = await requireFinancialStaff()
+  const profile = await requireBudgetEditor()
   const parsed = BudgetLineInput.parse(input)
   const supabase = await createSupabaseServerClient()
   // Merge-upsert: only the provided columns are written, so setting the
@@ -55,7 +187,7 @@ const ForecastOverrideInput = z.object({
 export async function setForecastOverride(
   input: z.infer<typeof ForecastOverrideInput>
 ) {
-  const profile = await requireFinancialStaff()
+  const profile = await requireBudgetEditor()
   const parsed = ForecastOverrideInput.parse(input)
   const supabase = await createSupabaseServerClient()
   const { error } = await supabase.from("project_budget_lines").upsert(
@@ -78,7 +210,7 @@ export async function removeBudgetLine({
   project_id: string
   cost_code_id: string
 }) {
-  await requireFinancialStaff()
+  await requireBudgetEditor()
   const supabase = await createSupabaseServerClient()
   const { error } = await supabase
     .from("project_budget_lines")
@@ -132,7 +264,7 @@ function normalizeCode(raw: string): string {
 export async function parseBudgetImport(
   formData: FormData
 ): Promise<BudgetImportPreview> {
-  await requireFinancialStaff()
+  await requireBudgetEditor()
   const file = formData.get("file")
   if (!(file instanceof File)) throw new Error("No file uploaded.")
   if (file.size > MAX_IMPORT_BYTES) {
@@ -232,7 +364,7 @@ const ApplyImportInput = z.object({
 export async function applyBudgetImport(
   input: z.infer<typeof ApplyImportInput>
 ) {
-  const profile = await requireFinancialStaff()
+  const profile = await requireBudgetEditor()
   const parsed = ApplyImportInput.parse(input)
   const supabase = await createSupabaseServerClient()
 
