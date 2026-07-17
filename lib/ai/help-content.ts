@@ -175,9 +175,11 @@ To explain WHY a job is behind, look at the logged delays (each records which it
       "roll",
       "series",
     ],
-    body: `A to-do can be set to repeat (daily, weekly, biweekly, or monthly, with an optional end date or occurrence count). Recurring to-dos work on a "roll on complete" model: only the current occurrence exists at any time. When you complete it — by any method (checkbox, the detail sheet, bulk, an onsite quick update, or applying an AI plan) — the app automatically creates the next occurrence, advancing the due date past today, resetting the checklist, and copying the assignments.
+    body: `A to-do can be set to repeat (daily, weekly, biweekly, or monthly, with an optional end date or occurrence count). Recurring to-dos work on a "roll on complete" model: only the current occurrence exists at any time. When you complete it — by any method (checkbox, the detail sheet, bulk, an onsite quick update, or applying an AI plan) — the app automatically creates the next occurrence, resetting the checklist and copying the assignments.
 
-Nothing is pre-created and nothing is virtual, so your list only ever shows the next real occurrence. A recurrence rule with no due date does nothing — the dialog won't let you save one without a due date.`,
+The "Repeats from" setting controls WHEN the next occurrence comes due. "Fixed schedule" (the default) keeps the cadence anchored to the due date — something due every May 1 is due next May 1 no matter when you actually checked it off (missed slots are skipped, never stacked). "After completion" counts the interval from the day you completed it — air filters changed April 10 come due again 3 months from April 10, even if they'd been scheduled for April 1.
+
+Nothing is pre-created and nothing is virtual, so your list only ever shows the next real occurrence. A recurrence rule with no due date does nothing — the dialog won't let you save one without a due date. For a yearly cadence, use monthly with "every 12".`,
   },
   {
     id: "assignments",

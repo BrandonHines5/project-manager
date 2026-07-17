@@ -611,6 +611,17 @@ export function ScheduleItemDialog({
                     onChange={(e) => onChangeEndDate(e.target.value)}
                   />
                 </Field>
+                {/* Predecessors sit right under the dates on purpose:
+                    picking one rewrites Start date (onPredecessorAdded), so
+                    cause and effect are adjacent. */}
+                <div className="sm:col-span-2">
+                  <PredecessorsEditor
+                    value={predecessors}
+                    onChange={setPredecessors}
+                    items={itemsForPredecessors}
+                    onAdd={onPredecessorAdded}
+                  />
+                </div>
                 <div className="sm:col-span-2">
                   <label className="flex items-start gap-2 text-xs cursor-pointer select-none">
                     <input
@@ -762,16 +773,6 @@ export function ScheduleItemDialog({
             roles={data.roles}
             roleMembers={data.roleMembers}
           />
-
-          {/* Predecessors (work only) */}
-          {kind === "work" && (
-            <PredecessorsEditor
-              value={predecessors}
-              onChange={setPredecessors}
-              items={itemsForPredecessors}
-              onAdd={onPredecessorAdded}
-            />
-          )}
 
           {/* Checklist (todos only) */}
           {kind === "todo" && (
@@ -1529,10 +1530,34 @@ function RecurrenceEditor({
                 }
               />
             </Field>
+            <Field label="Repeats from" className="sm:col-span-3">
+              <Select
+                value={value.anchor_mode ?? "fixed"}
+                onChange={(e) =>
+                  // Omit the key for the default so stored rules stay minimal
+                  // (and byte-identical to pre-feature rules).
+                  update(
+                    "anchor_mode",
+                    e.target.value === "after_completion"
+                      ? "after_completion"
+                      : undefined
+                  )
+                }
+              >
+                <option value="fixed">
+                  Fixed schedule — cadence counts from the due date (e.g. every May 1)
+                </option>
+                <option value="after_completion">
+                  After completion — next due = date completed + interval (e.g. filters 3 months after done)
+                </option>
+              </Select>
+            </Field>
           </div>
           <p className="mt-2 text-xs text-muted">
-            {describeRecurrence(value)} · Repeats count from the due date:
-            completing this to-do automatically creates the next occurrence.
+            {describeRecurrence(value)} ·{" "}
+            {(value.anchor_mode ?? "fixed") === "after_completion"
+              ? "The next occurrence comes due one interval after you actually complete this one."
+              : "Repeats count from the due date: completing this to-do automatically creates the next occurrence."}
           </p>
         </>
       )}

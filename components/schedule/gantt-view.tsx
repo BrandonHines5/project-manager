@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { addDays as fnsAddDays, differenceInCalendarDays, parseISO, format, isWeekend, startOfDay } from "date-fns"
-import { CalendarDays, Zap, Minimize2 } from "lucide-react"
+import { CalendarDays, Zap, Minimize2, Printer } from "lucide-react"
 import { EmptyState } from "@/components/ui/empty"
 import { cn, todayISO, addDays, formatDateRange } from "@/lib/utils"
 import { moveScheduleItem, type MoveReasonT } from "@/app/actions/schedule"
@@ -301,6 +301,15 @@ export function GanttView({
             <span className="text-muted">({criticalIds.size})</span>
           )}
         </label>
+        <button
+          type="button"
+          onClick={() => window.print()}
+          className="inline-flex items-center gap-1.5 cursor-pointer select-none text-muted hover:text-foreground"
+          title="Print the Gantt chart / save it as a PDF"
+        >
+          <Printer className="h-3.5 w-3.5" />
+          Print / PDF
+        </button>
       </div>
     </div>
     <div
@@ -569,6 +578,261 @@ export function GanttView({
         onCancel={() => setPendingMove(null)}
       />
     )}
+    <GanttPrintDocument
+      data={data}
+      sortedItems={sortedItems}
+      days={days}
+      minDate={minDate}
+      monthGroups={monthGroups}
+      criticalIds={criticalIds}
+      showCritical={showCritical}
+      arrows={arrows}
+      rowIndex={rowIndex}
+      projectFinishLabel={projectFinishLabel}
+    />
+    </div>
+  )
+}
+
+// Print-only rendition of the chart. The live gantt can't print — it's a
+// scroll container clipped to the viewport and often thousands of pixels
+// wide — so this re-renders the same data as ONE viewBox-scaled SVG that the
+// browser shrinks to the printable page width (landscape via the mounted
+// @page style below). Hidden on screen; revealed by the #gantt-print-root
+// rules in globals.css when the user hits Print / PDF.
+function GanttPrintDocument({
+  data,
+  sortedItems,
+  days,
+  minDate,
+  monthGroups,
+  criticalIds,
+  showCritical,
+  arrows,
+  rowIndex,
+  projectFinishLabel,
+}: {
+  data: ScheduleData
+  sortedItems: ScheduleData["items"]
+  days: Date[]
+  minDate: Date
+  monthGroups: { label: string; days: number; startIdx: number }[]
+  criticalIds: Set<string>
+  showCritical: boolean
+  arrows: ScheduleData["predecessors"]
+  rowIndex: Map<string, number>
+  projectFinishLabel: string | null
+}) {
+  // Logical units only — the viewBox scales everything to the page width.
+  const DAY = 16
+  const ROW = 20
+  const HEADER = 36
+  const LABEL = 190
+  const W = LABEL + days.length * DAY
+  const H = HEADER + sortedItems.length * ROW
+  const todayXP = LABEL + differenceInCalendarDays(parseISO(todayISO()), minDate) * DAY
+  // Day-level weekend stripes get noisy (and slow) on long timelines; keep
+  // them for ~3 months and fall back to week gridlines beyond that.
+  const showWeekends = days.length <= 100
+
+  const project = data.projects.find((p) => p.id === data.project_id)
+  const barFill = (status: string) =>
+    status === "complete"
+      ? "#10b981"
+      : status === "delayed"
+        ? "#ef4444"
+        : status === "in_progress"
+          ? "#1976d2"
+          : "#a1a1aa"
+
+  const printedOn = new Date().toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  })
+
+  return (
+    <div id="gantt-print-root">
+      {/* Landscape only while the Gantt is mounted — a global @page rule
+          would flip the Pricing PDF sideways too. */}
+      <style>{`@media print { @page { size: letter landscape; margin: 0.5in; } }`}</style>
+      <div className="gp-header">
+        <div>
+          <div className="gp-title">Construction schedule</div>
+          <div className="gp-project">
+            {project ? `#${project.project_number} — ${project.name}` : ""}
+            {data.project_address ? ` · ${data.project_address}` : ""}
+          </div>
+          <div className="gp-sub">
+            Printed {printedOn}
+            {projectFinishLabel ? ` · Projected finish ${projectFinishLabel}` : ""}
+            {` · ${sortedItems.length} work item${sortedItems.length === 1 ? "" : "s"}`}
+          </div>
+        </div>
+        <div className="gp-legend">
+          <span><i style={{ background: "#a1a1aa" }} /> Not started</span>
+          <span><i style={{ background: "#1976d2" }} /> In progress</span>
+          <span><i style={{ background: "#10b981" }} /> Complete</span>
+          <span><i style={{ background: "#ef4444" }} /> Delayed</span>
+        </div>
+      </div>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        style={{ width: "100%", height: "auto" }}
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <defs>
+          <marker
+            id="gp-arrow"
+            markerWidth="6"
+            markerHeight="6"
+            refX="5"
+            refY="3"
+            orient="auto"
+          >
+            <polygon points="0 0, 6 3, 0 6" fill="#94a3b8" />
+          </marker>
+        </defs>
+
+        {/* Weekend shading / week gridlines */}
+        {days.map((d, di) => {
+          const x = LABEL + di * DAY
+          if (showWeekends && isWeekend(d)) {
+            return (
+              <rect
+                key={`w${di}`}
+                x={x}
+                y={HEADER}
+                width={DAY}
+                height={H - HEADER}
+                fill="#f4f4f5"
+              />
+            )
+          }
+          if (!showWeekends && d.getDay() === 1) {
+            return (
+              <line
+                key={`w${di}`}
+                x1={x}
+                y1={HEADER}
+                x2={x}
+                y2={H}
+                stroke="#e4e4e7"
+                strokeWidth="0.5"
+              />
+            )
+          }
+          return null
+        })}
+
+        {/* Month header */}
+        {monthGroups.map((g) => {
+          const x = LABEL + g.startIdx * DAY
+          return (
+            <g key={`${g.label}-${g.startIdx}`}>
+              <line x1={x} y1={0} x2={x} y2={H} stroke="#d4d4d8" strokeWidth="0.75" />
+              <text x={x + 4} y={13} fontSize="10" fill="#52525b" fontWeight="600">
+                {g.label}
+              </text>
+            </g>
+          )
+        })}
+        <line x1={0} y1={HEADER - 8} x2={W} y2={HEADER - 8} stroke="#a1a1aa" strokeWidth="0.75" />
+        <line x1={LABEL} y1={0} x2={LABEL} y2={H} stroke="#a1a1aa" strokeWidth="0.75" />
+
+        {/* Rows: separator, label, bar */}
+        {sortedItems.map((item, i) => {
+          const y = HEADER + i * ROW
+          const offset = differenceInCalendarDays(parseISO(item.start_date!), minDate)
+          const dur =
+            differenceInCalendarDays(
+              parseISO(item.end_date!),
+              parseISO(item.start_date!)
+            ) + 1
+          const bx = LABEL + offset * DAY
+          const bw = Math.max(dur * DAY - 1, DAY * 0.6)
+          const isCritical = showCritical && criticalIds.has(item.id)
+          // SVG text doesn't ellipsize; cap the label to what fits the column.
+          const label =
+            item.title.length > 34 ? `${item.title.slice(0, 33)}…` : item.title
+          return (
+            <g key={item.id}>
+              <line
+                x1={0}
+                y1={y + ROW}
+                x2={W}
+                y2={y + ROW}
+                stroke="#f0f0f1"
+                strokeWidth="0.5"
+              />
+              <text x={4} y={y + ROW / 2 + 3.5} fontSize="9" fill="#18181b">
+                {label}
+              </text>
+              <rect
+                x={bx}
+                y={y + 3}
+                width={bw}
+                height={ROW - 6}
+                rx={3}
+                fill={barFill(item.status)}
+                stroke={isCritical ? "#ef4444" : "none"}
+                strokeWidth={isCritical ? 1.5 : 0}
+              />
+              {/* Duration inside the bar when it fits */}
+              {bw >= 26 && (
+                <text
+                  x={bx + 4}
+                  y={y + ROW / 2 + 3}
+                  fontSize="8"
+                  fill="#ffffff"
+                >
+                  {dur}d
+                </text>
+              )}
+            </g>
+          )
+        })}
+
+        {/* Predecessor arrows */}
+        {arrows.map((a) => {
+          const succ = sortedItems.find((i) => i.id === a.item_id)
+          const pred = sortedItems.find((i) => i.id === a.predecessor_id)
+          if (!succ || !pred) return null
+          const sIdx = rowIndex.get(succ.id)!
+          const pIdx = rowIndex.get(pred.id)!
+          const x1 =
+            LABEL +
+            (differenceInCalendarDays(parseISO(pred.end_date!), minDate) + 1) * DAY
+          const y1 = HEADER + pIdx * ROW + ROW / 2
+          const x2 =
+            LABEL + differenceInCalendarDays(parseISO(succ.start_date!), minDate) * DAY
+          const y2 = HEADER + sIdx * ROW + ROW / 2
+          const midX = (x1 + x2) / 2
+          return (
+            <path
+              key={a.id}
+              d={`M ${x1} ${y1} L ${midX} ${y1} L ${midX} ${y2} L ${x2} ${y2}`}
+              stroke="#94a3b8"
+              strokeWidth="0.75"
+              fill="none"
+              markerEnd="url(#gp-arrow)"
+            />
+          )
+        })}
+
+        {/* Today */}
+        {todayXP > LABEL && todayXP < W && (
+          <line
+            x1={todayXP}
+            y1={HEADER - 8}
+            x2={todayXP}
+            y2={H}
+            stroke="#c62828"
+            strokeWidth="1"
+            strokeDasharray="3 2"
+          />
+        )}
+      </svg>
     </div>
   )
 }

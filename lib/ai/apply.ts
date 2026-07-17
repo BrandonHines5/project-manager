@@ -548,18 +548,32 @@ async function applyOne(
         // to one item, so require the company to have at least one schedule
         // assignment visible to the caller's session — a tampered plan can't
         // text an arbitrary companies row that was never put on a schedule.
-        const { data: assignment, error: aErr } = await supabase
+        const { data: assignments, error: aErr } = await supabase
           .from("schedule_assignments")
-          .select("id")
+          .select("id, schedule_items!inner(project_id)")
           .eq("company_id", mutation.company_id)
-          .limit(1)
-          .maybeSingle()
+          .limit(50)
         if (aErr) throw new Error(aErr.message)
-        if (!assignment) {
+        if (!assignments || assignments.length === 0) {
           throw new Error(
             "company has no schedule assignment — texts can only go to subs assigned to a schedule item"
           )
         }
+        // Stamp the communications row with a project when the company's
+        // assignments unambiguously point at one — an AI-sent text then
+        // shows in that job's feed and teaches the inbound-reply matcher's
+        // recency heuristic. Multi-job subs stay company-only, as before.
+        const assignedProjects = new Set(
+          assignments
+            .map(
+              (a) =>
+                (a as unknown as { schedule_items: { project_id: string } })
+                  .schedule_items?.project_id
+            )
+            .filter(Boolean)
+        )
+        const smsProjectId =
+          assignedProjects.size === 1 ? [...assignedProjects][0]! : null
         // Re-resolve the recipient from the companies row — never trust the
         // phone that round-tripped through the client. RLS gates the read.
         const { data: company, error } = await supabase
@@ -584,6 +598,7 @@ async function applyOne(
           to: e164,
           content: mutation.message,
           log: {
+            project_id: smsProjectId,
             company_id: company.id,
             sent_by: actorId,
             kind: "ai_sms",

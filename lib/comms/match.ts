@@ -20,6 +20,17 @@ const NO_MATCH: MatchResult = {
   status: "needs_review",
 }
 
+// How far back "recent conversation" evidence reaches. Kept short on
+// purpose: a sub's active thread is days old, and a stale project stamp
+// misfiling this week's replies is worse than leaving them global.
+const COMM_RECENCY_WINDOW_DAYS = 7
+
+/** Last 10 digits — same comparison as the DB's normalize_phone(). */
+function last10(phone: string | null | undefined): string | null {
+  const digits = (phone ?? "").replace(/\D/g, "")
+  return digits.length >= 10 ? digits.slice(-10) : null
+}
+
 /**
  * Attribute an inbound phone number / email address to a project, company,
  * and/or person. Resolution order:
@@ -78,8 +89,12 @@ export async function matchCounterparty(
   if (profiles.length === 1) {
     const p = profiles[0]
     if (p.company_id) {
-      // Trade: attribute to their company; project via company engagements.
-      const projectId = await singleProjectForCompany(admin, p.company_id)
+      // Trade: attribute to their company. Recent conversation context wins
+      // over the formal-engagement heuristic — "we texted them about job X
+      // yesterday" beats "they're assigned to one job somewhere".
+      const projectId =
+        (await recentProjectForCompany(admin, p.company_id, opts.phone)) ??
+        (await singleProjectForCompany(admin, p.company_id))
       return {
         project_id: projectId,
         company_id: p.company_id,
@@ -101,7 +116,9 @@ export async function matchCounterparty(
   // 3. Company match.
   const companyIds = [...new Set(companies.map((c) => c.company_id))]
   if (companyIds.length === 1 && companyIds[0]) {
-    const projectId = await singleProjectForCompany(admin, companyIds[0])
+    const projectId =
+      (await recentProjectForCompany(admin, companyIds[0], opts.phone)) ??
+      (await singleProjectForCompany(admin, companyIds[0]))
     return {
       project_id: projectId,
       company_id: companyIds[0],
@@ -113,6 +130,62 @@ export async function matchCounterparty(
 
   // Multiple distinct contacts share this address — human call.
   return { ...NO_MATCH, counterparty_name: candidates[0].display_name }
+}
+
+/**
+ * Recent-conversation attribution: the project stamped on this company's
+ * communications inside the recency window — but only when EVERY recent
+ * project-stamped row agrees on ONE project (a sub actively texted about
+ * two jobs stays global; guessing between them would misfile half the
+ * thread). Phone traffic only: when a phone is given, rows are narrowed to
+ * that number's thread (outbound rows carry the sub's number in to_address;
+ * from_address on outbound can be a "PN…" Quo id, so it's only trusted on
+ * inbound rows). Evidence must include at least one OUTBOUND or
+ * staff-logged row — otherwise a single auto-filed inbound reply would
+ * feed itself for the whole window (misfile → evidence → misfile).
+ */
+async function recentProjectForCompany(
+  admin: AdminClient,
+  companyId: string,
+  phone: string | null | undefined
+): Promise<string | null> {
+  // The requirement is about TEXTS — email attribution keeps its existing
+  // behavior (project-client match / plus-tag / single engagement).
+  if (!phone) return null
+  const wanted = last10(phone)
+  if (!wanted) return null
+  try {
+    const cutoff = new Date(
+      Date.now() - COMM_RECENCY_WINDOW_DAYS * 86_400_000
+    ).toISOString()
+    const { data, error } = await admin
+      .from("communications")
+      .select(
+        "project_id, direction, to_address, from_address, sent_by, occurred_at"
+      )
+      .eq("company_id", companyId)
+      .not("project_id", "is", null)
+      .neq("status", "ignored")
+      .gte("occurred_at", cutoff)
+      .order("occurred_at", { ascending: false })
+      .limit(30)
+    if (error || !data?.length) return null
+
+    const thread = data.filter((r) =>
+      r.direction === "outbound"
+        ? last10(r.to_address) === wanted
+        : last10(r.from_address) === wanted
+    )
+    if (thread.length === 0) return null
+    if (!thread.some((r) => r.direction === "outbound" || r.sent_by)) {
+      return null
+    }
+    const projects = new Set(thread.map((r) => r.project_id as string))
+    return projects.size === 1 ? [...projects][0] : null
+  } catch (e) {
+    console.warn("[comms] recency lookup failed:", e)
+    return null
+  }
 }
 
 /** The company's one active project engagement, or null if 0 / several. */

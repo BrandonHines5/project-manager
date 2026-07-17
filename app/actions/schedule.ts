@@ -29,6 +29,9 @@ const Recurrence = z
     interval: z.number().int().positive().optional(),
     until: z.string().optional(),
     count: z.number().int().positive().optional(),
+    // z.object STRIPS unknown keys — anchor_mode must be declared here or
+    // every dialog save silently downgrades the rule to fixed-schedule.
+    anchor_mode: z.enum(["fixed", "after_completion"]).optional(),
   })
   .nullable()
   .optional()

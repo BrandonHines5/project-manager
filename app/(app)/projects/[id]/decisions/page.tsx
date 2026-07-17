@@ -21,7 +21,7 @@ export default async function DecisionsPage({
 
   const { data: project } = await supabase
     .from("projects")
-    .select("id, name, project_number")
+    .select("id, name, project_number, is_template")
     .eq("id", projectId)
     .maybeSingle()
   if (!project) notFound()
@@ -156,6 +156,7 @@ export default async function DecisionsPage({
     role: profile.role,
     me_id: profile.id,
     me_name: profile.full_name || profile.email || "User",
+    is_template: project.is_template,
     // Deep link (?open=<decision_id>) — validated against the RLS-filtered
     // list, so a client can only target decisions they can already see.
     open_decision_id:
