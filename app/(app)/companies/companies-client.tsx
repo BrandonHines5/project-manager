@@ -65,7 +65,10 @@ export function CompaniesClient({
           (c.status ?? "").toLowerCase().includes(q) ||
           (c.city ?? "").toLowerCase().includes(q) ||
           (c.email ?? "").toLowerCase().includes(q) ||
-          (c.phone ?? "").toLowerCase().includes(q)
+          (c.phone ?? "").toLowerCase().includes(q) ||
+          (c.insurance_agent_name ?? "").toLowerCase().includes(q) ||
+          (c.insurance_agent_email ?? "").toLowerCase().includes(q) ||
+          (c.insurance_agent_phone ?? "").toLowerCase().includes(q)
         )
       })
   }, [companies, search, typeFilter, tradeFilter, tradesByCompany])

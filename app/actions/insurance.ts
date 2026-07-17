@@ -201,7 +201,12 @@ export async function sendInsuranceRequest(companyId: string): Promise<{
   if (error || !company) {
     return { sent: false, reason: error?.message ?? "Company not found" }
   }
-  if (!company.email && !company.insurance_agent_email) {
+  // Treat blank/whitespace addresses as absent — `"" ?? fallback` keeps the
+  // empty string, so an unnormalized company.email would win over a real
+  // agent address below.
+  const companyEmail = company.email?.trim() || null
+  const agentEmail = company.insurance_agent_email?.trim() || null
+  if (!companyEmail && !agentEmail) {
     return {
       sent: false,
       reason: "No email on file for this company or its insurance agent",
@@ -236,9 +241,13 @@ export async function sendInsuranceRequest(companyId: string): Promise<{
   // The request goes to the sub AND their insurance agent when an agent
   // email is on file — the agent usually issues the certificate anyway. A
   // company with only an agent email still gets the request (agent as To).
-  const agentEmail = company.insurance_agent_email?.trim() || null
-  const to = company.email ?? agentEmail!
-  const cc = company.email && agentEmail && agentEmail !== company.email ? agentEmail : undefined
+  const to = companyEmail ?? agentEmail!
+  const cc =
+    companyEmail &&
+    agentEmail &&
+    agentEmail.toLowerCase() !== companyEmail.toLowerCase()
+      ? agentEmail
+      : undefined
   return sendEmail({
     to,
     ...(cc ? { cc } : {}),

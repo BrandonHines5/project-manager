@@ -66,7 +66,7 @@ export function makeZip(entries: ZipEntry[]): Uint8Array {
     offsets.push(pos)
     writeU32(out, pos, 0x04034b50) // local file header signature
     writeU16(out, pos + 4, 20) // version needed to extract
-    writeU16(out, pos + 6, 0) // general purpose flags
+    writeU16(out, pos + 6, 0x0800) // flags: bit 11 = UTF-8 file names
     writeU16(out, pos + 8, 0) // method: STORED
     writeU16(out, pos + 10, DOS_TIME)
     writeU16(out, pos + 12, DOS_DATE)
@@ -85,7 +85,7 @@ export function makeZip(entries: ZipEntry[]): Uint8Array {
     writeU32(out, pos, 0x02014b50) // central directory header signature
     writeU16(out, pos + 4, 20) // version made by
     writeU16(out, pos + 6, 20) // version needed to extract
-    writeU16(out, pos + 8, 0) // general purpose flags
+    writeU16(out, pos + 8, 0x0800) // flags: bit 11 = UTF-8 file names
     writeU16(out, pos + 10, 0) // method: STORED
     writeU16(out, pos + 12, DOS_TIME)
     writeU16(out, pos + 14, DOS_DATE)

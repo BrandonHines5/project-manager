@@ -369,8 +369,9 @@ function TextAssigneePanel({
   return (
     <div className="p-3 bg-brand-50/60 border border-brand-200 rounded-md space-y-2">
       {prompt.recipients.length > 1 && (
-        <Field label="Recipient">
+        <Field label="Recipient" htmlFor={`onsite-recipient-${prompt.id}`}>
           <Select
+            id={`onsite-recipient-${prompt.id}`}
             value={recipientKey}
             onChange={(e) => setRecipientKey(e.target.value)}
           >
@@ -389,8 +390,13 @@ function TextAssigneePanel({
           company profile before sending.
         </p>
       )}
-      <Field label="Message" hint={`${message.length} / 1600`}>
+      <Field
+        label="Message"
+        htmlFor={`onsite-message-${prompt.id}`}
+        hint={`${message.length} / 1600`}
+      >
         <Textarea
+          id={`onsite-message-${prompt.id}`}
           value={message}
           onChange={(e) => setMessage(e.target.value.slice(0, 1600))}
           rows={3}

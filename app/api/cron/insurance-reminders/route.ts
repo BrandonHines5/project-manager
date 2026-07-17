@@ -163,9 +163,11 @@ export async function GET(req: Request) {
     }
     // The reminder goes to the sub, CC their insurance agent when one is on
     // file (the agent usually issues the renewal cert). A company with only
-    // an agent email still gets reminded — the agent becomes the To.
+    // an agent email still gets reminded — the agent becomes the To. Blank
+    // or whitespace-only addresses count as absent.
+    const companyEmail = company.email?.trim() || null
     const agentEmail = company.insurance_agent_email?.trim() || null
-    if (!company.email && !agentEmail) {
+    if (!companyEmail && !agentEmail) {
       summary.push({
         company: company.name,
         policies: policies.length,
@@ -229,11 +231,13 @@ export async function GET(req: Request) {
     })
     const replyTo = insuranceReplyTo()
     const ccAgent =
-      company.email && agentEmail && agentEmail !== company.email
+      companyEmail &&
+      agentEmail &&
+      agentEmail.toLowerCase() !== companyEmail.toLowerCase()
         ? agentEmail
         : undefined
     const result = await sendEmail({
-      to: company.email ?? agentEmail!,
+      to: companyEmail ?? agentEmail!,
       ...(ccAgent ? { cc: ccAgent } : {}),
       // Replies (usually with the cert attached) route to the inbound
       // pipeline instead of bouncing off the send-only From address.

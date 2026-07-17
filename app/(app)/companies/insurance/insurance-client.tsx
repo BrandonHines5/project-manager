@@ -767,7 +767,15 @@ function CompanyRows({
                         type="button"
                         className="inline-flex items-center text-muted-foreground hover:text-danger cursor-pointer"
                         title="Delete this document"
-                        onClick={() =>
+                        onClick={() => {
+                          // Permanently removes the row AND the stored file —
+                          // gate the click like the company-delete flow does.
+                          if (
+                            !confirm(
+                              `Delete ${d.file_name}? The stored file is removed permanently.`
+                            )
+                          )
+                            return
                           startTransition(async () => {
                             try {
                               await deleteInsuranceDocument(d.id)
@@ -778,7 +786,7 @@ function CompanyRows({
                               )
                             }
                           })
-                        }
+                        }}
                       >
                         <Trash2 className="h-3 w-3" />
                       </button>
@@ -965,7 +973,13 @@ function ReviewCard({
         size="icon"
         title="Delete this document"
         disabled={busy || pending}
-        onClick={() =>
+        onClick={() => {
+          if (
+            !confirm(
+              `Delete ${doc.file_name}? The stored file is removed permanently.`
+            )
+          )
+            return
           startTransition(async () => {
             try {
               await deleteInsuranceDocument(doc.id)
@@ -974,7 +988,7 @@ function ReviewCard({
               toast.error(e instanceof Error ? e.message : "Delete failed")
             }
           })
-        }
+        }}
       >
         <Trash2 className="h-4 w-4" />
       </Button>
@@ -994,7 +1008,10 @@ function UploadDialog({
   initialFiles: File[] | null
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
-  const [files, setFiles] = useState<File[]>([])
+  // Each picked file carries its own generated id: React keys stay stable
+  // and unique even when two different files share a name and size, and
+  // nothing is silently dropped as a "duplicate".
+  const [files, setFiles] = useState<{ id: string; file: File }[]>([])
   const [companyId, setCompanyId] = useState("")
   const [docKind, setDocKind] = useState<DocKind>("coi")
   const [busy, setBusy] = useState(false)
@@ -1004,7 +1021,7 @@ function UploadDialog({
   const [adoptedFrom, setAdoptedFrom] = useState<File[] | null>(null)
   if (initialFiles && initialFiles !== adoptedFrom) {
     setAdoptedFrom(initialFiles)
-    setFiles(initialFiles)
+    setFiles(initialFiles.map((file) => ({ id: crypto.randomUUID(), file })))
   }
 
   function addFiles(picked: FileList | File[] | null) {
@@ -1017,15 +1034,14 @@ function UploadDialog({
       )
     }
     if (accepted.length === 0) return
-    // Append, de-duped by name+size so re-picking doesn't double-add.
-    setFiles((prev) => {
-      const seen = new Set(prev.map((f) => `${f.name}:${f.size}`))
-      return [...prev, ...accepted.filter((f) => !seen.has(`${f.name}:${f.size}`))]
-    })
+    setFiles((prev) => [
+      ...prev,
+      ...accepted.map((file) => ({ id: crypto.randomUUID(), file })),
+    ])
   }
 
-  function removeFile(index: number) {
-    setFiles((prev) => prev.filter((_, i) => i !== index))
+  function removeFile(id: string) {
+    setFiles((prev) => prev.filter((f) => f.id !== id))
   }
 
   async function submit() {
@@ -1048,7 +1064,7 @@ function UploadDialog({
       let needsReview = 0
       let failed = 0
       for (let i = 0; i < files.length; i++) {
-        const file = files[i]
+        const file = files[i].file
         setProgress(
           files.length > 1
             ? `Reading ${i + 1} of ${files.length} — ${file.name}`
@@ -1068,23 +1084,43 @@ function UploadDialog({
           toast.error(`${file.name}: upload failed — ${error.message}`)
           continue
         }
-        const result = await processStoredInsuranceDocument({
-          storagePath: path,
-          fileName: file.name,
-          fileType: file.type || "application/pdf",
-          fileSize: file.size,
-          companyId: companyId || null,
-          docKind,
-        })
-        if (!result.ok) {
+        // Per-file try/catch: one bad file must not abort the rest of the
+        // batch. On a typed failure (`ok:false` — guaranteed to mean no
+        // document row was recorded) remove the just-uploaded object so a
+        // sensitive W9/cert never lingers in Storage with nothing in the
+        // database pointing at it. A THROWN error is different: the server
+        // may have completed the ingest before the response was lost, so
+        // the object stays (worst case it's cleaned up manually) rather
+        // than risking deleting a file a document row now references.
+        try {
+          const result = await processStoredInsuranceDocument({
+            storagePath: path,
+            fileName: file.name,
+            fileType: file.type || "application/pdf",
+            fileSize: file.size,
+            companyId: companyId || null,
+            docKind,
+          })
+          if (!result.ok) {
+            failed++
+            toast.error(`${file.name}: ${result.error}`)
+            const { error: rmErr } = await supabase.storage
+              .from("project-files")
+              .remove([path])
+            if (rmErr) {
+              console.warn("orphaned upload cleanup failed:", rmErr.message)
+            }
+          } else if (result.status === "processed") {
+            processed++
+          } else if (result.status === "needs_review") {
+            needsReview++
+          } else {
+            failed++
+          }
+        } catch (e) {
           failed++
-          toast.error(`${file.name}: ${result.error}`)
-        } else if (result.status === "processed") {
-          processed++
-        } else if (result.status === "needs_review") {
-          needsReview++
-        } else {
-          failed++
+          console.error("processStoredInsuranceDocument threw:", e)
+          toast.error(`${file.name}: processing failed — try re-uploading it`)
         }
       }
       if (processed > 0) {
@@ -1156,19 +1192,19 @@ function UploadDialog({
             </div>
             {files.length > 0 && (
               <ul className="max-h-32 overflow-y-auto space-y-1 text-xs">
-                {files.map((f, i) => (
+                {files.map((f) => (
                   <li
-                    key={`${f.name}:${f.size}`}
+                    key={f.id}
                     className="flex items-center gap-2 text-muted-foreground"
                   >
                     <FileText className="h-3 w-3 shrink-0" />
-                    <span className="truncate">{f.name}</span>
+                    <span className="truncate">{f.file.name}</span>
                     <button
                       type="button"
                       className="ml-auto text-muted-foreground hover:text-danger cursor-pointer"
-                      onClick={() => removeFile(i)}
+                      onClick={() => removeFile(f.id)}
                       disabled={busy}
-                      aria-label={`Remove ${f.name}`}
+                      aria-label={`Remove ${f.file.name}`}
                     >
                       <X className="h-3 w-3" />
                     </button>

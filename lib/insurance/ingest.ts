@@ -125,6 +125,10 @@ export async function ingestInsuranceDocument(
       .update({ status })
       .eq("id", doc.id)
     if (updErr) {
+      // Roll the row back so `ok:false` always means "nothing recorded" —
+      // callers clean up the stored file on failure, which must never
+      // orphan a document row that still points at it.
+      await admin.from("insurance_documents").delete().eq("id", doc.id)
       return { ok: false, error: `Could not record document: ${updErr.message}` }
     }
     return { ok: true, documentId: doc.id, status }
@@ -199,48 +203,44 @@ export async function ingestInsuranceDocument(
  * Backfills the company's insurance-agent contact (agency name / email /
  * phone) from the certificate's Producer block — but only fields that are
  * currently BLANK. Staff-entered values always win; a new cert never
- * overwrites them. Best-effort: a failure here never fails the ingest.
+ * overwrites them. Each field is its own guarded UPDATE (`.is(col, null)`)
+ * so the blank check and the write are one atomic statement — no
+ * read-then-write window for a concurrent staff edit to lose in. (The edit
+ * dialog stores cleared fields as null, so null IS the blank state.)
+ * Best-effort: a failure here never fails the ingest.
  */
 export async function fillAgentContactFromExtraction(
   client: Admin,
   companyId: string,
   extraction: CoiExtraction
 ): Promise<void> {
-  const name = extraction.producer_name?.trim()
-  const email = extraction.producer_email?.trim()
-  const phone = extraction.producer_phone?.trim()
-  if (!name && !email && !phone) return
-  try {
-    const { data: company } = await client
-      .from("companies")
-      .select("id, insurance_agent_name, insurance_agent_email, insurance_agent_phone")
-      .eq("id", companyId)
-      .maybeSingle()
-    if (!company) return
-    const patch: {
-      insurance_agent_name?: string
-      insurance_agent_email?: string
-      insurance_agent_phone?: string
-    } = {}
-    if (name && !company.insurance_agent_name?.trim()) {
-      patch.insurance_agent_name = name
+  const fields = [
+    ["insurance_agent_name", extraction.producer_name?.trim()],
+    ["insurance_agent_email", extraction.producer_email?.trim()],
+    ["insurance_agent_phone", extraction.producer_phone?.trim()],
+  ] as const
+  for (const [column, value] of fields) {
+    if (!value) continue
+    // Spelled out per column so the patch keeps the typed Update shape (a
+    // computed key widens to a string index signature the client rejects).
+    const patch =
+      column === "insurance_agent_name"
+        ? { insurance_agent_name: value }
+        : column === "insurance_agent_email"
+          ? { insurance_agent_email: value }
+          : { insurance_agent_phone: value }
+    try {
+      const { error } = await client
+        .from("companies")
+        .update(patch)
+        .eq("id", companyId)
+        .is(column, null)
+      if (error) {
+        console.warn("[insurance] agent-contact backfill failed:", error.message)
+      }
+    } catch (e) {
+      console.warn("[insurance] agent-contact backfill failed:", e)
     }
-    if (email && !company.insurance_agent_email?.trim()) {
-      patch.insurance_agent_email = email
-    }
-    if (phone && !company.insurance_agent_phone?.trim()) {
-      patch.insurance_agent_phone = phone
-    }
-    if (Object.keys(patch).length === 0) return
-    const { error } = await client
-      .from("companies")
-      .update(patch)
-      .eq("id", companyId)
-    if (error) {
-      console.warn("[insurance] agent-contact backfill failed:", error.message)
-    }
-  } catch (e) {
-    console.warn("[insurance] agent-contact backfill failed:", e)
   }
 }
 
@@ -322,6 +322,7 @@ async function matchCompany(
   // staff assign it once. Requires every historical match to agree on ONE
   // company — a name that was ever filed two different ways stays manual.
   if (normalized.length >= 4) {
+    const HISTORY_CAP = 1000
     const { data: history } = await admin
       .from("insurance_documents")
       .select("company_id, extracted_company_name")
@@ -329,15 +330,20 @@ async function matchCompany(
       .not("company_id", "is", null)
       .not("extracted_company_name", "is", null)
       .ilike("extracted_company_name", `%${escapeLike(stripCompanySuffix(name).slice(0, 60))}%`)
-      .limit(50)
-    const agreed = new Set(
-      (history ?? [])
-        .filter(
-          (d) => normalizeCompanyName(d.extracted_company_name ?? "") === normalized
-        )
-        .map((d) => d.company_id as string)
-    )
-    if (agreed.size === 1) return [...agreed][0]
+      .limit(HISTORY_CAP)
+    // Unanimity is only meaningful over the COMPLETE match set — if the
+    // query hit its cap, a disagreeing assignment could sit past the cut,
+    // so fall through to name matching instead of trusting a subset.
+    if (history && history.length < HISTORY_CAP) {
+      const agreed = new Set(
+        history
+          .filter(
+            (d) => normalizeCompanyName(d.extracted_company_name ?? "") === normalized
+          )
+          .map((d) => d.company_id as string)
+      )
+      if (agreed.size === 1) return [...agreed][0]
+    }
   }
 
   // Exact (case-insensitive) on name or AKA first.

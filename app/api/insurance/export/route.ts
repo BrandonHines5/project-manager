@@ -26,17 +26,23 @@ const KIND_LABEL: Record<string, string> = {
   sma: "SMA",
 }
 
+// Everything held in memory at once (files + ZIP + response buffer), so
+// bound the aggregate. 256 MB of PDFs is far beyond any realistic audit
+// batch, and comfortably inside the function's memory.
+const MAX_TOTAL_BYTES = 256 * 1024 * 1024
+
 // Path components inside the ZIP: strip separators and characters Windows
-// refuses in filenames, collapse whitespace, cap the length.
+// refuses in filenames, collapse whitespace, cap the length. "." / ".."
+// are rejected outright — a company literally named ".." must not become
+// a path-traversal entry in careless extractors.
 function sanitizeZipComponent(name: string): string {
-  return (
-    name
-      .replace(/[/\\:*?"<>|\u0000-\u001F]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 120)
-      .trim() || "unnamed"
-  )
+  const cleaned = name
+    .replace(/[/\\:*?"<>|\u0000-\u001F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120)
+    .trim()
+  return !cleaned || cleaned === "." || cleaned === ".." ? "unnamed" : cleaned
 }
 
 export async function POST(req: Request) {
@@ -75,6 +81,7 @@ export async function POST(req: Request) {
   const entries: ZipEntry[] = []
   const usedNames = new Set<string>()
   const failures: string[] = []
+  let totalBytes = 0
   for (const doc of docs) {
     const { data: file, error: dlErr } = await supabase.storage
       .from(doc.storage_bucket)
@@ -84,6 +91,19 @@ export async function POST(req: Request) {
         `${doc.file_name}: ${dlErr?.message ?? "download returned nothing"}`
       )
       continue
+    }
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    // Enforce the cap against ACTUAL downloaded bytes (metadata can lie),
+    // before the next file is pulled into memory.
+    totalBytes += bytes.length
+    if (totalBytes > MAX_TOTAL_BYTES) {
+      return NextResponse.json(
+        {
+          error:
+            "Selection is too large for one export — pick fewer companies and download in batches.",
+        },
+        { status: 413 }
+      )
     }
     const company = sanitizeZipComponent(
       (doc.companies as { name: string } | null)?.name ?? "Unassigned"
@@ -101,10 +121,7 @@ export async function POST(req: Request) {
           : `${base} (${n})`
     }
     usedNames.add(name.toLowerCase())
-    entries.push({
-      name,
-      data: new Uint8Array(await file.arrayBuffer()),
-    })
+    entries.push({ name, data: bytes })
   }
 
   if (entries.length === 0) {
@@ -128,7 +145,18 @@ export async function POST(req: Request) {
 
   const zip = makeZip(entries)
   const stamp = new Date().toISOString().slice(0, 10)
-  return new NextResponse(Buffer.from(zip), {
+  // Stream the body: buffered function responses have a platform size cap
+  // that a multi-file audit ZIP could exceed; streamed responses don't.
+  const CHUNK = 256 * 1024
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (let off = 0; off < zip.length; off += CHUNK) {
+        controller.enqueue(zip.subarray(off, off + CHUNK))
+      }
+      controller.close()
+    },
+  })
+  return new NextResponse(stream, {
     headers: {
       "Content-Type": "application/zip",
       "Content-Disposition": `attachment; filename="insurance-documents-${stamp}.zip"`,

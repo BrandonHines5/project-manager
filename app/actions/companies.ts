@@ -112,7 +112,6 @@ export async function saveCompany(input: CompanyInputT) {
   // and update paths). notifications_enabled is only written when explicitly
   // provided so a partial caller can't flip it by omission.
   const extra: TablesUpdate<"companies"> = {
-    aka: emptyToNull(parsed.aka),
     contact_name: emptyToNull(parsed.contact_name),
     phone_secondary: emptyToNull(parsed.phone_secondary),
     city: emptyToNull(parsed.city),
@@ -120,9 +119,21 @@ export async function saveCompany(input: CompanyInputT) {
     postal_code: emptyToNull(parsed.postal_code),
     website: emptyToNull(parsed.website),
     status: emptyToNull(parsed.status),
-    insurance_agent_name: emptyToNull(parsed.insurance_agent_name),
-    insurance_agent_email: emptyToNull(parsed.insurance_agent_email),
-    insurance_agent_phone: emptyToNull(parsed.insurance_agent_phone),
+  }
+  // Only written when explicitly provided (the edit dialog always sends
+  // them): a partial-update caller omitting these mustn't wipe stored
+  // values. An explicit null/"" still clears the field.
+  if (parsed.aka !== undefined) {
+    extra.aka = emptyToNull(parsed.aka)
+  }
+  if (parsed.insurance_agent_name !== undefined) {
+    extra.insurance_agent_name = emptyToNull(parsed.insurance_agent_name)
+  }
+  if (parsed.insurance_agent_email !== undefined) {
+    extra.insurance_agent_email = emptyToNull(parsed.insurance_agent_email)
+  }
+  if (parsed.insurance_agent_phone !== undefined) {
+    extra.insurance_agent_phone = emptyToNull(parsed.insurance_agent_phone)
   }
   if (parsed.notifications_enabled !== undefined) {
     extra.notifications_enabled = parsed.notifications_enabled

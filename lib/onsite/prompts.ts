@@ -136,19 +136,27 @@ async function attachTextRecipients(
 ): Promise<void> {
   if (prompts.length === 0) return
   const itemIds = prompts.map((p) => p.id)
-  const { data: assignments } = await supabase
+  // Recipient resolution is a bonus on top of the quick-update cards, so a
+  // failed lookup degrades (fewer/no Text buttons, loudly logged) instead
+  // of failing the page. A role-resolution failure still keeps the
+  // direct-company recipients.
+  const { data: assignments, error: assignErr } = await supabase
     .from("schedule_assignments")
     .select("schedule_item_id, company_id, role_id")
     .in("schedule_item_id", itemIds)
+  if (assignErr) {
+    console.error("[onsite] assignment lookup failed:", assignErr.message)
+    return
+  }
   if (!assignments || assignments.length === 0) return
 
   const roleIds = Array.from(
     new Set(assignments.map((a) => a.role_id).filter((v): v is string => !!v))
   )
-  const [{ data: roles }, { data: roleMembers }] = await Promise.all([
+  const [rolesRes, roleMembersRes] = await Promise.all([
     roleIds.length
       ? supabase.from("roles").select("id, name").in("id", roleIds)
-      : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+      : Promise.resolve({ data: [] as { id: string; name: string }[], error: null }),
     roleIds.length
       ? supabase
           .from("project_role_members")
@@ -157,11 +165,21 @@ async function attachTextRecipients(
           .in("role_id", roleIds)
       : Promise.resolve({
           data: [] as { role_id: string; company_id: string | null }[],
+          error: null,
         }),
   ])
-  const roleName = new Map((roles ?? []).map((r) => [r.id, r.name]))
+  if (rolesRes.error) {
+    console.error("[onsite] role lookup failed:", rolesRes.error.message)
+  }
+  if (roleMembersRes.error) {
+    console.error(
+      "[onsite] role-member lookup failed:",
+      roleMembersRes.error.message
+    )
+  }
+  const roleName = new Map((rolesRes.data ?? []).map((r) => [r.id, r.name]))
   const roleCompany = new Map(
-    (roleMembers ?? []).map((m) => [m.role_id, m.company_id])
+    (roleMembersRes.data ?? []).map((m) => [m.role_id, m.company_id])
   )
 
   const companyIds = new Set<string>()
@@ -173,10 +191,14 @@ async function attachTextRecipients(
     }
   }
   if (companyIds.size === 0) return
-  const { data: companies } = await supabase
+  const { data: companies, error: companiesErr } = await supabase
     .from("companies")
     .select("id, name, phone, type")
     .in("id", Array.from(companyIds))
+  if (companiesErr) {
+    console.error("[onsite] company lookup failed:", companiesErr.message)
+    return
+  }
   const companyById = new Map((companies ?? []).map((c) => [c.id, c]))
 
   const byItem = new Map<string, typeof assignments>()
