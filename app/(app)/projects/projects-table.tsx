@@ -224,7 +224,7 @@ export function ProjectsTable({
           No projects match your filters.
         </div>
       ) : (
-        <div className="bg-surface border border-border rounded-lg overflow-hidden">
+        <div className="bg-surface border border-border rounded-lg overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-background/60 text-xs text-muted uppercase">
               <tr>

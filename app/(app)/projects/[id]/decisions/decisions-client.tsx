@@ -368,12 +368,16 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
           No decisions match the current filters.
         </div>
       ) : (
-        <div className="bg-surface border border-border rounded-lg overflow-hidden">
+        <div className="bg-surface border border-border rounded-lg overflow-x-auto">
+          {/* overflow-x-auto, not -hidden: on a phone the row content can
+              exceed the viewport, and clipping made the right columns
+              unreachable. The tightened sub-sm padding on cells keeps the
+              table fitting without a scrollbar on most phones. */}
           <table className="w-full text-sm">
             <thead className="bg-background/60 text-xs uppercase text-muted">
               <tr>
                 {canEdit && (
-                  <th className="px-3 py-2.5 w-8">
+                  <th className="px-2 sm:px-3 py-2.5 w-8">
                     <span className="sr-only">Select</span>
                   </th>
                 )}
@@ -443,7 +447,7 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
                   >
                     {canEdit && (
                       <td
-                        className="px-3 py-3"
+                        className="px-2 sm:px-3 py-3"
                         onClick={(e) => e.stopPropagation()}
                       >
                         <input
@@ -455,13 +459,13 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
                         />
                       </td>
                     )}
-                    <td className="px-4 py-3 font-mono text-xs text-muted tabular-nums">
+                    <td className="px-2 sm:px-4 py-3 font-mono text-xs text-muted tabular-nums">
                       #{d.number}
                     </td>
-                    <td className="px-4 py-3 hidden md:table-cell">
+                    <td className="px-2 sm:px-4 py-3 hidden md:table-cell">
                       <KindChip kind={d.kind} />
                     </td>
-                    <td className="px-4 py-3 font-medium">
+                    <td className="px-2 sm:px-4 py-3 font-medium">
                       <div>{d.title}</div>
                       {d.allowance_amount != null && (
                         <div className="text-[11px] text-muted font-normal mt-0.5">
@@ -474,10 +478,10 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
                         </div>
                       )}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-2 sm:px-4 py-3">
                       <StatusBadge status={d.status} />
                     </td>
-                    <td className="px-4 py-3 hidden md:table-cell text-xs">
+                    <td className="px-2 sm:px-4 py-3 hidden md:table-cell text-xs">
                       <DueCell
                         due={d.due_date}
                         status={d.status}
@@ -490,10 +494,10 @@ export function DecisionsClient({ data }: { data: DecisionsData }) {
                         }
                       />
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums">
+                    <td className="px-2 sm:px-4 py-3 text-right tabular-nums whitespace-nowrap">
                       <CostDelta value={d.cost_delta} />
                     </td>
-                    <td className="px-4 py-3 hidden md:table-cell text-muted">
+                    <td className="px-2 sm:px-4 py-3 hidden md:table-cell text-muted">
                       {commentCount > 0 ? commentCount : "—"}
                     </td>
                   </tr>
@@ -894,7 +898,7 @@ function SortableTh({
   return (
     <th
       className={cn(
-        "font-medium px-4 py-2.5",
+        "font-medium px-2 sm:px-4 py-2.5",
         align === "right" ? "text-right" : "text-left",
         className
       )}

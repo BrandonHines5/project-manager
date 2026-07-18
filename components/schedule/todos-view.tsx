@@ -208,7 +208,7 @@ export function TodosView({
           description="Adjust the filters above, or add a new to-do."
         />
       ) : (
-        <div className="bg-surface border border-border rounded-lg overflow-hidden">
+        <div className="bg-surface border border-border rounded-lg overflow-x-auto">
           <div className="px-4 py-2.5 bg-background/60 border-b border-border text-xs uppercase tracking-wide text-muted font-medium">
             {todos.length} to-do{todos.length === 1 ? "" : "s"}
           </div>

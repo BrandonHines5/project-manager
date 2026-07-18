@@ -241,7 +241,7 @@ export function ScheduleListView({
               </button>
             )}
           </div>
-          <div className="bg-surface border border-border rounded-lg overflow-hidden">
+          <div className="bg-surface border border-border rounded-lg overflow-x-auto">
             <div className="px-4 py-2.5 bg-background/60 border-b border-border text-xs uppercase tracking-wide text-muted font-medium flex items-center justify-between">
               <span>
                 Work items
@@ -295,7 +295,7 @@ export function ScheduleListView({
       )}
 
       {searchedUnlinkedTodos.length > 0 && (
-        <div className="bg-surface border border-border rounded-lg overflow-hidden">
+        <div className="bg-surface border border-border rounded-lg overflow-x-auto">
           <div className="px-4 py-2.5 bg-background/60 border-b border-border text-xs uppercase tracking-wide text-muted font-medium flex items-center justify-between">
             <span>
               Unlinked to-dos
