@@ -14,6 +14,7 @@ import {
   ingestInsuranceDocument,
   materializePolicies,
   fillAgentContactFromExtraction,
+  normalizeCompanyName,
   INSURANCE_BUCKET,
 } from "@/lib/insurance/ingest"
 import {
@@ -87,7 +88,9 @@ export async function assignInsuranceDocument(
 
   const { data: doc, error } = await supabase
     .from("insurance_documents")
-    .select("id, extraction, doc_kind, storage_bucket, storage_path, file_type")
+    .select(
+      "id, extraction, doc_kind, storage_bucket, storage_path, file_type, extracted_company_name"
+    )
     .eq("id", documentId)
     .single()
   if (error || !doc) throw new Error(error?.message ?? "Document not found")
@@ -161,7 +164,58 @@ export async function assignInsuranceDocument(
   if (finalKind === "coi") {
     await fillAgentContactFromExtraction(supabase, companyId, extraction)
   }
+
+  // Filing one document teaches the matcher its spelling — apply that
+  // lesson to the REST of the queue in the same action: every other
+  // needs_review document whose extracted name normalizes to the same
+  // string files to the same company (each as its own classified kind), so
+  // a sub who sent three certificates doesn't need three manual assigns.
+  // 'other' docs are excluded — their KIND still needs a human, name match
+  // or not. Best-effort per document: one bad row must not fail the assign
+  // that already succeeded.
+  let alsoFiled = 0
+  if (doc.extracted_company_name) {
+    const target = normalizeCompanyName(doc.extracted_company_name)
+    const { data: queued } = await supabase
+      .from("insurance_documents")
+      .select("id, doc_kind, extraction, extracted_company_name")
+      .eq("status", "needs_review")
+      .neq("id", documentId)
+      .not("extracted_company_name", "is", null)
+    for (const q of queued ?? []) {
+      if (q.doc_kind === "other") continue
+      if (normalizeCompanyName(q.extracted_company_name ?? "") !== target) continue
+      const qExtraction = (q.extraction ?? {
+        company_name: null,
+        policies: [],
+      }) as unknown as VendorDocExtraction
+      try {
+        if (q.doc_kind === "coi") {
+          await materializePolicies(supabase, q.id, companyId, qExtraction)
+        }
+        // Status guard keeps this idempotent against a concurrent assign of
+        // the same queued row.
+        const { error: qErr, count } = await supabase
+          .from("insurance_documents")
+          .update(
+            { status: "processed", company_id: companyId },
+            { count: "exact" }
+          )
+          .eq("id", q.id)
+          .eq("status", "needs_review")
+        if (qErr || !count) continue
+        if (q.doc_kind === "coi") {
+          await fillAgentContactFromExtraction(supabase, companyId, qExtraction)
+        }
+        alsoFiled++
+      } catch (e) {
+        console.warn("[insurance] batch assign skipped document:", q.id, e)
+      }
+    }
+  }
+
   revalidatePath(INSURANCE_PATH)
+  return { alsoFiled }
 }
 
 /**
