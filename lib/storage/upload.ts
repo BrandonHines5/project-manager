@@ -26,6 +26,32 @@ const TUS_THRESHOLD_BYTES = 6 * 1024 * 1024
 const TUS_CHUNK_BYTES = 6 * 1024 * 1024
 const RETRY_DELAYS_MS = [1_000, 3_000, 8_000]
 
+// Mirror of the Supabase project's global upload limit (Dashboard → Project
+// Settings → Storage). Known client-side so oversized files are refused
+// BEFORE any bytes go out — pushing 200+ MB over jobsite LTE just to get a
+// 413 wastes minutes and battery. If the dashboard value changes, update
+// NEXT_PUBLIC_MAX_UPLOAD_MB in Vercel (or this default). The server still
+// enforces its own limit either way; drift here only changes which error
+// message the user sees.
+const MAX_UPLOAD_MB =
+  Number(process.env.NEXT_PUBLIC_MAX_UPLOAD_MB) > 0
+    ? Number(process.env.NEXT_PUBLIC_MAX_UPLOAD_MB)
+    : 200
+const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+
+// Field-usable guidance, not "ask an admin": what the person standing on
+// site can actually do about an oversized file right now.
+function oversizeMessage(sizeBytes: number | null, contentType?: string): string {
+  const lead =
+    sizeBytes != null
+      ? `This file is ${Math.round(sizeBytes / (1024 * 1024))} MB — over the ${MAX_UPLOAD_MB} MB upload limit.`
+      : `This file is over the ${MAX_UPLOAD_MB} MB upload limit.`
+  const tip = contentType?.startsWith("video/")
+    ? " Trim it in the Photos app, split it into shorter clips, or record at 1080p instead of 4K."
+    : " Compress it or split it into smaller files."
+  return lead + tip
+}
+
 export type StorageUploadResult =
   | { ok: true }
   | { ok: false; error: string; retriable: boolean }
@@ -52,9 +78,15 @@ function statusOf(err: unknown): number | null {
   return typeof n === "number" && Number.isFinite(n) ? n : null
 }
 
-function friendlyMessage(status: number | null, fallback: string): string {
+// 413 = the server's own limit said no (e.g. the constant above is out of
+// date) — same guidance, size taken from what we tried to send.
+function friendlyMessage(
+  status: number | null,
+  fallback: string,
+  opts: StorageUploadOpts
+): string {
   if (status === 413) {
-    return "File exceeds the upload size limit — ask an admin to raise it in Supabase Storage settings"
+    return oversizeMessage(opts.body.size, opts.contentType)
   }
   return fallback
 }
@@ -63,6 +95,15 @@ export async function uploadToStorage(
   supabase: SupabaseClient<Database>,
   opts: StorageUploadOpts
 ): Promise<StorageUploadResult> {
+  // Pre-flight: refuse oversized files instantly with actionable guidance
+  // instead of uploading for minutes and failing with a server 413.
+  if (opts.body.size > MAX_UPLOAD_BYTES) {
+    return {
+      ok: false,
+      error: oversizeMessage(opts.body.size, opts.contentType),
+      retriable: false,
+    }
+  }
   if (opts.body.size > TUS_THRESHOLD_BYTES) {
     return uploadResumable(supabase, opts)
   }
@@ -89,7 +130,7 @@ export async function uploadToStorage(
       if (status != null && status >= 400 && status < 500 && status !== 408 && status !== 429) {
         return {
           ok: false,
-          error: friendlyMessage(status, error.message),
+          error: friendlyMessage(status, error.message, opts),
           retriable: false,
         }
       }
@@ -157,7 +198,7 @@ async function uploadResumable(
         // still reaches onError is a real failure. Only onSuccess reports ok.
         resolve({
           ok: false,
-          error: friendlyMessage(status, err.message),
+          error: friendlyMessage(status, err.message, opts),
           // tus already retried transient failures internally; what reaches
           // here is worth a manual retry only for network-ish causes.
           retriable:
