@@ -1025,8 +1025,16 @@ function ReviewCard({
             onClick={() =>
               startTransition(async () => {
                 try {
-                  await assignInsuranceDocument(doc.id, companyId, docKind)
-                  toast.success("Document filed")
+                  const { alsoFiled } = await assignInsuranceDocument(
+                    doc.id,
+                    companyId,
+                    docKind
+                  )
+                  toast.success(
+                    alsoFiled
+                      ? `Document filed — plus ${alsoFiled} more queued document${alsoFiled === 1 ? "" : "s"} with the same name`
+                      : "Document filed"
+                  )
                 } catch (e) {
                   toastActionError(e, "Assign failed")
                 }

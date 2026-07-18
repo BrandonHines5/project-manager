@@ -365,8 +365,12 @@ export async function materializePolicies(
  *      queue teaches the matcher that spelling permanently.
  *   3. The extracted insured name equal (exact, then suffix/punctuation-
  *      insensitive) to a company's official `name` OR its `aka`.
+ *   4. Token-subset: every word of the shorter name appearing in the longer
+ *      one ("Affordable Gutters" ⊂ "Affordable Gutters Plus Siding and
+ *      Insulation LLC"), requiring at least two words on the shorter side —
+ *      a one-word name must never auto-file.
  * Only returns a company when the match is unambiguous — anything fuzzy
- * goes to the review queue instead.
+ * (or matching more than one company) goes to the review queue instead.
  */
 async function matchCompany(
   admin: Admin,
@@ -441,14 +445,49 @@ async function matchCompany(
     )
     if (equal.length === 1) return equal[0].id
   }
+
+  // Finally token-subset: a certificate usually carries the LONGER legal
+  // name than the directory does. Match when every word of the shorter side
+  // appears in the longer side, but only if the shorter side has at least
+  // TWO words (so "ABC" can never auto-file to "ABC Plumbing") and exactly
+  // ONE company in the whole directory matches — two candidates means
+  // ambiguity, which belongs in the review queue. The directory is small,
+  // so scoring every company in JS beats trying to express word-set
+  // containment in an ilike.
+  const extractedTokens = nameTokens(name)
+  if (extractedTokens.size >= 1) {
+    const { data: all } = await admin.from("companies").select("id, name, aka")
+    const subsetMatches = (all ?? []).filter(
+      (c) =>
+        tokenSubsetMatch(extractedTokens, nameTokens(c.name)) ||
+        (c.aka && tokenSubsetMatch(extractedTokens, nameTokens(c.aka)))
+    )
+    if (subsetMatches.length === 1) return subsetMatches[0].id
+  }
   return null
+}
+
+function nameTokens(s: string): Set<string> {
+  return new Set(normalizeCompanyName(s).split(" ").filter(Boolean))
+}
+
+// True when the smaller of the two word-sets is fully contained in the
+// larger AND carries at least two words. Word-set semantics also forgive
+// word-order differences ("Gutters Affordable" still matches).
+function tokenSubsetMatch(a: Set<string>, b: Set<string>): boolean {
+  const [small, large] = a.size <= b.size ? [a, b] : [b, a]
+  if (small.size < 2) return false
+  for (const t of small) {
+    if (!large.has(t)) return false
+  }
+  return true
 }
 
 function stripCompanySuffix(s: string): string {
   return s.replace(/[,.]?\s*(llc|inc|corp|co|ltd)\.?$/i, "").trim()
 }
 
-function normalizeCompanyName(s: string): string {
+export function normalizeCompanyName(s: string): string {
   return stripCompanySuffix(s)
     .toLowerCase()
     .replace(/&/g, " and ")
