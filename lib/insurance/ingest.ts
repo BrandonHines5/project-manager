@@ -1,29 +1,34 @@
 import "server-only"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
-import { extractCoi, isExtractableType, type CoiExtraction } from "./extract"
+import {
+  extractVendorDocument,
+  isExtractableType,
+  type VendorDocExtraction,
+} from "./extract"
 import type { Database, Json } from "@/lib/db/types"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 /**
- * Shared COI ingestion pipeline. All three entry points funnel here:
+ * Shared vendor-document ingestion pipeline. All three entry points funnel
+ * here:
  *   - the Resend inbound-email webhook (source 'email')
  *   - the public tokenized sub upload page (source 'upload', company known)
- *   - staff manual upload from the Insurance page (source 'manual')
+ *   - staff manual upload from the Vendor Documents page (source 'manual')
  *
  * Runs on the ADMIN client on purpose: the webhook and the public upload
  * route have no user session, and staff callers are gated by requireStaff()
  * before they get here. Steps: store the file → record the document →
- * extract with Claude → match a company → materialize policy rows. Every
- * failure mode lands as a document status ('failed' / 'needs_review')
- * instead of a thrown error, so webhooks don't retry-loop and the staff
- * dashboard shows what needs a human.
+ * classify + extract with Claude → match a company → materialize policy rows
+ * (certificates only). Every failure mode lands as a document status
+ * ('failed' / 'needs_review') instead of a thrown error, so webhooks don't
+ * retry-loop and the staff dashboard shows what needs a human.
  */
 
 type Admin = SupabaseClient<Database>
 
 export const INSURANCE_BUCKET = "project-files"
 
-export type InsuranceDocKind = "coi" | "w9" | "sma"
+export type InsuranceDocKind = "coi" | "w9" | "sma" | "other"
 
 export type IngestInput = {
   fileName: string
@@ -38,11 +43,13 @@ export type IngestInput = {
   emailSubject?: string
   // Known company (tokenized sub upload, or staff picked one).
   companyId?: string
-  // What kind of document this is. COIs (default) run Claude extraction and
-  // materialize policy rows; W9s and Subcontractor Master Agreements are
-  // stored as-is — with a company they're 'processed' immediately, without
-  // one they land in the review queue for staff to assign.
-  docKind?: InsuranceDocKind
+  // Explicit staff-chosen document kind. When ABSENT, the Claude extraction
+  // classifies the document (COI / W9 / SMA / other) — that's the default
+  // for every ingest path now. COIs materialize policy rows; W9s and
+  // Subcontractor Master Agreements are stored and auto-matched to a company
+  // by the same signals as certificates; anything unrecognized ('other')
+  // lands in the review queue.
+  docKind?: Exclude<InsuranceDocKind, "other">
 }
 
 export type IngestResult =
@@ -92,9 +99,12 @@ export async function ingestInsuranceDocument(
     return { ok: false, error: "Provide either bytes or storagePath" }
   }
 
-  const docKind = input.docKind ?? "coi"
+  // Explicit staff choice, or null = "let the extraction classify it".
+  const explicitKind = input.docKind ?? null
 
-  // 2. Record the document (status 'pending' until extraction lands).
+  // 2. Record the document (status 'pending' until extraction lands). The
+  // kind is provisional in auto-detect mode — every terminal update below
+  // stamps the final classification alongside the status.
   const { data: doc, error: docErr } = await admin
     .from("insurance_documents")
     .insert({
@@ -105,7 +115,7 @@ export async function ingestInsuranceDocument(
       file_type: input.fileType,
       file_size: input.fileSize ?? bytes.length,
       source: input.source,
-      doc_kind: docKind,
+      doc_kind: explicitKind ?? "coi",
       email_from: input.emailFrom ?? null,
       email_subject: input.emailSubject ?? null,
     })
@@ -115,14 +125,12 @@ export async function ingestInsuranceDocument(
     return { ok: false, error: `Could not record document: ${docErr?.message}` }
   }
 
-  // W9s and SMAs are plain documents — no extraction, no policy rows. With a
-  // known company they're filed immediately; without one they queue for a
-  // staff assign (the review card's company picker completes them).
-  if (docKind !== "coi") {
-    const status = input.companyId ? "processed" : "needs_review"
+  // Explicit W9/SMA WITH a company: staff already supplied both facts the
+  // extraction would provide, so file it immediately — no model call.
+  if (explicitKind && explicitKind !== "coi" && input.companyId) {
     const { error: updErr } = await admin
       .from("insurance_documents")
-      .update({ status })
+      .update({ status: "processed" })
       .eq("id", doc.id)
     if (updErr) {
       // Roll the row back so `ok:false` always means "nothing recorded" —
@@ -131,16 +139,26 @@ export async function ingestInsuranceDocument(
       await admin.from("insurance_documents").delete().eq("id", doc.id)
       return { ok: false, error: `Could not record document: ${updErr.message}` }
     }
-    return { ok: true, documentId: doc.id, status }
+    return { ok: true, documentId: doc.id, status: "processed" }
   }
 
-  // 3. Extract with Claude. Failures are recorded on the row, not thrown —
-  // the file is safely stored, staff can see it and retry/assign manually.
-  let extraction: CoiExtraction
+  // 3. Classify + extract with Claude. Failures are recorded on the row, not
+  // thrown — the file is safely stored, staff can see it and retry/assign
+  // manually. For an explicit W9/SMA the extraction is only advisory (it
+  // feeds auto-match), so its failure degrades to the review queue instead
+  // of 'failed'.
+  let extraction: VendorDocExtraction
   try {
-    extraction = await extractCoi(bytes, input.fileType!)
+    extraction = await extractVendorDocument(bytes, input.fileType!)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
+    if (explicitKind && explicitKind !== "coi") {
+      await admin
+        .from("insurance_documents")
+        .update({ status: "needs_review", extraction_error: msg })
+        .eq("id", doc.id)
+      return { ok: true, documentId: doc.id, status: "needs_review" }
+    }
     await admin
       .from("insurance_documents")
       .update({ status: "failed", extraction_error: msg })
@@ -148,7 +166,11 @@ export async function ingestInsuranceDocument(
     return { ok: true, documentId: doc.id, status: "failed" }
   }
 
-  // 4. Resolve the company: explicit > email match > name match.
+  // The staff's explicit kind always wins over the classifier.
+  const kind: InsuranceDocKind = explicitKind ?? extraction.doc_kind
+
+  // 4. Resolve the company: explicit > email match > history/name match —
+  // the same signals for every document kind.
   let companyId = input.companyId ?? null
   if (!companyId) {
     companyId = await matchCompany(admin, {
@@ -158,16 +180,44 @@ export async function ingestInsuranceDocument(
   }
 
   // 5. Persist the outcome.
-  if (!companyId) {
+  // Unrecognized documents always need a human: even with a company known,
+  // 'other' most likely means a misclassification or junk — the review card
+  // lets staff correct the kind and assign in one step.
+  if (kind === "other" || !companyId) {
     await admin
       .from("insurance_documents")
       .update({
         status: "needs_review",
+        doc_kind: kind,
         extracted_company_name: extraction.company_name,
         extraction: extraction as unknown as Json,
       })
       .eq("id", doc.id)
     return { ok: true, documentId: doc.id, status: "needs_review" }
+  }
+
+  // W9s and SMAs: no policy rows to materialize — file to the matched
+  // company. The stored extracted_company_name teaches the history matcher
+  // just like certificates do.
+  if (kind !== "coi") {
+    const { error: updErr } = await admin
+      .from("insurance_documents")
+      .update({
+        status: "processed",
+        doc_kind: kind,
+        company_id: companyId,
+        extracted_company_name: extraction.company_name,
+        extraction: extraction as unknown as Json,
+      })
+      .eq("id", doc.id)
+    if (updErr) {
+      await admin
+        .from("insurance_documents")
+        .update({ status: "needs_review" })
+        .eq("id", doc.id)
+      return { ok: true, documentId: doc.id, status: "needs_review" }
+    }
+    return { ok: true, documentId: doc.id, status: "processed" }
   }
 
   try {
@@ -178,6 +228,7 @@ export async function ingestInsuranceDocument(
       .from("insurance_documents")
       .update({
         status: "failed",
+        doc_kind: kind,
         company_id: companyId,
         extracted_company_name: extraction.company_name,
         extraction: extraction as unknown as Json,
@@ -190,6 +241,7 @@ export async function ingestInsuranceDocument(
     .from("insurance_documents")
     .update({
       status: "processed",
+      doc_kind: kind,
       company_id: companyId,
       extracted_company_name: extraction.company_name,
       extraction: extraction as unknown as Json,
@@ -212,7 +264,7 @@ export async function ingestInsuranceDocument(
 export async function fillAgentContactFromExtraction(
   client: Admin,
   companyId: string,
-  extraction: CoiExtraction
+  extraction: VendorDocExtraction
 ): Promise<void> {
   const fields = [
     ["insurance_agent_name", extraction.producer_name?.trim()],
@@ -254,7 +306,7 @@ export async function materializePolicies(
   admin: Admin,
   documentId: string,
   companyId: string,
-  extraction: CoiExtraction
+  extraction: VendorDocExtraction
 ): Promise<number> {
   let inserted = 0
   for (const p of extraction.policies) {

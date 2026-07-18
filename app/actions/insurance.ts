@@ -16,9 +16,9 @@ import {
   fillAgentContactFromExtraction,
   INSURANCE_BUCKET,
 } from "@/lib/insurance/ingest"
-import type { CoiExtraction } from "@/lib/insurance/extract"
+import type { VendorDocExtraction } from "@/lib/insurance/extract"
 
-const INSURANCE_PATH = "/companies/insurance"
+const INSURANCE_PATH = "/companies/vendor-documents"
 const Uuid = z.string().uuid()
 
 /**
@@ -33,6 +33,7 @@ export async function processStoredInsuranceDocument(input: {
   fileType: string
   fileSize: number
   companyId?: string | null
+  // Absent = auto-detect: the extraction classifies the document.
   docKind?: "coi" | "w9" | "sma"
 }) {
   await requireStaff()
@@ -56,48 +57,62 @@ export async function processStoredInsuranceDocument(input: {
     fileSize: parsed.fileSize,
     source: "manual",
     companyId: parsed.companyId ?? undefined,
-    docKind: parsed.docKind ?? "coi",
+    docKind: parsed.docKind,
   })
   revalidatePath(INSURANCE_PATH)
   return result
 }
 
 /**
- * Resolves a needs-review document: attaches it to the chosen company and
- * materializes the policies Claude already extracted (stored on the row —
- * no second model call).
+ * Resolves a needs-review document: attaches it to the chosen company —
+ * optionally correcting the auto-classified document kind — and, for
+ * certificates, materializes the policies Claude already extracted (stored
+ * on the row — no second model call).
  */
-export async function assignInsuranceDocument(documentId: string, companyId: string) {
+export async function assignInsuranceDocument(
+  documentId: string,
+  companyId: string,
+  docKind?: "coi" | "w9" | "sma" | "other"
+) {
   await requireStaff()
   Uuid.parse(documentId)
   Uuid.parse(companyId)
+  const kindOverride = z.enum(["coi", "w9", "sma", "other"]).optional().parse(docKind)
   const supabase = await createSupabaseServerClient()
 
   const { data: doc, error } = await supabase
     .from("insurance_documents")
-    .select("id, extraction")
+    .select("id, extraction, doc_kind")
     .eq("id", documentId)
     .single()
   if (error || !doc) throw new Error(error?.message ?? "Document not found")
 
+  const finalKind = kindOverride ?? doc.doc_kind
+
   const extraction = (doc.extraction ?? {
     company_name: null,
     policies: [],
-  }) as unknown as CoiExtraction
+  }) as unknown as VendorDocExtraction
 
   // Staff client, not admin: staff RLS covers these writes, and keeping the
-  // caller's session means RLS stays the source of truth.
-  await materializePolicies(supabase, documentId, companyId, extraction)
+  // caller's session means RLS stays the source of truth. Policy rows and
+  // agent contact only apply to certificates — a W9/SMA/other extraction has
+  // no policies to book.
+  if (finalKind === "coi") {
+    await materializePolicies(supabase, documentId, companyId, extraction)
+  }
 
   const { error: updErr } = await supabase
     .from("insurance_documents")
-    .update({ status: "processed", company_id: companyId })
+    .update({ status: "processed", company_id: companyId, doc_kind: finalKind })
     .eq("id", documentId)
   if (updErr) throw new Error(updErr.message)
   // Capture the cert's Producer (agency) contact onto the company's blank
   // agent fields — the manual-assign path should teach the directory just
   // like the auto-match path does.
-  await fillAgentContactFromExtraction(supabase, companyId, extraction)
+  if (finalKind === "coi") {
+    await fillAgentContactFromExtraction(supabase, companyId, extraction)
+  }
   revalidatePath(INSURANCE_PATH)
 }
 

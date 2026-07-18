@@ -93,23 +93,27 @@ const TYPE_LABELS: Record<InsType, string> = {
 }
 const REQUIRED: InsType[] = ["general_liability", "workers_comp"]
 
-type DocKind = "coi" | "w9" | "sma"
+type DocKind = "coi" | "w9" | "sma" | "other"
+// Kinds staff can pick when uploading — "other" only ever comes from the
+// auto-classifier (or a review-queue correction), never a deliberate upload.
+type UploadDocKind = "auto" | "coi" | "w9" | "sma"
 const DOC_KIND_LABELS: Record<DocKind, string> = {
   coi: "Certificate of insurance",
   w9: "W9",
   sma: "Master agreement (SMA)",
+  other: "Other document",
 }
 const DOC_KIND_SHORT: Record<DocKind, string> = {
   coi: "COI",
   w9: "W9",
   sma: "SMA",
+  other: "Other",
 }
 
 const EXPIRING_SOON_DAYS = 30
 
-// Files the pipeline can store: PDFs and images (the same set Claude can
-// read for COI extraction — W9s/SMAs are stored without extraction but we
-// keep the same accepted types for consistency).
+// Files the pipeline can store: PDFs and images — the set Claude can read
+// for classification + extraction.
 function isAcceptedFile(file: File): boolean {
   if (file.type === "application/pdf" || file.type.startsWith("image/")) {
     return true
@@ -117,7 +121,7 @@ function isAcceptedFile(file: File): boolean {
   return /\.(pdf|jpe?g|png|gif|webp)$/i.test(file.name)
 }
 
-export function InsuranceClient({
+export function VendorDocumentsClient({
   companies,
   policies,
   documents,
@@ -176,19 +180,20 @@ export function InsuranceClient({
     return map
   }, [policies])
 
-  // W9s / SMAs filed per company, newest first (the page query orders by
-  // received_at desc). The first entry per kind is the current one.
+  // W9s / SMAs / other docs filed per company, newest first (the page query
+  // orders by received_at desc). The first entry per kind is the current one.
   const extraDocsByCompany = useMemo(() => {
-    const map = new Map<string, { w9: Doc[]; sma: Doc[] }>()
+    const map = new Map<string, { w9: Doc[]; sma: Doc[]; other: Doc[] }>()
     for (const d of documents) {
       if (!d.company_id || d.status !== "processed") continue
-      if (d.doc_kind !== "w9" && d.doc_kind !== "sma") continue
+      if (d.doc_kind !== "w9" && d.doc_kind !== "sma" && d.doc_kind !== "other")
+        continue
       let entry = map.get(d.company_id)
       if (!entry) {
-        entry = { w9: [], sma: [] }
+        entry = { w9: [], sma: [], other: [] }
         map.set(d.company_id, entry)
       }
-      entry[d.doc_kind as "w9" | "sma"].push(d)
+      entry[d.doc_kind as "w9" | "sma" | "other"].push(d)
     }
     return map
   }, [documents])
@@ -254,24 +259,32 @@ export function InsuranceClient({
     })
   }
 
+  // Which document types go into the export ZIP — staff can narrow an
+  // audit batch to just certs, just W9s, etc.
+  const [exportKinds, setExportKinds] = useState({
+    coi: true,
+    w9: true,
+    sma: true,
+  })
+
   // The audit bundle for a company: the documents behind its CURRENT
   // policies (all types, deduped — GL and WC may share one cert or come on
-  // two) plus its latest W9 and latest SMA.
+  // two) plus its latest W9 and latest SMA — filtered to the toggled types.
   const exportDocIds = useMemo(() => {
     const ids = new Set<string>()
     for (const cid of selected) {
       const byType = currentByCompany.get(cid)
-      if (byType) {
+      if (exportKinds.coi && byType) {
         for (const p of byType.values()) {
           if (p.document_id) ids.add(p.document_id)
         }
       }
       const extra = extraDocsByCompany.get(cid)
-      if (extra?.w9[0]) ids.add(extra.w9[0].id)
-      if (extra?.sma[0]) ids.add(extra.sma[0].id)
+      if (exportKinds.w9 && extra?.w9[0]) ids.add(extra.w9[0].id)
+      if (exportKinds.sma && extra?.sma[0]) ids.add(extra.sma[0].id)
     }
     return Array.from(ids)
-  }, [selected, currentByCompany, extraDocsByCompany])
+  }, [selected, exportKinds, currentByCompany, extraDocsByCompany])
 
   async function exportSelected() {
     if (exportDocIds.length === 0) {
@@ -301,7 +314,7 @@ export function InsuranceClient({
       a.download =
         res.headers
           .get("Content-Disposition")
-          ?.match(/filename="([^"]+)"/)?.[1] ?? "insurance-documents.zip"
+          ?.match(/filename="([^"]+)"/)?.[1] ?? "vendor-documents.zip"
       document.body.appendChild(a)
       a.click()
       a.remove()
@@ -395,12 +408,13 @@ export function InsuranceClient({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold text-foreground">
-            Subcontractor insurance
+            Vendor documents
           </h1>
           <p className="text-sm text-muted-foreground">
-            Certificates emailed to the insurance inbox are read and filed
-            automatically — W9s and master agreements live here too. Drag
-            files onto this page to upload several at once.{" "}
+            Insurance certificates, W9s, and master agreements are read,
+            classified, and filed to the right company automatically —
+            whether emailed in or uploaded here. Drag files onto this page
+            to upload several at once.{" "}
             <Link href="/companies" className="text-brand-600 hover:underline">
               Back to companies
             </Link>
@@ -480,6 +494,33 @@ export function InsuranceClient({
                 ? "Preparing ZIP…"
                 : `Download documents (${exportDocIds.length})`}
             </Button>
+            <span className="flex items-center gap-2 text-xs text-muted-foreground">
+              Include:
+              {(
+                [
+                  ["coi", "Certificates"],
+                  ["w9", "W9s"],
+                  ["sma", "SMAs"],
+                ] as const
+              ).map(([kind, label]) => (
+                <label
+                  key={kind}
+                  className="flex items-center gap-1 cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={exportKinds[kind]}
+                    onChange={(e) =>
+                      setExportKinds((prev) => ({
+                        ...prev,
+                        [kind]: e.target.checked,
+                      }))
+                    }
+                  />
+                  {label}
+                </label>
+              ))}
+            </span>
             <span className="text-xs text-muted-foreground">
               Current certificates + latest W9 and SMA per company, zipped for
               audits.
@@ -584,7 +625,7 @@ function CompanyRows({
   company: Company
   byType: Map<InsType, Policy> | undefined
   history: Policy[]
-  extraDocs: { w9: Doc[]; sma: Doc[] } | undefined
+  extraDocs: { w9: Doc[]; sma: Doc[]; other: Doc[] } | undefined
   today: string
   soon: string
   isOpen: boolean
@@ -743,9 +784,15 @@ function CompanyRows({
                 ))}
               </ul>
             )}
-            {(extraDocs?.w9.length || extraDocs?.sma.length) ? (
+            {(extraDocs?.w9.length ||
+              extraDocs?.sma.length ||
+              extraDocs?.other.length) ? (
               <ul className="space-y-1 border-t border-border pt-2">
-                {[...(extraDocs?.w9 ?? []), ...(extraDocs?.sma ?? [])].map(
+                {[
+                  ...(extraDocs?.w9 ?? []),
+                  ...(extraDocs?.sma ?? []),
+                  ...(extraDocs?.other ?? []),
+                ].map(
                   (d) => (
                     <li
                       key={d.id}
@@ -886,7 +933,11 @@ function ReviewCard({
   onView: () => void
   pending: boolean
 }) {
-  const [companyId, setCompanyId] = useState("")
+  // Preselect whatever the pipeline already knew (an explicitly picked
+  // company, or the kind the classifier decided) — staff just correct what's
+  // wrong and hit Assign.
+  const [companyId, setCompanyId] = useState(doc.company_id ?? "")
+  const [docKind, setDocKind] = useState<DocKind>((doc.doc_kind as DocKind) ?? "coi")
   const [busy, startTransition] = useTransition()
 
   const origin =
@@ -925,13 +976,25 @@ function ReviewCard({
         <p className="text-xs text-muted-foreground truncate">
           {origin}
           {doc.extracted_company_name && (
-            <> · cert says “{doc.extracted_company_name}”</>
+            <> · document says “{doc.extracted_company_name}”</>
           )}
           {doc.extraction_error && <> · {doc.extraction_error}</>}
         </p>
       </div>
       {doc.status === "needs_review" && (
         <div className="flex items-center gap-2">
+          <select
+            className="h-8 rounded-md border border-border-strong bg-surface px-2 text-sm"
+            title="Document type — correct it here if the auto-classifier got it wrong"
+            value={docKind}
+            onChange={(e) => setDocKind(e.target.value as DocKind)}
+          >
+            {(Object.keys(DOC_KIND_LABELS) as DocKind[]).map((k) => (
+              <option key={k} value={k}>
+                {DOC_KIND_LABELS[k]}
+              </option>
+            ))}
+          </select>
           <select
             className="h-8 rounded-md border border-border-strong bg-surface px-2 text-sm"
             value={companyId}
@@ -953,7 +1016,7 @@ function ReviewCard({
             onClick={() =>
               startTransition(async () => {
                 try {
-                  await assignInsuranceDocument(doc.id, companyId)
+                  await assignInsuranceDocument(doc.id, companyId, docKind)
                   toast.success("Document filed")
                 } catch (e) {
                   toastActionError(e, "Assign failed")
@@ -1010,7 +1073,7 @@ function UploadDialog({
   // nothing is silently dropped as a "duplicate".
   const [files, setFiles] = useState<{ id: string; file: File }[]>([])
   const [companyId, setCompanyId] = useState("")
-  const [docKind, setDocKind] = useState<DocKind>("coi")
+  const [docKind, setDocKind] = useState<UploadDocKind>("auto")
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState("")
   // Adopt files dropped on the page. Keyed on the array identity so a second
@@ -1043,12 +1106,6 @@ function UploadDialog({
 
   async function submit() {
     if (files.length === 0) return
-    if (docKind !== "coi" && !companyId) {
-      toast.error(
-        `Pick the company these ${DOC_KIND_SHORT[docKind]}s belong to — they aren't auto-matched like certificates.`
-      )
-      return
-    }
     setBusy(true)
     try {
       // Browser → Storage directly with the staff JWT (same pattern as
@@ -1096,7 +1153,7 @@ function UploadDialog({
             fileType: file.type || "application/pdf",
             fileSize: file.size,
             companyId: companyId || null,
-            docKind,
+            docKind: docKind === "auto" ? undefined : docKind,
           })
           if (!result.ok) {
             failed++
@@ -1140,7 +1197,7 @@ function UploadDialog({
       if (inputRef.current) inputRef.current.value = ""
       setFiles([])
       setCompanyId("")
-      setDocKind("coi")
+      setDocKind("auto")
       onOpenChange(false)
     } finally {
       setBusy(false)
@@ -1216,9 +1273,10 @@ function UploadDialog({
               <select
                 className="mt-1 h-9 w-full rounded-md border border-border-strong bg-surface px-2 text-sm"
                 value={docKind}
-                onChange={(e) => setDocKind(e.target.value as DocKind)}
+                onChange={(e) => setDocKind(e.target.value as UploadDocKind)}
               >
-                {(Object.keys(DOC_KIND_LABELS) as DocKind[]).map((k) => (
+                <option value="auto">Auto-detect (recommended)</option>
+                {(["coi", "w9", "sma"] as const).map((k) => (
                   <option key={k} value={k}>
                     {DOC_KIND_LABELS[k]}
                   </option>
@@ -1227,18 +1285,15 @@ function UploadDialog({
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground">
-                {docKind === "coi"
-                  ? "Company (optional — leave blank to auto-match from the certificate)"
-                  : "Company (required — W9s and SMAs aren't auto-matched)"}
+                Company (optional — leave blank to auto-match from the
+                document)
               </label>
               <select
                 className="mt-1 h-9 w-full rounded-md border border-border-strong bg-surface px-2 text-sm"
                 value={companyId}
                 onChange={(e) => setCompanyId(e.target.value)}
               >
-                <option value="">
-                  {docKind === "coi" ? "Auto-match" : "Choose a company…"}
-                </option>
+                <option value="">Auto-match</option>
                 {companies
                   .filter((c) => c.type !== "client")
                   .map((c) => (

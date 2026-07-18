@@ -47,14 +47,14 @@ const ITEMS: Item[] = [
   },
   { href: "/notifications", label: "Notifications", icon: Bell },
   { href: "/companies", label: "Companies", icon: Building2, roles: ["staff"] },
-  { href: "/clients", label: "Clients", icon: Contact, roles: ["staff"] },
-  { href: "/team", label: "Team", icon: Users, roles: ["staff"] },
   {
-    href: "/companies/insurance",
-    label: "Insurance",
+    href: "/companies/vendor-documents",
+    label: "Vendor Documents",
     icon: FileBadge,
     roles: ["staff"],
   },
+  { href: "/clients", label: "Clients", icon: Contact, roles: ["staff"] },
+  { href: "/team", label: "Team", icon: Users, roles: ["staff"] },
   {
     href: "/warranty",
     label: "Warranty / Rental",
@@ -115,7 +115,7 @@ export function SidebarNavList({
 }) {
   const path = usePathname()
   const items = navItemsFor(role)
-  // Longest-prefix match wins so nested entries (/companies/insurance)
+  // Longest-prefix match wins so nested entries (/companies/vendor-documents)
   // don't light up their parent (/companies) at the same time.
   const matches = (href: string) => path === href || path.startsWith(`${href}/`)
   const activeHref = items

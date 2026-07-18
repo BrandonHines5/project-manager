@@ -52,6 +52,7 @@ function menusFor(role: UserRole): MenuEntry[] {
         label: "People",
         items: [
           { href: "/companies", label: "Companies" },
+          { href: "/companies/vendor-documents", label: "Vendor Documents" },
           { href: "/clients", label: "Clients" },
           { href: "/team", label: "Team" },
         ],
@@ -59,7 +60,6 @@ function menusFor(role: UserRole): MenuEntry[] {
       {
         label: "Operations",
         items: [
-          { href: "/companies/insurance", label: "Insurance" },
           { href: "/warranty", label: "Warranty / Rental" },
           { href: "/utilities", label: "Initiate Utilities" },
         ],
@@ -250,7 +250,7 @@ function TopNavMenus({ role }: { role: UserRole }) {
   const menus = menusFor(role)
 
   const matches = (href: string) => path === href || path.startsWith(`${href}/`)
-  // Longest-prefix match across every destination so /companies/insurance
+  // Longest-prefix match across every destination so /companies/vendor-documents
   // lights up only via its own entry, not the /companies one too.
   const allHrefs = menus.flatMap((m) =>
     m.items ? m.items.map((i) => i.href) : [m.href]
