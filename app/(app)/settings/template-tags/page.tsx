@@ -3,7 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { parseTagGroupConfig } from "@/lib/template-tags"
 import { TemplateTagsSettingsClient } from "./template-tags-settings-client"
 
-export const metadata = { title: "Template tags — Hines Homes" }
+export const metadata = { title: "Template tags — BuildFox" }
 export const dynamic = "force-dynamic"
 
 export default async function TemplateTagsSettingsPage() {

@@ -5,7 +5,7 @@ import { getSignedUrlsForFiles } from "@/app/actions/files"
 import { FilesClient } from "./files-client"
 import type { FilesData } from "./files-client"
 
-export const metadata = { title: "Files — Hines Homes" }
+export const metadata = { title: "Files — BuildFox" }
 
 export default async function FilesPage({
   params,

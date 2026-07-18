@@ -13,7 +13,7 @@ import {
 } from "@/lib/utilities/lumber-one/config"
 import { UtilitiesClient, type UtilitiesData, type UtilityJob } from "./utilities-client"
 
-export const metadata = { title: "Initiate Utilities — Hines Homes" }
+export const metadata = { title: "Initiate Utilities — BuildFox" }
 
 // Raw shape we read from the CRM `projects` table (untyped client).
 type CrmJobRow = {

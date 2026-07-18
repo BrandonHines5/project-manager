@@ -22,12 +22,12 @@ const metadataBaseUrl =
 
 export const metadata: Metadata = {
   metadataBase: new URL(metadataBaseUrl),
-  title: "Hines Homes — Project Manager",
-  description: "Internal project management for Hines Homes",
+  title: "BuildFox — Project Manager",
+  description: "Construction project management by BuildFox",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
-    title: "PM",
+    title: "BuildFox",
     statusBarStyle: "black-translucent",
   },
 }

@@ -4,7 +4,7 @@ import { buildFeed, type FeedProfile } from "@/lib/comms/feed"
 import { buildCompanyContacts } from "@/lib/comms/contacts"
 import { GlobalCommunicationsClient } from "./communications-client"
 
-export const metadata = { title: "Communications — Hines Homes" }
+export const metadata = { title: "Communications — BuildFox" }
 
 const LIMIT = 300
 

@@ -5,7 +5,7 @@ import { parseDelayReasons, DELAY_REASONS_KEY } from "@/lib/delays"
 import { ScheduleClient } from "./schedule-client"
 import type { ScheduleData } from "./schedule-client"
 
-export const metadata = { title: "Schedule — Hines Homes" }
+export const metadata = { title: "Schedule — BuildFox" }
 
 export default async function SchedulePage({
   params,

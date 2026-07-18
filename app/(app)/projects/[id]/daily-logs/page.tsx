@@ -5,7 +5,7 @@ import { DailyLogsClient } from "./daily-logs-client"
 import { getSignedUrls } from "@/app/actions/daily-logs"
 import type { DailyLogsData } from "./daily-logs-client"
 
-export const metadata = { title: "Job Logs — Hines Homes" }
+export const metadata = { title: "Job Logs — BuildFox" }
 
 export default async function DailyLogsPage({
   params,

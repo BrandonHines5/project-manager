@@ -19,7 +19,7 @@ import { OPEN_STATUSES } from "@/lib/project-status"
 import { ProjectsTable, type ProjectRow } from "./projects-table"
 import type { Enums } from "@/lib/db/types"
 
-export const metadata = { title: "Projects — Hines Homes" }
+export const metadata = { title: "Projects — BuildFox" }
 
 export default async function ProjectsPage() {
   const profile = await requireSession()

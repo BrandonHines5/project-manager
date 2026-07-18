@@ -3,7 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { FeedbackTable } from "@/components/feedback/feedback-table"
 import type { FeedbackRow } from "@/lib/feedback"
 
-export const metadata = { title: "Feedback & Requests — Hines Homes" }
+export const metadata = { title: "Feedback & Requests — BuildFox" }
 export const dynamic = "force-dynamic"
 
 export default async function FeedbackPage() {

@@ -5,7 +5,7 @@ import { EmptyState } from "@/components/ui/empty"
 import { formatDate } from "@/lib/utils"
 import Link from "next/link"
 
-export const metadata = { title: "Notifications — Hines Homes" }
+export const metadata = { title: "Notifications — BuildFox" }
 
 export default async function NotificationsPage() {
   const profile = await requireSession()

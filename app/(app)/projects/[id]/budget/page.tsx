@@ -7,7 +7,7 @@ import type { DecisionForBudget, PoForBudget } from "@/lib/budget/rollup"
 import { canEditBudget } from "@/app/actions/budget"
 import { BudgetClient } from "./budget-client"
 
-export const metadata = { title: "Budget — Hines Homes" }
+export const metadata = { title: "Budget — BuildFox" }
 
 export default async function BudgetPage({
   params,

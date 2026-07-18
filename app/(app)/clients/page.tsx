@@ -2,7 +2,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
 import { ClientsClient, type ClientRow, type ClientJob } from "./clients-client"
 
-export const metadata = { title: "Clients — Hines Homes" }
+export const metadata = { title: "Clients — BuildFox" }
 
 /**
  * Clients directory. Aggregates the client contacts recorded on every job

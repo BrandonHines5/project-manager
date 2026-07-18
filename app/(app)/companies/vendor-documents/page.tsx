@@ -3,7 +3,7 @@ import { requireStaff } from "@/lib/auth"
 import { VendorDocumentsClient } from "./vendor-documents-client"
 import type { Tables } from "@/lib/db/types"
 
-export const metadata = { title: "Vendor Documents — Hines Homes" }
+export const metadata = { title: "Vendor Documents — BuildFox" }
 
 /**
  * Staff vendor-documents dashboard: per-sub GL/WC coverage status, W9/SMA

@@ -4,7 +4,7 @@ import { listQuoPhoneNumbers } from "@/lib/quo"
 import { TeamClient } from "./team-client"
 import type { Tables } from "@/lib/db/types"
 
-export const metadata = { title: "Team — Hines Homes" }
+export const metadata = { title: "Team — BuildFox" }
 
 export default async function TeamPage() {
   const me = await requireStaff()

@@ -2,7 +2,7 @@ import { requireStaff } from "@/lib/auth"
 import { getBudgetEditorConfig } from "@/app/actions/budget"
 import { BudgetEditorsClient } from "./budget-editors-client"
 
-export const metadata = { title: "Budget editors — Hines Homes" }
+export const metadata = { title: "Budget editors — BuildFox" }
 
 /**
  * Staff-only picker for WHO may modify project budgets (app_settings key

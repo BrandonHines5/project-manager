@@ -3,7 +3,7 @@ import { requireStaff } from "@/lib/auth"
 import { CompaniesClient } from "./companies-client"
 import type { Tables } from "@/lib/db/types"
 
-export const metadata = { title: "Companies — Hines Homes" }
+export const metadata = { title: "Companies — BuildFox" }
 
 export default async function CompaniesPage() {
   await requireStaff()

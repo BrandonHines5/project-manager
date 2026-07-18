@@ -12,7 +12,7 @@ import { UploadForm } from "./upload-form"
  * refreshes sessions), so anonymous visitors land here fine.
  */
 
-export const metadata = { title: "Upload insurance certificate — Hines Homes" }
+export const metadata = { title: "Upload insurance certificate — BuildFox" }
 
 export default async function InsuranceUploadPage({
   params,

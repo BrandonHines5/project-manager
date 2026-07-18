@@ -4,7 +4,7 @@ import { resolveAllScope, scopeLabel } from "../scope"
 import { EmptyScope } from "../empty-scope"
 import { AllScheduleTable, type ScheduleTableRow } from "./all-schedule-table"
 
-export const metadata = { title: "Schedule (all jobs) — Hines Homes" }
+export const metadata = { title: "Schedule (all jobs) — BuildFox" }
 
 export default async function AggregateSchedulePage({
   searchParams,

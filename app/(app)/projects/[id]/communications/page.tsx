@@ -17,7 +17,7 @@ import type { ComposeContact } from "@/components/comms/compose-dialog"
 import { buildCompanyContacts } from "@/lib/comms/contacts"
 import { CommunicationsClient } from "./communications-client"
 
-export const metadata = { title: "Communications — Hines Homes" }
+export const metadata = { title: "Communications — BuildFox" }
 
 // Per-source cap. The merged feed is client-paginated; if a project ever
 // outgrows this, add server pagination (?before=) rather than raising it.

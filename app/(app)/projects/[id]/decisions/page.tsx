@@ -5,7 +5,7 @@ import { getSignedUrlsForDecisions } from "@/app/actions/decisions"
 import { DecisionsClient } from "./decisions-client"
 import type { DecisionsData } from "./decisions-client"
 
-export const metadata = { title: "Decisions — Hines Homes" }
+export const metadata = { title: "Decisions — BuildFox" }
 
 export default async function DecisionsPage({
   params,

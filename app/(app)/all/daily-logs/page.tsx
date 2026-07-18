@@ -5,7 +5,7 @@ import { EmptyScope } from "../empty-scope"
 import { AllDailyLogsList, type DailyLogRow } from "./all-daily-logs-list"
 import type { Tables } from "@/lib/db/types"
 
-export const metadata = { title: "Job Logs (all jobs) — Hines Homes" }
+export const metadata = { title: "Job Logs (all jobs) — BuildFox" }
 
 export default async function AggregateDailyLogsPage({
   searchParams,

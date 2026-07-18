@@ -11,7 +11,7 @@ import type {
 } from "@/components/warranty/warranty-sheet"
 import type { Enums } from "@/lib/db/types"
 
-export const metadata = { title: "Warranty / Rental — Hines Homes" }
+export const metadata = { title: "Warranty / Rental — BuildFox" }
 
 type Status = Enums<"schedule_item_status">
 

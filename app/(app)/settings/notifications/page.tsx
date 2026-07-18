@@ -2,7 +2,7 @@ import { requireSession } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { NotificationsSettingsClient } from "./notifications-settings-client"
 
-export const metadata = { title: "Notification settings — Hines Homes" }
+export const metadata = { title: "Notification settings — BuildFox" }
 export const dynamic = "force-dynamic"
 
 export default async function NotificationSettingsPage() {

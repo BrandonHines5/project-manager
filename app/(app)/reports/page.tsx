@@ -3,7 +3,7 @@ import { AlertTriangle, GitBranch, FilePen } from "lucide-react"
 import { requireStaff } from "@/lib/auth"
 import { Card, CardBody } from "@/components/ui/card"
 
-export const metadata = { title: "Reports — Hines Homes" }
+export const metadata = { title: "Reports — BuildFox" }
 
 const REPORTS = [
   {

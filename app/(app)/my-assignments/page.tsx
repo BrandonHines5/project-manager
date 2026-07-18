@@ -14,7 +14,7 @@ import { EmptyState } from "@/components/ui/empty"
 import { formatDate, formatDateRange } from "@/lib/utils"
 import type { Enums } from "@/lib/db/types"
 
-export const metadata = { title: "My assignments — Hines Homes" }
+export const metadata = { title: "My assignments — BuildFox" }
 
 const STATUS_TONE: Record<
   Enums<"schedule_item_status">,

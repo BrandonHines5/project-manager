@@ -3,7 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
 import { RolesClient } from "./roles-client"
 
-export const metadata = { title: "Roles — Hines Homes" }
+export const metadata = { title: "Roles — BuildFox" }
 
 export default async function ProjectRolesPage({
   params,

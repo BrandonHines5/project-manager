@@ -6,7 +6,7 @@ import { Card, CardHeader, CardTitle } from "@/components/ui/card"
 import { EmptyState } from "@/components/ui/empty"
 import { formatDate, cn } from "@/lib/utils"
 
-export const metadata = { title: "Schedule Variance — Hines Homes" }
+export const metadata = { title: "Schedule Variance — BuildFox" }
 
 export default async function VarianceReportPage({
   searchParams,
