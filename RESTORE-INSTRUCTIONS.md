@@ -165,7 +165,7 @@ the operator / the new Supabase project — never fabricate.
 | `NEXT_PUBLIC_SUPABASE_URL` | New Supabase → Settings → API → Project URL |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | New Supabase → Settings → API → publishable/anon key |
 | `SUPABASE_SERVICE_ROLE_KEY` | New Supabase → Settings → API → service_role key (server-only; needed for team add/delete via auth.admin) |
-| `NEXT_PUBLIC_APP_URL` | Canonical public URL used to build links in emails and resolve metadata (`https://app.buildfox.ai` in production; previews/dev may omit it and fall back to the deployment URL). |
+| `NEXT_PUBLIC_APP_URL` | Canonical public URL used to build links in emails and resolve metadata. Required in production (`https://app.buildfox.ai`); previews fall back to `VERCEL_URL` and local dev to `http://localhost:3000` when unset. |
 
 **Optional**
 | Var | Purpose |
