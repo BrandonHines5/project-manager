@@ -431,7 +431,7 @@ function TrackerCardView({
     )
 
   return (
-    <section className="bg-surface border border-border rounded-lg overflow-hidden">
+    <section className="bg-surface border border-border rounded-lg overflow-x-auto">
       <div className="flex flex-wrap items-start justify-between gap-4 px-4 py-3 border-b border-border bg-brand-100">
         <div className="min-w-0">
           {header}

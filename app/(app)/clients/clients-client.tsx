@@ -110,7 +110,7 @@ export function ClientsClient({ clients }: { clients: ClientRow[] }) {
           }
         />
       ) : (
-        <div className="bg-surface border border-border rounded-lg overflow-hidden">
+        <div className="bg-surface border border-border rounded-lg overflow-x-auto">
           <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[640px]">
               <thead className="bg-background/60 text-xs uppercase text-muted">
