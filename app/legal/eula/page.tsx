@@ -1,9 +1,9 @@
 import Link from "next/link"
 
 export const metadata = {
-  title: "End-User License Agreement — Hines Homes",
+  title: "End-User License Agreement — BuildFox",
   description:
-    "End-user license agreement for the Hines Homes project-management application.",
+    "End-user license agreement for BuildFox, the Hines Homes project-management application.",
 }
 
 // Public page (outside the (app) auth group) — no requireSession(), so it is
@@ -21,7 +21,7 @@ export default function EulaPage() {
         <section>
           <p>
             This End-User License Agreement (&ldquo;Agreement&rdquo;) governs
-            your use of the Hines Homes project-management application (the
+            your use of BuildFox, the Hines Homes project-management application (the
             &ldquo;Application&rdquo;), operated by Hines Homes (&ldquo;we,&rdquo;
             &ldquo;us,&rdquo; or &ldquo;our&rdquo;). The Application is an
             internal business tool provided to authorized employees, contractors,

@@ -28,7 +28,7 @@ export default async function OnsitePage({
     <div className="max-w-3xl mx-auto px-4 md:px-6 py-6">
       <div className="mb-4 flex items-center gap-2">
         <MapPin className="h-5 w-5 text-brand-600" />
-        <h2 className="text-lg font-semibold">Onsite check-in</h2>
+        <h2 className="text-lg font-semibold">OnsiteIQ</h2>
       </div>
       <Walkthrough projectId={project.id} projectName={project.name} />
       <h3 className="text-sm font-semibold mb-1">Quick updates</h3>

@@ -5,7 +5,7 @@ import { brandForProjectType } from "@/lib/brand"
 import { PricingClient } from "./pricing-client"
 import type { PricingData } from "./pricing-client"
 
-export const metadata = { title: "Pricing — Hines Homes" }
+export const metadata = { title: "Pricing — BuildFox" }
 
 export default async function PricingPage({
   params,

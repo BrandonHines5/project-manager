@@ -24,7 +24,7 @@ type Section = {
 }
 
 const SECTIONS: Section[] = [
-  { label: "Onsite", slug: "onsite", hideForRoles: ["client", "trade"] },
+  { label: "OnsiteIQ", slug: "onsite", hideForRoles: ["client", "trade"] },
   {
     label: "Schedule",
     slug: "schedule",

@@ -1,9 +1,9 @@
 import Link from "next/link"
 
 export const metadata = {
-  title: "Privacy Policy — Hines Homes",
+  title: "Privacy Policy — BuildFox",
   description:
-    "Privacy policy for the Hines Homes project-management application and its QuickBooks Online integration.",
+    "Privacy policy for BuildFox, the Hines Homes project-management application, and its QuickBooks Online integration.",
 }
 
 // Public page (outside the (app) auth group) — no requireSession(), so it is
@@ -20,7 +20,7 @@ export default function PrivacyPage() {
           <p>
             This Privacy Policy explains how Hines Homes (&ldquo;we,&rdquo;
             &ldquo;us,&rdquo; or &ldquo;our&rdquo;) handles information in
-            connection with the Hines Homes project-management application (the
+            connection with BuildFox, our project-management application (the
             &ldquo;Application&rdquo;), an internal business tool used to manage
             construction projects, purchase orders, and related workflows.
           </p>

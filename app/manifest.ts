@@ -2,9 +2,9 @@ import type { MetadataRoute } from "next"
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Hines Homes — Project Manager",
-    short_name: "PM",
-    description: "Internal project management for Hines Homes",
+    name: "BuildFox — Project Manager",
+    short_name: "BuildFox",
+    description: "Construction project management by BuildFox",
     start_url: "/",
     display: "standalone",
     background_color: "#021b42",

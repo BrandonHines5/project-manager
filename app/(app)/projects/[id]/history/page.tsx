@@ -3,7 +3,7 @@ import { requireStaff } from "@/lib/auth"
 import { purgeExpiredTrash } from "@/app/actions/trash"
 import { HistoryClient } from "./history-client"
 
-export const metadata = { title: "History — Hines Homes" }
+export const metadata = { title: "History — BuildFox" }
 
 export default async function ProjectHistoryPage({
   params,

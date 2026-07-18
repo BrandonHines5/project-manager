@@ -12,7 +12,7 @@ import {
   delayReasonLabel,
 } from "@/lib/delays"
 
-export const metadata = { title: "Delay Report — Hines Homes" }
+export const metadata = { title: "Delay Report — BuildFox" }
 
 export default async function DelayReportPage({
   searchParams,

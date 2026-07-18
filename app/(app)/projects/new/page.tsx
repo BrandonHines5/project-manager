@@ -6,7 +6,7 @@ import {
 } from "@/lib/dashboard"
 import { NewProjectForm } from "./new-project-form"
 
-export const metadata = { title: "New project — Hines Homes" }
+export const metadata = { title: "New project — BuildFox" }
 
 // Always render fresh — the available list changes whenever a sales person
 // adds a project on the dashboard side, and we don't want stale options.

@@ -4,7 +4,7 @@ import { resolveAllScope, scopeLabel } from "../scope"
 import { EmptyScope } from "../empty-scope"
 import { AllDecisionsTable, type DecisionTableRow } from "./all-decisions-table"
 
-export const metadata = { title: "Decisions (all jobs) — Hines Homes" }
+export const metadata = { title: "Decisions (all jobs) — BuildFox" }
 
 export default async function AggregateDecisionsPage({
   searchParams,

@@ -10,7 +10,7 @@ import { PurchasingClient, type PurchasingTab } from "./purchasing-client"
 import type { Tables } from "@/lib/db/types"
 import type { PurchasingFileOption } from "@/components/purchasing/files-picker"
 
-export const metadata = { title: "Bids & POs — Hines Homes" }
+export const metadata = { title: "Bids & POs — BuildFox" }
 
 /**
  * Unified purchasing page: Bid requests and Purchase orders live behind one

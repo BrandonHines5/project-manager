@@ -15,7 +15,7 @@ import { BidResponseForm } from "./bid-response-form"
 export const dynamic = "force-dynamic"
 
 export const metadata: Metadata = {
-  title: "Bid request — Hines Homes",
+  title: "Bid request — BuildFox",
   robots: { index: false },
 }
 

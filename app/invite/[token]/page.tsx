@@ -11,7 +11,7 @@ import { AcceptInviteForm } from "./accept-invite-form"
 export const dynamic = "force-dynamic"
 
 export const metadata: Metadata = {
-  title: "Client portal invite — Hines Homes",
+  title: "Client portal invite — BuildFox",
   robots: { index: false },
 }
 

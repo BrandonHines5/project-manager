@@ -3,7 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireSession } from "@/lib/auth"
 import { InvoicesClient } from "./invoices-client"
 
-export const metadata = { title: "Invoices — Hines Homes" }
+export const metadata = { title: "Invoices — BuildFox" }
 
 export default async function ProjectInvoicesPage({
   params,

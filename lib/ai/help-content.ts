@@ -46,7 +46,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     body: `Hines Homes' project management system runs your construction jobs end to end — schedule, client decisions, daily logs, subcontractor bidding, purchase orders, and vendor documents (insurance, W9s, master agreements) — in one place.
 
 Main areas (top navigation):
-- Projects: every job. Open a project to reach its tabs: Overview, Schedule, Decisions, Daily Logs, Bids, Purchase Orders, Pricing, Files, Roles, History, Onsite, and Communications.
+- Projects: every job. Open a project to reach its tabs: Overview, Schedule, Decisions, Daily Logs, Bids, Purchase Orders, Pricing, Files, Roles, History, OnsiteIQ, and Communications.
 - Companies: the subcontractor/vendor directory (and the Insurance dashboard under it).
 - Communications: the org-wide log of texts and calls.
 - Team: your internal staff members (and their assigned phone numbers).
@@ -486,7 +486,7 @@ Most other configuration (a company's notification setting, a project's status, 
 
 3. Field notes & bulk updates — relay what's happening on site (typed or dictated by voice) and it drafts the actions that follow: schedule updates, new to-dos, assignments, a text to a sub, a bid reminder, a draft change order when the homeowner asks for extra or changed work ("the client wants to add a covered patio" → a draft change order to price), and a daily-log note. It can also make the same change across many jobs at once ("add this checklist item to the framing to-do in every open project").
 
-Nothing happens automatically. For any change, the assistant shows you a plan of exactly what it will do, and you review and approve it before it runs — changes that modify existing data or send a text require you to type "apply" to confirm. On a project page the dialog auto-scopes to that job (shown as a chip you can clear). On the Onsite tab, a voice-memo walkthrough feeds the same assistant and attaches your photos to the daily log automatically.
+Nothing happens automatically. For any change, the assistant shows you a plan of exactly what it will do, and you review and approve it before it runs — changes that modify existing data or send a text require you to type "apply" to confirm. On a project page the dialog auto-scopes to that job (shown as a chip you can clear). On the OnsiteIQ tab, a voice-memo walkthrough feeds the same assistant and attaches your photos to the daily log automatically.
 
 The assistant can't delete or archive anything, edit bids/POs/companies/files, or show PO dollar amounts.`,
   },

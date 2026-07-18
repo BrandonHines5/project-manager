@@ -6,7 +6,7 @@ import { getQboPushDefaults } from "@/app/actions/quickbooks"
 import { getInvoicePaymentRecipientConfig } from "@/app/actions/invoices"
 import { QuickBooksSettingsClient } from "./quickbooks-client"
 
-export const metadata = { title: "QuickBooks — Hines Homes" }
+export const metadata = { title: "QuickBooks — BuildFox" }
 export const dynamic = "force-dynamic"
 
 export default async function QuickBooksSettingsPage({

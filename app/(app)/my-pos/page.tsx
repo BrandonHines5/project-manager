@@ -10,7 +10,7 @@ import { EmptyState } from "@/components/ui/empty"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import type { Enums } from "@/lib/db/types"
 
-export const metadata = { title: "Purchase orders — Hines Homes" }
+export const metadata = { title: "Purchase orders — BuildFox" }
 
 const STATUS_TONE: Record<
   Enums<"po_status">,

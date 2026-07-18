@@ -2,7 +2,7 @@ import { requireStaff } from "@/lib/auth"
 import { getDelayReasons } from "@/app/actions/settings"
 import { DelayReasonsSettingsClient } from "./delay-reasons-settings-client"
 
-export const metadata = { title: "Delay reasons — Hines Homes" }
+export const metadata = { title: "Delay reasons — BuildFox" }
 export const dynamic = "force-dynamic"
 
 export default async function DelayReasonsSettingsPage() {
