@@ -129,6 +129,8 @@ export function DuplicateDialog({
             `${result.purchaseOrdersCopied} purchase order${result.purchaseOrdersCopied === 1 ? "" : "s"}`,
           result.bidPackagesCopied > 0 &&
             `${result.bidPackagesCopied} bid request${result.bidPackagesCopied === 1 ? "" : "s"}`,
+          result.purchasingAttachmentsFailed > 0 &&
+            `${result.purchasingAttachmentsFailed} attachment${result.purchasingAttachmentsFailed === 1 ? "" : "s"} failed to copy`,
           skipped > 0 &&
             `${skipped} skipped for this house`,
         ].filter(Boolean)
