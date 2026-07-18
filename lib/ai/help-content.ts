@@ -43,7 +43,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       "what can this do",
       "modules",
     ],
-    body: `Hines Homes' project management system runs your construction jobs end to end — schedule, client decisions, daily logs, subcontractor bidding, purchase orders, and subcontractor insurance tracking — in one place.
+    body: `Hines Homes' project management system runs your construction jobs end to end — schedule, client decisions, daily logs, subcontractor bidding, purchase orders, and vendor documents (insurance, W9s, master agreements) — in one place.
 
 Main areas (top navigation):
 - Projects: every job. Open a project to reach its tabs: Overview, Schedule, Decisions, Daily Logs, Bids, Purchase Orders, Pricing, Files, Roles, History, Onsite, and Communications.
@@ -322,11 +322,12 @@ Out of scope (v1): PO payments/bills and lien waivers live in QuickBooks/Adaptiv
   },
   {
     id: "insurance",
-    title: "Subcontractor insurance tracking",
+    title: "Vendor documents & insurance tracking",
     summary:
-      "How COIs get in, the coverage dashboard, expiration reminders, and who's required to carry it.",
+      "The Vendor Documents page: how COIs, W9s, and master agreements get in, the coverage dashboard, expiration reminders, and who's required to carry insurance.",
     keywords: [
       "insurance",
+      "vendor documents",
       "coi",
       "certificate",
       "general liability",
@@ -344,11 +345,11 @@ Out of scope (v1): PO payments/bills and lien waivers live in QuickBooks/Adaptiv
       "export",
       "agent",
     ],
-    body: `The Insurance dashboard (under Companies → Insurance) tracks each sub's certificates of insurance. It records policies by type — general liability and workers' comp are required; auto and umbrella are tracked. The "current" policy for a company + type is the one with the latest expiration; older ones become history. GL and WC can arrive on two separate certificates with different expiration dates — each coverage type tracks its own dates.
+    body: `The Vendor Documents dashboard (People → Vendor Documents) tracks each sub's insurance certificates, W9s, and Subcontractor Master Agreements (SMAs). For insurance it records policies by type — general liability and workers' comp are required; auto and umbrella are tracked. The "current" policy for a company + type is the one with the latest expiration; older ones become history. GL and WC can arrive on two separate certificates with different expiration dates — each coverage type tracks its own dates.
 
-A COI can arrive three ways, all landing in the same review queue: forwarded to a dedicated inbound email address, uploaded by the sub through their private upload link, or uploaded manually by staff. Staff can also drag and drop several files at once anywhere on the Insurance page. Incoming certificates are read by AI to pull out the policy details and auto-match to a company (by sender email, by the insured name matching a company's name or AKA, and by remembering how staff filed past certificates); anything ambiguous lands in the review queue for a staffer to assign — and assigning it once teaches the matcher that spelling for next time.
+A document can arrive three ways, all landing in the same pipeline: forwarded to a dedicated inbound email address, uploaded by the sub through their private upload link, or uploaded manually by staff. Staff can also drag and drop several files at once anywhere on the page. By default, incoming documents are read by AI, which figures out what each one is (certificate, W9, or master agreement), pulls out the policy details for certificates, and auto-matches it to a company (by sender email, by the extracted business name matching a company's name or AKA, and by remembering how staff filed past documents). Anything ambiguous — or anything the AI can't recognize — lands in the review queue, where a staffer can correct the document type and assign the company in one step; assigning it once teaches the matcher that spelling for next time. When uploading manually, staff can also pick the type explicitly instead of auto-detect — an explicit W9 or master agreement with a company picked files immediately and skips the AI read.
 
-The page also stores each sub's W9 and Subcontractor Master Agreement (SMA): pick the document type when uploading, and the Docs column shows what's on file. For audits, select multiple companies with the checkboxes and "Download documents" to get one ZIP with each company's current certificates plus latest W9 and SMA.
+The Docs column shows each company's W9 and SMA on file. For audits, select multiple companies with the checkboxes and "Download documents" to get one ZIP with each company's current certificates plus latest W9 and SMA — with checkboxes to choose which of those document types to include.
 
 Only companies marked "Approved for Use" are required to carry insurance — the dashboard focuses on them by default ("Show all statuses" reveals the rest). Expiration reminders email a company (with their upload link) when a current policy is within 7 days of expiring, and CC the sub's insurance agent when one is on file (agent contact lives on the company profile and is auto-filled from the "Producer" on uploaded certificates). Automatic reminders are gated by a global on/off switch and are off until the site goes live, but the manual "Send request" button always works.`,
   },

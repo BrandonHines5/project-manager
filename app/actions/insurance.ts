@@ -16,9 +16,14 @@ import {
   fillAgentContactFromExtraction,
   INSURANCE_BUCKET,
 } from "@/lib/insurance/ingest"
-import type { CoiExtraction } from "@/lib/insurance/extract"
+import {
+  extractVendorDocument,
+  type VendorDocExtraction,
+} from "@/lib/insurance/extract"
+import { userError } from "@/lib/user-error"
+import type { Json } from "@/lib/db/types"
 
-const INSURANCE_PATH = "/companies/insurance"
+const INSURANCE_PATH = "/companies/vendor-documents"
 const Uuid = z.string().uuid()
 
 /**
@@ -33,6 +38,7 @@ export async function processStoredInsuranceDocument(input: {
   fileType: string
   fileSize: number
   companyId?: string | null
+  // Absent = auto-detect: the extraction classifies the document.
   docKind?: "coi" | "w9" | "sma"
 }) {
   await requireStaff()
@@ -56,48 +62,105 @@ export async function processStoredInsuranceDocument(input: {
     fileSize: parsed.fileSize,
     source: "manual",
     companyId: parsed.companyId ?? undefined,
-    docKind: parsed.docKind ?? "coi",
+    docKind: parsed.docKind,
   })
   revalidatePath(INSURANCE_PATH)
   return result
 }
 
 /**
- * Resolves a needs-review document: attaches it to the chosen company and
- * materializes the policies Claude already extracted (stored on the row —
- * no second model call).
+ * Resolves a needs-review document: attaches it to the chosen company —
+ * optionally correcting the auto-classified document kind — and, for
+ * certificates, materializes the policies Claude already extracted (stored
+ * on the row — no second model call).
  */
-export async function assignInsuranceDocument(documentId: string, companyId: string) {
+export async function assignInsuranceDocument(
+  documentId: string,
+  companyId: string,
+  docKind?: "coi" | "w9" | "sma" | "other"
+) {
   await requireStaff()
   Uuid.parse(documentId)
   Uuid.parse(companyId)
+  const kindOverride = z.enum(["coi", "w9", "sma", "other"]).optional().parse(docKind)
   const supabase = await createSupabaseServerClient()
 
   const { data: doc, error } = await supabase
     .from("insurance_documents")
-    .select("id, extraction")
+    .select("id, extraction, doc_kind, storage_bucket, storage_path, file_type")
     .eq("id", documentId)
     .single()
   if (error || !doc) throw new Error(error?.message ?? "Document not found")
 
-  const extraction = (doc.extraction ?? {
+  const finalKind = kindOverride ?? doc.doc_kind
+
+  let extraction = (doc.extraction ?? {
     company_name: null,
     policies: [],
-  }) as unknown as CoiExtraction
+  }) as unknown as VendorDocExtraction
 
   // Staff client, not admin: staff RLS covers these writes, and keeping the
-  // caller's session means RLS stays the source of truth.
-  await materializePolicies(supabase, documentId, companyId, extraction)
+  // caller's session means RLS stays the source of truth. Policy rows and
+  // agent contact only apply to certificates — a W9/SMA/other extraction has
+  // no policies to book.
+  if (finalKind === "coi") {
+    // A stored extraction that classified the document as non-COI carries an
+    // intentionally EMPTY policies array — materializing from it would mark
+    // the certificate processed with no coverage on file. Staff just told us
+    // it IS a certificate, so re-read it in confirmed-COI mode. (Extractions
+    // that predate classification have no doc_kind and were all COIs — their
+    // stored policies are used as-is.)
+    const classifiedNonCoi =
+      doc.extraction == null ||
+      (extraction.doc_kind !== undefined && extraction.doc_kind !== "coi")
+    if (classifiedNonCoi) {
+      const { data: file, error: dlErr } = await supabase.storage
+        .from(doc.storage_bucket)
+        .download(doc.storage_path)
+      if (dlErr || !file) {
+        throw userError(
+          "Couldn't read the stored file to extract its policies — try again."
+        )
+      }
+      try {
+        extraction = await extractVendorDocument(
+          Buffer.from(await file.arrayBuffer()),
+          doc.file_type ?? "application/pdf",
+          { confirmedKind: "coi" }
+        )
+      } catch {
+        throw userError(
+          "Couldn't read this document as a certificate — it stays in the review queue. Try again, or delete it if it isn't actually a COI."
+        )
+      }
+      // Persist the fresh read — WITH the corrected kind, so if policy
+      // materialization fails below, a retry (whose kind select re-derives
+      // from the row) still sees a COI with COI-shaped extraction instead of
+      // resolving the stale kind and filing the cert with no coverage rows.
+      const { error: exErr } = await supabase
+        .from("insurance_documents")
+        .update({
+          extraction: extraction as unknown as Json,
+          extracted_company_name: extraction.company_name,
+          doc_kind: "coi",
+        })
+        .eq("id", documentId)
+      if (exErr) throw new Error(exErr.message)
+    }
+    await materializePolicies(supabase, documentId, companyId, extraction)
+  }
 
   const { error: updErr } = await supabase
     .from("insurance_documents")
-    .update({ status: "processed", company_id: companyId })
+    .update({ status: "processed", company_id: companyId, doc_kind: finalKind })
     .eq("id", documentId)
   if (updErr) throw new Error(updErr.message)
   // Capture the cert's Producer (agency) contact onto the company's blank
   // agent fields — the manual-assign path should teach the directory just
   // like the auto-match path does.
-  await fillAgentContactFromExtraction(supabase, companyId, extraction)
+  if (finalKind === "coi") {
+    await fillAgentContactFromExtraction(supabase, companyId, extraction)
+  }
   revalidatePath(INSURANCE_PATH)
 }
 

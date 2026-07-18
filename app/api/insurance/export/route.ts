@@ -159,7 +159,7 @@ export async function POST(req: Request) {
   return new NextResponse(stream, {
     headers: {
       "Content-Type": "application/zip",
-      "Content-Disposition": `attachment; filename="insurance-documents-${stamp}.zip"`,
+      "Content-Disposition": `attachment; filename="vendor-documents-${stamp}.zip"`,
       "Cache-Control": "no-store",
     },
   })

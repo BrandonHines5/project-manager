@@ -11,8 +11,10 @@ import { isExtractableType } from "@/lib/insurance/extract"
  * `email.received`) at this route and give the receiving address (e.g.
  * insurance@updates.hineshomes.com) to subs — or set an Outlook rule that
  * auto-forwards insurance emails to it. Each PDF/image attachment is pulled
- * down via Resend's attachment API and run through the COI ingest pipeline
- * (store → Claude extraction → policy rows).
+ * down via Resend's attachment API and run through the vendor-document
+ * ingest pipeline (store → Claude classification + extraction → company
+ * match → policy rows for certificates; W9s and master agreements file to
+ * their company the same way).
  *
  * Auth: Resend signs webhooks with Svix headers; `resend.webhooks.verify`
  * checks the signature against RESEND_WEBHOOK_SECRET (the `whsec_…` signing

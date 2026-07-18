@@ -10,6 +10,7 @@ import { generateAccessToken } from "@/lib/tokens"
 import { formatDate } from "@/lib/utils"
 import { notifyCommentPosted } from "@/lib/comms/notify"
 import { canonicalizeLinkedAttachments } from "@/lib/purchasing/linked-files"
+import { userError } from "@/lib/user-error"
 
 const optStr = z.string().nullish()
 
@@ -63,7 +64,7 @@ function parseOrThrow<T>(schema: z.ZodType<T>, input: unknown): T {
   const result = schema.safeParse(input)
   if (!result.success) {
     const first = result.error.issues[0]
-    throw new Error(
+    throw userError(
       `Invalid form data at ${first.path.join(".") || "(root)"}: ${first.message}`
     )
   }
@@ -211,7 +212,7 @@ export async function saveBidPackage(input: BidPackageInputT) {
       .eq("id", id)
       .maybeSingle()
     if (curErr) throw new Error(curErr.message)
-    if (!cur) throw new Error("Bid package not found")
+    if (!cur) throw userError("Bid package not found")
     const { error } = await supabase
       .from("bid_packages")
       .update({
@@ -264,7 +265,7 @@ export async function saveBidPackage(input: BidPackageInputT) {
       await new Promise((r) => setTimeout(r, 25 + Math.random() * 50))
     }
     if (!inserted) {
-      throw new Error("Could not allocate a bid number after 5 attempts.")
+      throw userError("Could not allocate a bid number after 5 attempts.")
     }
     id = inserted.id
     await reconcileLineItems(supabase, id, parsed.flat_fee ? [] : parsed.line_items)
@@ -302,7 +303,7 @@ export async function copyBidPackage(input: z.infer<typeof CopyBidPackageInput>)
     .eq("id", id)
     .maybeSingle()
   if (srcErr) throw new Error(srcErr.message)
-  if (!src) throw new Error("Bid package not found")
+  if (!src) throw userError("Bid package not found")
 
   const { data: targetProject, error: tgtErr } = await supabase
     .from("projects")
@@ -310,7 +311,7 @@ export async function copyBidPackage(input: z.infer<typeof CopyBidPackageInput>)
     .eq("id", target_project_id)
     .maybeSingle()
   if (tgtErr) throw new Error(tgtErr.message)
-  if (!targetProject) throw new Error("Target project not found.")
+  if (!targetProject) throw userError("Target project not found.")
 
   const sameProject = src.project_id === target_project_id
 
@@ -345,7 +346,7 @@ export async function copyBidPackage(input: z.infer<typeof CopyBidPackageInput>)
     await new Promise((r) => setTimeout(r, 25 + Math.random() * 50))
   }
   if (!newId) {
-    throw new Error("Could not allocate a bid number after 5 attempts.")
+    throw userError("Could not allocate a bid number after 5 attempts.")
   }
 
   // Line items — plain insert (no sub quotes to preserve on a fresh copy).
@@ -445,27 +446,35 @@ export async function copyBidPackage(input: z.infer<typeof CopyBidPackageInput>)
  * an email (+ SMS when a phone is on file) with their public bid link.
  * Send failures are logged, never fatal — the token link can be re-sent.
  */
-export async function sendBidPackage({
-  id,
-  project_id,
-  company_ids,
-}: {
+const SendBidPackageInput = z.object({
+  id: z.string().uuid(),
+  project_id: z.string().uuid(),
+  company_ids: z.array(z.string().uuid()).min(1, "Pick at least one sub/vendor."),
+})
+
+export async function sendBidPackage(input: {
   id: string
   project_id: string
   company_ids: string[]
 }) {
   const profile = await requireStaff()
-  if (!company_ids.length) throw new Error("Pick at least one sub/vendor.")
+  // Caller-supplied project_id is accepted for shape only — the package's
+  // STORED project drives comms logging and revalidation below (same rule
+  // as reopenBidPackage), so a mismatched id can't misfile audit rows.
+  const { id, company_ids } = parseOrThrow(SendBidPackageInput, input)
   const supabase = await createSupabaseServerClient()
 
   const { data: pkg, error: pkgErr } = await supabase
     .from("bid_packages")
-    .select("id, title, number, scope, due_date, status, projects:project_id(name)")
+    .select(
+      "id, project_id, title, number, scope, due_date, status, projects:project_id(name)"
+    )
     .eq("id", id)
     .maybeSingle()
   if (pkgErr) throw new Error(pkgErr.message)
-  if (!pkg) throw new Error("Bid package not found")
-  if (pkg.status === "closed") throw new Error("This bid package is closed.")
+  if (!pkg) throw userError("Bid package not found")
+  if (pkg.status === "closed") throw userError("This bid package is closed.")
+  const project_id = pkg.project_id
 
   const { data: companies, error: coErr } = await supabase
     .from("companies")
@@ -481,12 +490,23 @@ export async function sendBidPackage({
 
   const now = new Date().toISOString()
   const sends: { company: NonNullable<typeof companies>[number]; token: string }[] = []
+  // Recipients who already responded (or whose link was revoked) — a re-send
+  // to them is meaningless, so they're skipped rather than re-notified.
+  // Selected ids that resolve to no visible company (deleted, or hidden by
+  // RLS) count as skipped too, so the result accounts for the whole
+  // selection.
+  const foundCompanyIds = new Set((companies ?? []).map((c) => c.id))
+  let skipped = new Set(company_ids.filter((cid) => !foundCompanyIds.has(cid)))
+    .size
 
   for (const company of companies ?? []) {
     const existing = byCompany.get(company.id)
     if (existing) {
       // Re-send: only meaningful while they haven't responded.
-      if (existing.status !== "invited" || !existing.token) continue
+      if (existing.status !== "invited" || !existing.token) {
+        skipped++
+        continue
+      }
       const { error } = await supabase
         .from("bid_recipients")
         .update({
@@ -513,10 +533,16 @@ export async function sendBidPackage({
   }
 
   // Nothing created or re-sent (stale/invalid company ids, or everyone
-  // already responded) — don't flip a draft to sent with no reachable
-  // recipients.
+  // already responded). On a DRAFT that's a real error — flipping it to sent
+  // with no reachable recipients would strand the package. On an already-sent
+  // package it's a harmless no-op resend (the drawer pre-checks existing
+  // recipients, so "everyone I ticked already responded" is a normal click):
+  // report it, don't throw.
   if (!sends.length) {
-    throw new Error(
+    if (pkg.status !== "draft") {
+      return { sent: 0, skipped }
+    }
+    throw userError(
       "No invites were sent — the selected companies may already have responded or no longer exist."
     )
   }
@@ -570,7 +596,7 @@ export async function sendBidPackage({
   await Promise.all(sendJobs)
 
   revalidateBidPaths(project_id)
-  return { sent: sends.length }
+  return { sent: sends.length, skipped }
 }
 
 /**
@@ -584,7 +610,7 @@ export async function reviseBidPackage(input: BidPackageInputT) {
   const profile = await requireStaff()
   const parsed = parseOrThrow(BidPackageInput, input)
   const id = nz(parsed.id)
-  if (!id) throw new Error("Cannot revise an unsaved bid package.")
+  if (!id) throw userError("Cannot revise an unsaved bid package.")
   const supabase = await createSupabaseServerClient()
 
   const { data: pkg, error: pkgErr } = await supabase
@@ -593,9 +619,9 @@ export async function reviseBidPackage(input: BidPackageInputT) {
     .eq("id", id)
     .maybeSingle()
   if (pkgErr) throw new Error(pkgErr.message)
-  if (!pkg) throw new Error("Bid package not found")
+  if (!pkg) throw userError("Bid package not found")
   if (pkg.status !== "sent") {
-    throw new Error("Only a released (not yet awarded) bid package can be revised.")
+    throw userError("Only a released (not yet awarded) bid package can be revised.")
   }
 
   const { error: upErr } = await supabase
@@ -809,7 +835,7 @@ export async function closeBidPackage({
   if (error) throw new Error(error.message)
   // Only revoke tokens after a confirmed sent → closed transition — a
   // no-op close (already awarded/closed) must not kill live links.
-  if (!count) throw new Error("Only an open (sent) bid package can be closed.")
+  if (!count) throw userError("Only an open (sent) bid package can be closed.")
   const { error: tokErr } = await supabase
     .from("bid_recipients")
     .update({ token: null })
@@ -846,7 +872,7 @@ export async function reopenBidPackage(input: {
     .eq("id", id)
     .maybeSingle()
   if (pkgErr) throw new Error(pkgErr.message)
-  if (!pkg) throw new Error("Bid package not found")
+  if (!pkg) throw userError("Bid package not found")
   const project_id = pkg.project_id
 
   // CAS closed → sent with a count guard (mirror of closeBidPackage) so a
@@ -857,7 +883,7 @@ export async function reopenBidPackage(input: {
     .eq("id", id)
     .eq("status", "closed")
   if (error) throw new Error(error.message)
-  if (!count) throw new Error("Only a closed bid package can be reopened.")
+  if (!count) throw userError("Only a closed bid package can be reopened.")
 
   const { data: recipients, error: rErr } = await supabase
     .from("bid_recipients")
