@@ -816,6 +816,13 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     { data: srcAttachments, error: attachmentsErr },
     { data: srcRoleAssignments, error: roleAssignmentsErr },
     { data: srcRoleMembers, error: roleMembersErr },
+    { data: srcPos, error: posErr },
+    { data: srcPoLines, error: poLinesErr },
+    { data: srcPoAttachments, error: poAttachmentsErr },
+    { data: srcBidPackages, error: bidPackagesErr },
+    { data: srcBidLines, error: bidLinesErr },
+    { data: srcBidRecipients, error: bidRecipientsErr },
+    { data: srcBidAttachments, error: bidAttachmentsErr },
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -896,6 +903,45 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
       .from("project_role_members")
       .select("role_id, profile_id, company_id")
       .eq("project_id", parsed.source_project_id),
+    // Purchase orders + bid packages: the template ships its standard POs
+    // and bid requests, so a job built from it starts with the same
+    // purchasing paperwork as fresh drafts. Child rows join through their
+    // parent so we only get the source project's rows.
+    supabase
+      .from("purchase_orders")
+      .select("*")
+      .eq("project_id", parsed.source_project_id)
+      .order("number", { ascending: true }),
+    supabase
+      .from("po_line_items")
+      .select("*, purchase_orders!inner(project_id)")
+      .eq("purchase_orders.project_id", parsed.source_project_id)
+      .order("position", { ascending: true }),
+    supabase
+      .from("po_attachments")
+      .select("*, purchase_orders!inner(project_id)")
+      .eq("purchase_orders.project_id", parsed.source_project_id)
+      .order("position", { ascending: true }),
+    supabase
+      .from("bid_packages")
+      .select("*")
+      .eq("project_id", parsed.source_project_id)
+      .order("number", { ascending: true }),
+    supabase
+      .from("bid_package_line_items")
+      .select("*, bid_packages!inner(project_id)")
+      .eq("bid_packages.project_id", parsed.source_project_id)
+      .order("position", { ascending: true }),
+    supabase
+      .from("bid_recipients")
+      .select("*, bid_packages!inner(project_id)")
+      .eq("bid_packages.project_id", parsed.source_project_id)
+      .order("created_at", { ascending: true }),
+    supabase
+      .from("bid_package_attachments")
+      .select("*, bid_packages!inner(project_id)")
+      .eq("bid_packages.project_id", parsed.source_project_id)
+      .order("position", { ascending: true }),
   ])
   const readErr =
     sourceErr ??
@@ -908,7 +954,14 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     followupsErr ??
     attachmentsErr ??
     roleAssignmentsErr ??
-    roleMembersErr
+    roleMembersErr ??
+    posErr ??
+    poLinesErr ??
+    poAttachmentsErr ??
+    bidPackagesErr ??
+    bidLinesErr ??
+    bidRecipientsErr ??
+    bidAttachmentsErr
   if (readErr) throw new Error(`Source read failed: ${readErr.message}`)
   if (!source) throw new Error("Source project not found")
 
@@ -1515,6 +1568,220 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     )
   }
 
+  // 5c. Copy purchase orders as fresh drafts. Every workflow field resets:
+  //     status → draft, token/release/approval/decline/void state cleared,
+  //     work_complete off, numbers re-allocated 1..N in source-number order
+  //     (safe on a brand-new project, same as decisions). Void POs are dead
+  //     records and don't copy. Provenance: source_decision_id remaps through
+  //     the decisions cloned above; source_bid_recipient_id is dropped — the
+  //     copied bid package is a fresh draft, so an award link would claim a
+  //     bid round that never happened on this job.
+  type PoRow = Tables<"purchase_orders">
+  type PoLineRow = Tables<"po_line_items"> & { purchase_orders?: unknown }
+  type PoAttachmentRow = Tables<"po_attachments"> & { purchase_orders?: unknown }
+  const poRows = ((srcPos ?? []) as PoRow[]).filter((p) => p.status !== "void")
+  const poIdMap = new Map<string, string>()
+  let purchasingAttachmentsCopied = 0
+  if (poRows.length > 0) {
+    const newPos = poRows.map((p, i) => {
+      const newId = crypto.randomUUID()
+      poIdMap.set(p.id, newId)
+      return {
+        id: newId,
+        project_id: newProject.id,
+        number: i + 1,
+        custom_number: p.custom_number,
+        title: p.title,
+        scope: p.scope,
+        company_id: p.company_id,
+        status: "draft" as const,
+        approval_deadline: shift(p.approval_deadline),
+        flat_fee: p.flat_fee,
+        flat_total: p.flat_total,
+        source_decision_id: p.source_decision_id
+          ? decisionIdMap.get(p.source_decision_id) ?? null
+          : null,
+        created_by: profile.id,
+      }
+    })
+    const { error: poErr } = await supabase.from("purchase_orders").insert(newPos)
+    if (poErr) throw new Error(poErr.message)
+
+    const poLineRows = (srcPoLines ?? []) as PoLineRow[]
+    const newPoLines = poLineRows
+      .map((li) => {
+        const newPoId = poIdMap.get(li.purchase_order_id)
+        if (!newPoId) return null
+        return {
+          purchase_order_id: newPoId,
+          cost_code_id: li.cost_code_id,
+          description: li.description,
+          quantity: li.quantity,
+          unit: li.unit,
+          unit_cost: li.unit_cost,
+          position: li.position,
+        }
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+    if (newPoLines.length > 0) {
+      const { error: pliErr } = await supabase
+        .from("po_line_items")
+        .insert(newPoLines)
+      if (pliErr) throw new Error(pliErr.message)
+    }
+  }
+
+  // 5d. Copy bid packages (bid requests) as fresh drafts. Statuses, send
+  //     timestamps, and awards reset; numbers re-allocate 1..N. The invite
+  //     list (recipients) carries over as 'invited' with NO token — tokens
+  //     are minted when staff actually send the package, so nothing leaks a
+  //     live link. Quotes deliberately don't copy: prices belong to the old
+  //     job's bid round.
+  type BidPackageRow = Tables<"bid_packages">
+  type BidLineRow = Tables<"bid_package_line_items"> & { bid_packages?: unknown }
+  type BidRecipientRow = Tables<"bid_recipients"> & { bid_packages?: unknown }
+  type BidAttachmentRow = Tables<"bid_package_attachments"> & {
+    bid_packages?: unknown
+  }
+  const bidPackageRows = (srcBidPackages ?? []) as BidPackageRow[]
+  const bidIdMap = new Map<string, string>()
+  let bidRecipientsCopied = 0
+  if (bidPackageRows.length > 0) {
+    const newPackages = bidPackageRows.map((b, i) => {
+      const newId = crypto.randomUUID()
+      bidIdMap.set(b.id, newId)
+      return {
+        id: newId,
+        project_id: newProject.id,
+        number: i + 1,
+        title: b.title,
+        scope: b.scope,
+        due_date: shift(b.due_date),
+        flat_fee: b.flat_fee,
+        allow_multiple_awards: b.allow_multiple_awards,
+        status: "draft" as const,
+        created_by: profile.id,
+      }
+    })
+    const { error: bpErr } = await supabase
+      .from("bid_packages")
+      .insert(newPackages)
+    if (bpErr) throw new Error(bpErr.message)
+
+    const bidLineRows = (srcBidLines ?? []) as BidLineRow[]
+    const newBidLines = bidLineRows
+      .map((li) => {
+        const newBidId = bidIdMap.get(li.bid_package_id)
+        if (!newBidId) return null
+        return {
+          bid_package_id: newBidId,
+          cost_code_id: li.cost_code_id,
+          description: li.description,
+          quantity: li.quantity,
+          unit: li.unit,
+          position: li.position,
+        }
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+    if (newBidLines.length > 0) {
+      const { error: bliErr } = await supabase
+        .from("bid_package_line_items")
+        .insert(newBidLines)
+      if (bliErr) throw new Error(bliErr.message)
+    }
+
+    const bidRecipientRows = (srcBidRecipients ?? []) as BidRecipientRow[]
+    const newRecipients = bidRecipientRows
+      .map((r) => {
+        const newBidId = bidIdMap.get(r.bid_package_id)
+        if (!newBidId) return null
+        return {
+          bid_package_id: newBidId,
+          company_id: r.company_id,
+          status: "invited" as const,
+          notes: r.notes,
+        }
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+    if (newRecipients.length > 0) {
+      const { error: brErr } = await supabase
+        .from("bid_recipients")
+        .insert(newRecipients)
+      if (brErr) throw new Error(brErr.message)
+      bidRecipientsCopied = newRecipients.length
+    }
+  }
+
+  // 5e. Purchasing attachments (both modules) — blob-copy to a fresh path
+  //     under the new project, same as decision attachments: reusing the
+  //     source path would let one side's delete strand the other. Files-tab
+  //     links (project_file_id, 0095) drop on copy — project_files aren't
+  //     cloned here, and the documented cross-project rule is blob-copy +
+  //     drop-link. Storage failures warn and skip, never abort the clone.
+  const copyPurchasingAttachment = async (
+    a: PoAttachmentRow | BidAttachmentRow,
+    target:
+      | { table: "po_attachments"; purchase_order_id: string }
+      | { table: "bid_package_attachments"; bid_package_id: string },
+    pathSegment: "purchase-orders" | "bids"
+  ) => {
+    const ext = a.storage_path.split(".").pop() ?? "bin"
+    const newPath = `projects/${newProject.id}/${pathSegment}/${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}.${ext}`
+    const { error: copyErr } = await supabase.storage
+      .from(a.storage_bucket)
+      .copy(a.storage_path, newPath)
+    if (copyErr) {
+      console.warn(
+        `[duplicateProject] storage copy failed for ${a.storage_path}: ${copyErr.message} (skipping)`
+      )
+      return
+    }
+    const base = {
+      storage_bucket: a.storage_bucket,
+      storage_path: newPath,
+      file_name: a.file_name,
+      file_type: a.file_type,
+      file_size: a.file_size,
+      caption: a.caption,
+      position: a.position,
+    }
+    const { error: insErr } =
+      target.table === "po_attachments"
+        ? await supabase
+            .from("po_attachments")
+            .insert({ ...base, purchase_order_id: target.purchase_order_id })
+        : await supabase
+            .from("bid_package_attachments")
+            .insert({ ...base, bid_package_id: target.bid_package_id })
+    if (insErr) {
+      console.warn(
+        `[duplicateProject] ${target.table} row insert failed: ${insErr.message} (orphaned ${newPath})`
+      )
+      return
+    }
+    purchasingAttachmentsCopied++
+  }
+  for (const a of (srcPoAttachments ?? []) as PoAttachmentRow[]) {
+    const newPoId = poIdMap.get(a.purchase_order_id)
+    if (!newPoId) continue
+    await copyPurchasingAttachment(
+      a,
+      { table: "po_attachments", purchase_order_id: newPoId },
+      "purchase-orders"
+    )
+  }
+  for (const a of (srcBidAttachments ?? []) as BidAttachmentRow[]) {
+    const newBidId = bidIdMap.get(a.bid_package_id)
+    if (!newBidId) continue
+    await copyPurchasingAttachment(
+      a,
+      { table: "bid_package_attachments", bid_package_id: newBidId },
+      "bids"
+    )
+  }
+
   // 6. Fire the dashboard webhook for the new project (mirrors createProject).
   await sendDashboardWebhook("project.created", newProject)
 
@@ -1531,6 +1798,10 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
     costItemsCopied,
     followupsCopied,
     attachmentsCopied,
+    purchaseOrdersCopied: poIdMap.size,
+    bidPackagesCopied: bidIdMap.size,
+    bidRecipientsCopied,
+    purchasingAttachmentsCopied,
   }
 }
 

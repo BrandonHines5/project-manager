@@ -125,6 +125,10 @@ export function DuplicateDialog({
             `${result.predecessorsCopied} predecessor link${result.predecessorsCopied === 1 ? "" : "s"}`,
           result.decisionsCopied > 0 &&
             `${result.decisionsCopied} decision${result.decisionsCopied === 1 ? "" : "s"}`,
+          result.purchaseOrdersCopied > 0 &&
+            `${result.purchaseOrdersCopied} purchase order${result.purchaseOrdersCopied === 1 ? "" : "s"}`,
+          result.bidPackagesCopied > 0 &&
+            `${result.bidPackagesCopied} bid request${result.bidPackagesCopied === 1 ? "" : "s"}`,
           skipped > 0 &&
             `${skipped} skipped for this house`,
         ].filter(Boolean)
