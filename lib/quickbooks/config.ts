@@ -11,7 +11,7 @@ import "server-only"
  *   QBO_CLIENT_ID       — Intuit app Production Client ID
  *   QBO_CLIENT_SECRET   — Intuit app Production Client Secret
  *   QBO_REDIRECT_URI    — OAuth redirect, must EXACTLY match the URI registered
- *                         in the Intuit app (e.g. https://hh-pm.vercel.app/api/qbo/callback)
+ *                         in the Intuit app (e.g. https://app.buildfox.ai/api/qbo/callback)
  *   QBO_ENVIRONMENT     — 'production' (default) | 'sandbox'
  */
 

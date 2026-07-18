@@ -13,7 +13,15 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 })
 
+// Same resolution chain as lib/email.ts:appUrl — inlined so the root layout
+// doesn't pull the email module (Resend SDK, admin client) into its graph.
+const metadataBaseUrl =
+  process.env.NEXT_PUBLIC_APP_URL ||
+  (process.env.VERCEL_URL && `https://${process.env.VERCEL_URL}`) ||
+  "http://localhost:3000"
+
 export const metadata: Metadata = {
+  metadataBase: new URL(metadataBaseUrl),
   title: "Hines Homes — Project Manager",
   description: "Internal project management for Hines Homes",
   manifest: "/manifest.webmanifest",

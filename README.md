@@ -19,7 +19,11 @@ Find both values in your Supabase project → Settings → API.
 
 After the first deploy: in Supabase Dashboard → Authentication → URL Configuration, add the Vercel URL to **Site URL** + **Redirect URLs** so signup confirmation links work.
 
-Optional later: `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `NEXT_PUBLIC_APP_URL`.
+Optional later: `RESEND_API_KEY`, `RESEND_FROM_EMAIL`.
+
+For the production environment, also set `NEXT_PUBLIC_APP_URL` to the canonical
+public URL (`https://app.buildfox.ai`) so email links and metadata point at the
+real domain — previews fall back to their own deployment URL.
 
 
 **Modules:**
