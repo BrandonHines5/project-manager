@@ -133,12 +133,16 @@ export async function assignInsuranceDocument(
           "Couldn't read this document as a certificate — it stays in the review queue. Try again, or delete it if it isn't actually a COI."
         )
       }
-      // Persist the fresh read so a retry doesn't re-run the model.
+      // Persist the fresh read — WITH the corrected kind, so if policy
+      // materialization fails below, a retry (whose kind select re-derives
+      // from the row) still sees a COI with COI-shaped extraction instead of
+      // resolving the stale kind and filing the cert with no coverage rows.
       const { error: exErr } = await supabase
         .from("insurance_documents")
         .update({
           extraction: extraction as unknown as Json,
           extracted_company_name: extraction.company_name,
+          doc_kind: "coi",
         })
         .eq("id", documentId)
       if (exErr) throw new Error(exErr.message)

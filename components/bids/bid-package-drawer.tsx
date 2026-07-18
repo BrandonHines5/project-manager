@@ -409,14 +409,16 @@ export function BidPackageDrawer({
           company_ids: companyIds,
         })
         if (sent === 0) {
+          // `skipped` also covers companies that couldn't be reached at all
+          // (deleted, or a revoked link) — keep the wording neutral.
           toast.info(
-            "Nothing to send — the selected companies have already responded."
+            "Nothing to send — the selected companies have already responded or couldn't be reached."
           )
         } else {
           toast.success(
             `Sent to ${sent} compan${sent === 1 ? "y" : "ies"}` +
               (skipped
-                ? ` — ${skipped} already responded and ${skipped === 1 ? "wasn't" : "weren't"} re-sent`
+                ? ` — ${skipped} not re-sent (already responded or unavailable)`
                 : "")
           )
         }

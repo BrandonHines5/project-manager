@@ -9,14 +9,12 @@
 alter table public.insurance_documents
   drop constraint if exists insurance_documents_doc_kind_check;
 
--- NOT VALID + VALIDATE keeps the table scan outside the write-blocking
--- lock (the table is tiny today, but the pattern costs nothing).
+-- NOT VALID keeps the table scan out of this migration's write-blocking
+-- lock; 0098 validates the constraint in its own transaction (the table is
+-- tiny today, but the pattern costs nothing).
 alter table public.insurance_documents
   add constraint insurance_documents_doc_kind_check
   check (doc_kind in ('coi', 'w9', 'sma', 'other')) not valid;
-
-alter table public.insurance_documents
-  validate constraint insurance_documents_doc_kind_check;
 
 comment on column public.insurance_documents.doc_kind is
   'coi = certificate of insurance (extraction + policy rows), w9 = IRS Form W-9, sma = Subcontractor Master Agreement, other = auto-classifier could not recognize the document.';

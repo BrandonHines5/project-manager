@@ -458,17 +458,23 @@ export async function sendBidPackage(input: {
   company_ids: string[]
 }) {
   const profile = await requireStaff()
-  const { id, project_id, company_ids } = parseOrThrow(SendBidPackageInput, input)
+  // Caller-supplied project_id is accepted for shape only — the package's
+  // STORED project drives comms logging and revalidation below (same rule
+  // as reopenBidPackage), so a mismatched id can't misfile audit rows.
+  const { id, company_ids } = parseOrThrow(SendBidPackageInput, input)
   const supabase = await createSupabaseServerClient()
 
   const { data: pkg, error: pkgErr } = await supabase
     .from("bid_packages")
-    .select("id, title, number, scope, due_date, status, projects:project_id(name)")
+    .select(
+      "id, project_id, title, number, scope, due_date, status, projects:project_id(name)"
+    )
     .eq("id", id)
     .maybeSingle()
   if (pkgErr) throw new Error(pkgErr.message)
   if (!pkg) throw userError("Bid package not found")
   if (pkg.status === "closed") throw userError("This bid package is closed.")
+  const project_id = pkg.project_id
 
   const { data: companies, error: coErr } = await supabase
     .from("companies")
