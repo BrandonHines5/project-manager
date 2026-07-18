@@ -385,15 +385,41 @@ export function BidPackageDrawer({
       toast.error("Pick at least one sub/vendor.")
       return
     }
+    // A re-send only reaches recipients still awaiting a response; new
+    // companies get invited. If every ticked company already responded (they
+    // stay pre-checked), the send would be a no-op — say so instead of
+    // round-tripping to the server.
+    const recipientByCompany = new Map(recipients.map((r) => [r.company_id, r]))
+    const reachable = companyIds.filter((cid) => {
+      const r = recipientByCompany.get(cid)
+      return !r || r.status === "invited"
+    })
+    if (reachable.length === 0) {
+      toast.info(
+        "Everyone selected has already responded — tick a company that hasn't been invited yet, or use Revise & re-request to ask for updated bids."
+      )
+      return
+    }
     startTransition(async () => {
       try {
         await saveBidPackage(payload)
-        const { sent } = await sendBidPackage({
+        const { sent, skipped } = await sendBidPackage({
           id: pkg.id,
           project_id: data.project_id,
           company_ids: companyIds,
         })
-        toast.success(`Sent to ${sent} compan${sent === 1 ? "y" : "ies"}`)
+        if (sent === 0) {
+          toast.info(
+            "Nothing to send — the selected companies have already responded."
+          )
+        } else {
+          toast.success(
+            `Sent to ${sent} compan${sent === 1 ? "y" : "ies"}` +
+              (skipped
+                ? ` — ${skipped} already responded and ${skipped === 1 ? "wasn't" : "weren't"} re-sent`
+                : "")
+          )
+        }
         router.refresh()
         onClose()
       } catch (e) {
