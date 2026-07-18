@@ -53,7 +53,14 @@ export type IngestInput = {
 }
 
 export type IngestResult =
-  | { ok: true; documentId: string; status: "processed" | "needs_review" | "failed" }
+  | {
+      ok: true
+      documentId: string
+      // 'pending' = the document row exists (visible in the review queue as
+      // "Processing…") but its terminal status write failed — nothing beyond
+      // that is claimed.
+      status: "processed" | "needs_review" | "failed" | "pending"
+    }
   | { ok: false; error: string }
 
 export async function ingestInsuranceDocument(
@@ -152,18 +159,16 @@ export async function ingestInsuranceDocument(
     extraction = await extractVendorDocument(bytes, input.fileType!)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    if (explicitKind && explicitKind !== "coi") {
-      await admin
-        .from("insurance_documents")
-        .update({ status: "needs_review", extraction_error: msg })
-        .eq("id", doc.id)
-      return { ok: true, documentId: doc.id, status: "needs_review" }
-    }
-    await admin
+    const status = explicitKind && explicitKind !== "coi" ? "needs_review" : "failed"
+    const { error: updErr } = await admin
       .from("insurance_documents")
-      .update({ status: "failed", extraction_error: msg })
+      .update({ status, extraction_error: msg })
       .eq("id", doc.id)
-    return { ok: true, documentId: doc.id, status: "failed" }
+    if (updErr) {
+      console.warn("[insurance] status write failed:", doc.id, updErr.message)
+      return { ok: true, documentId: doc.id, status: "pending" }
+    }
+    return { ok: true, documentId: doc.id, status }
   }
 
   // The staff's explicit kind always wins over the classifier.
@@ -184,7 +189,7 @@ export async function ingestInsuranceDocument(
   // 'other' most likely means a misclassification or junk — the review card
   // lets staff correct the kind and assign in one step.
   if (kind === "other" || !companyId) {
-    await admin
+    const { error: updErr } = await admin
       .from("insurance_documents")
       .update({
         status: "needs_review",
@@ -193,6 +198,10 @@ export async function ingestInsuranceDocument(
         extraction: extraction as unknown as Json,
       })
       .eq("id", doc.id)
+    if (updErr) {
+      console.warn("[insurance] status write failed:", doc.id, updErr.message)
+      return { ok: true, documentId: doc.id, status: "pending" }
+    }
     return { ok: true, documentId: doc.id, status: "needs_review" }
   }
 
@@ -211,11 +220,8 @@ export async function ingestInsuranceDocument(
       })
       .eq("id", doc.id)
     if (updErr) {
-      await admin
-        .from("insurance_documents")
-        .update({ status: "needs_review" })
-        .eq("id", doc.id)
-      return { ok: true, documentId: doc.id, status: "needs_review" }
+      console.warn("[insurance] status write failed:", doc.id, updErr.message)
+      return { ok: true, documentId: doc.id, status: "pending" }
     }
     return { ok: true, documentId: doc.id, status: "processed" }
   }
@@ -224,7 +230,7 @@ export async function ingestInsuranceDocument(
     await materializePolicies(admin, doc.id, companyId, extraction)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    await admin
+    const { error: updErr } = await admin
       .from("insurance_documents")
       .update({
         status: "failed",
@@ -235,9 +241,13 @@ export async function ingestInsuranceDocument(
         extraction_error: msg,
       })
       .eq("id", doc.id)
+    if (updErr) {
+      console.warn("[insurance] status write failed:", doc.id, updErr.message)
+      return { ok: true, documentId: doc.id, status: "pending" }
+    }
     return { ok: true, documentId: doc.id, status: "failed" }
   }
-  await admin
+  const { error: finalErr } = await admin
     .from("insurance_documents")
     .update({
       status: "processed",
@@ -247,6 +257,13 @@ export async function ingestInsuranceDocument(
       extraction: extraction as unknown as Json,
     })
     .eq("id", doc.id)
+  if (finalErr) {
+    // Policies are booked but the row still says pending — visible in the
+    // review queue, and the dedup index makes a re-run safe. Don't backfill
+    // agent contact off a document that isn't actually marked processed.
+    console.warn("[insurance] status write failed:", doc.id, finalErr.message)
+    return { ok: true, documentId: doc.id, status: "pending" }
+  }
   await fillAgentContactFromExtraction(admin, companyId, extraction)
   return { ok: true, documentId: doc.id, status: "processed" }
 }

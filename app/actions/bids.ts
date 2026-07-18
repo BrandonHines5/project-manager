@@ -446,17 +446,19 @@ export async function copyBidPackage(input: z.infer<typeof CopyBidPackageInput>)
  * an email (+ SMS when a phone is on file) with their public bid link.
  * Send failures are logged, never fatal — the token link can be re-sent.
  */
-export async function sendBidPackage({
-  id,
-  project_id,
-  company_ids,
-}: {
+const SendBidPackageInput = z.object({
+  id: z.string().uuid(),
+  project_id: z.string().uuid(),
+  company_ids: z.array(z.string().uuid()).min(1, "Pick at least one sub/vendor."),
+})
+
+export async function sendBidPackage(input: {
   id: string
   project_id: string
   company_ids: string[]
 }) {
   const profile = await requireStaff()
-  if (!company_ids.length) throw userError("Pick at least one sub/vendor.")
+  const { id, project_id, company_ids } = parseOrThrow(SendBidPackageInput, input)
   const supabase = await createSupabaseServerClient()
 
   const { data: pkg, error: pkgErr } = await supabase
@@ -484,7 +486,12 @@ export async function sendBidPackage({
   const sends: { company: NonNullable<typeof companies>[number]; token: string }[] = []
   // Recipients who already responded (or whose link was revoked) — a re-send
   // to them is meaningless, so they're skipped rather than re-notified.
-  let skipped = 0
+  // Selected ids that resolve to no visible company (deleted, or hidden by
+  // RLS) count as skipped too, so the result accounts for the whole
+  // selection.
+  const foundCompanyIds = new Set((companies ?? []).map((c) => c.id))
+  let skipped = new Set(company_ids.filter((cid) => !foundCompanyIds.has(cid)))
+    .size
 
   for (const company of companies ?? []) {
     const existing = byCompany.get(company.id)

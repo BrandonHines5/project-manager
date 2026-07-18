@@ -182,10 +182,17 @@ Dates must be YYYY-MM-DD. If a field is blank or illegible, use null — never g
  * (classification + company + policies for certificates). Throws on missing
  * API key or API failure — callers (the ingest pipeline) catch and mark the
  * document `failed` rather than letting a webhook 500.
+ *
+ * `opts.confirmedKind` skips the classification question: staff have told us
+ * what the document is (e.g. correcting a misclassified certificate in the
+ * review queue), so the model extracts under that assumption instead of
+ * re-deciding — a cert the classifier mistook for something else would
+ * otherwise come back with an intentionally empty policies array.
  */
 export async function extractVendorDocument(
   bytes: Buffer,
-  mediaType: string
+  mediaType: string,
+  opts?: { confirmedKind?: VendorDocKind }
 ): Promise<VendorDocExtraction> {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
@@ -217,6 +224,10 @@ export async function extractVendorDocument(
           },
         }
 
+  const prompt = opts?.confirmedKind
+    ? `${PROMPT}\n\nNote: our staff have confirmed this document IS doc_kind "${opts.confirmedKind}" — classify it as that kind and extract accordingly (for "coi", extract every policy present).`
+    : PROMPT
+
   const response = await client.messages.create({
     model: MODEL,
     max_tokens: 16000,
@@ -232,7 +243,7 @@ export async function extractVendorDocument(
     messages: [
       {
         role: "user",
-        content: [fileBlock, { type: "text", text: PROMPT }],
+        content: [fileBlock, { type: "text", text: prompt }],
       },
     ],
   })

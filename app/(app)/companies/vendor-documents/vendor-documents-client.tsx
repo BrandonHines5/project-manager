@@ -261,10 +261,13 @@ export function VendorDocumentsClient({
 
   // Which document types go into the export ZIP — staff can narrow an
   // audit batch to just certs, just W9s, etc.
+  // 'other' defaults OFF: the audit bundle is certs + W9 + SMA; unclassified
+  // documents are opt-in.
   const [exportKinds, setExportKinds] = useState({
     coi: true,
     w9: true,
     sma: true,
+    other: false,
   })
 
   // The audit bundle for a company: the documents behind its CURRENT
@@ -282,6 +285,11 @@ export function VendorDocumentsClient({
       const extra = extraDocsByCompany.get(cid)
       if (exportKinds.w9 && extra?.w9[0]) ids.add(extra.w9[0].id)
       if (exportKinds.sma && extra?.sma[0]) ids.add(extra.sma[0].id)
+      // Every 'other' doc, not just the latest — they aren't versioned
+      // revisions of one another the way W9s/SMAs are.
+      if (exportKinds.other) {
+        for (const d of extra?.other ?? []) ids.add(d.id)
+      }
     }
     return Array.from(ids)
   }, [selected, exportKinds, currentByCompany, extraDocsByCompany])
@@ -501,6 +509,7 @@ export function VendorDocumentsClient({
                   ["coi", "Certificates"],
                   ["w9", "W9s"],
                   ["sma", "SMAs"],
+                  ["other", "Other docs"],
                 ] as const
               ).map(([kind, label]) => (
                 <label

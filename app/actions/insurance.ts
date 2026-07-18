@@ -16,7 +16,12 @@ import {
   fillAgentContactFromExtraction,
   INSURANCE_BUCKET,
 } from "@/lib/insurance/ingest"
-import type { VendorDocExtraction } from "@/lib/insurance/extract"
+import {
+  extractVendorDocument,
+  type VendorDocExtraction,
+} from "@/lib/insurance/extract"
+import { userError } from "@/lib/user-error"
+import type { Json } from "@/lib/db/types"
 
 const INSURANCE_PATH = "/companies/vendor-documents"
 const Uuid = z.string().uuid()
@@ -82,14 +87,14 @@ export async function assignInsuranceDocument(
 
   const { data: doc, error } = await supabase
     .from("insurance_documents")
-    .select("id, extraction, doc_kind")
+    .select("id, extraction, doc_kind, storage_bucket, storage_path, file_type")
     .eq("id", documentId)
     .single()
   if (error || !doc) throw new Error(error?.message ?? "Document not found")
 
   const finalKind = kindOverride ?? doc.doc_kind
 
-  const extraction = (doc.extraction ?? {
+  let extraction = (doc.extraction ?? {
     company_name: null,
     policies: [],
   }) as unknown as VendorDocExtraction
@@ -99,6 +104,45 @@ export async function assignInsuranceDocument(
   // agent contact only apply to certificates — a W9/SMA/other extraction has
   // no policies to book.
   if (finalKind === "coi") {
+    // A stored extraction that classified the document as non-COI carries an
+    // intentionally EMPTY policies array — materializing from it would mark
+    // the certificate processed with no coverage on file. Staff just told us
+    // it IS a certificate, so re-read it in confirmed-COI mode. (Extractions
+    // that predate classification have no doc_kind and were all COIs — their
+    // stored policies are used as-is.)
+    const classifiedNonCoi =
+      doc.extraction == null ||
+      (extraction.doc_kind !== undefined && extraction.doc_kind !== "coi")
+    if (classifiedNonCoi) {
+      const { data: file, error: dlErr } = await supabase.storage
+        .from(doc.storage_bucket)
+        .download(doc.storage_path)
+      if (dlErr || !file) {
+        throw userError(
+          "Couldn't read the stored file to extract its policies — try again."
+        )
+      }
+      try {
+        extraction = await extractVendorDocument(
+          Buffer.from(await file.arrayBuffer()),
+          doc.file_type ?? "application/pdf",
+          { confirmedKind: "coi" }
+        )
+      } catch {
+        throw userError(
+          "Couldn't read this document as a certificate — it stays in the review queue. Try again, or delete it if it isn't actually a COI."
+        )
+      }
+      // Persist the fresh read so a retry doesn't re-run the model.
+      const { error: exErr } = await supabase
+        .from("insurance_documents")
+        .update({
+          extraction: extraction as unknown as Json,
+          extracted_company_name: extraction.company_name,
+        })
+        .eq("id", documentId)
+      if (exErr) throw new Error(exErr.message)
+    }
     await materializePolicies(supabase, documentId, companyId, extraction)
   }
 
