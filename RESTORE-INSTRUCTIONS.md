@@ -171,7 +171,7 @@ the operator / the new Supabase project — never fabricate.
 |-----|---------|
 | `ANTHROPIC_API_KEY` | AI smart-update agent (`lib/ai/agent.ts`, model `claude-sonnet-4-6`). Without it the agent returns a typed error instead of running. |
 | `RESEND_API_KEY`, `RESEND_FROM_EMAIL` | Outbound email assignment/digest notifications. |
-| `NEXT_PUBLIC_APP_URL` | Canonical public URL used to build links in emails. |
+| `NEXT_PUBLIC_APP_URL` | Canonical public URL used to build links in emails (`https://app.buildfox.ai` in production). |
 | `QUO_API_KEY`, `QUO_FROM_NUMBER` | Quo (OpenPhone) SMS for "Send text to sub". |
 | `DASHBOARD_BASE_URL`, `DASHBOARD_WEBHOOK_URL`, `DASHBOARD_WEBHOOK_SECRET` | Outbound sync to the Hines Homes Dashboard (HMAC-signed webhooks). No-op if unset. |
 | `DASHBOARD_API_SECRET` | Bearer token for inbound "Pull from dashboard" reads. |

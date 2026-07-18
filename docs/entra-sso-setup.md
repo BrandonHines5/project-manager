@@ -39,10 +39,12 @@ is added as an OAuth provider and RLS keeps working on `auth.uid()`.
      `/v2.0/oauth2/v2.0/authorize` path and a Microsoft 404.
 
 3. **Supabase → Authentication → URL Configuration** ← *easy to miss*
-   - **Site URL**: `https://hh-pm.vercel.app` (production). After OAuth, Supabase
+   - **Site URL**: `https://app.buildfox.ai` (production). After OAuth, Supabase
      redirects to the Site URL when the requested redirect isn't allow-listed —
      if this points at a stale preview deployment, every login lands there.
-   - **Redirect URLs**: add `https://hh-pm.vercel.app/**`.
+   - **Redirect URLs**: add `https://app.buildfox.ai/**`. Keep
+     `https://hh-pm.vercel.app/**` allow-listed too — the old deployment URL
+     redirects there and stale links may still start a login from it.
 
 4. **Vercel env vars** (PM project)
    - `NEXT_PUBLIC_ENTRA_SSO_ENABLED=1` — shows the Microsoft button.
