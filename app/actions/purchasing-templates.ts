@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
+import { getActiveOrgId } from "@/lib/org"
 import type { Json } from "@/lib/db/types"
 
 const optStr = z.string().nullish()
@@ -92,7 +93,7 @@ export async function savePurchasingTemplate(input: PurchasingTemplateInputT) {
   }
   const { data, error } = await supabase
     .from("purchasing_templates")
-    .insert({ ...row, created_by: profile.id })
+    .insert({ ...row, org_id: await getActiveOrgId(supabase), created_by: profile.id })
     .select("id")
     .single()
   if (error) throw new Error(error.message)

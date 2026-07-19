@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireSession, requireStaff } from "@/lib/auth"
+import { getActiveOrgId } from "@/lib/org"
 import { FEEDBACK_TYPES, FEEDBACK_STATUSES } from "@/lib/feedback"
 
 const optStr = z.string().nullish()
@@ -27,6 +28,7 @@ export async function submitFeedback(input: SubmitFeedbackInput) {
   const { request_type, title, description } = result.data
   const supabase = await createSupabaseServerClient()
   const { error } = await supabase.from("feedback_requests").insert({
+    org_id: await getActiveOrgId(supabase),
     submitted_by_id: profile.id,
     submitted_by: profile.full_name,
     submitted_by_email: profile.email,
