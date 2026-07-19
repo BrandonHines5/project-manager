@@ -6,7 +6,7 @@ import { ProjectListSidebar } from "@/components/layout/project-list-sidebar"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { brandForProjectTypes } from "@/lib/brand"
 import { getBrandConfig } from "@/lib/org-brand"
-import { getActiveOrgId } from "@/lib/org"
+import { getOrgMemberships, resolveActiveOrgId } from "@/lib/org"
 
 // Every authenticated page depends on cookies and per-user data, so we opt out
 // of any caching here — otherwise Vercel's edge can serve one user's response
@@ -26,7 +26,7 @@ export default async function AppLayout({
   // member of. We fetch the project list here (not in each page) so the
   // sidebar stays consistent across navigations and benefits from React's
   // server-component dedupe.
-  const [{ count: unreadCount }, { data: projects }, activeOrgId] =
+  const [{ count: unreadCount }, { data: projects }, orgsResult] =
     await Promise.all([
       supabase
         .from("notifications")
@@ -40,8 +40,30 @@ export default async function AppLayout({
         )
         .order("project_number", { ascending: false }),
       // Org membership is independent of the other two — ride the same batch.
-      getActiveOrgId(supabase).catch(() => null),
+      // A failed read is NOT "no memberships": keep the failure distinct so a
+      // transient DB hiccup degrades (switcher hidden this render, branding
+      // from the stored selection) instead of masquerading as an empty state
+      // — while never blanking the whole shell over a sidebar affordance.
+      getOrgMemberships(supabase, profile.id).then(
+        (orgs) => ({ ok: true as const, orgs }),
+        (err: unknown) => ({ ok: false as const, err })
+      ),
     ])
+
+  if (!orgsResult.ok) {
+    console.error("[layout] org membership read failed:", orgsResult.err)
+  }
+  const orgs = orgsResult.ok ? orgsResult.orgs : []
+
+  // Same resolution as getActiveOrgId (shared resolveActiveOrgId helper), but
+  // from data already in hand — the session profile carries active_org_id and
+  // `orgs` IS the membership list, so the layout skips the duplicate
+  // organization_members read. On a failed membership read, fall back to the
+  // stored selection (setActiveOrg validated it at write time) so an existing
+  // multi-org user keeps their org's branding through the hiccup.
+  const activeOrgId = orgsResult.ok
+    ? resolveActiveOrgId(profile.active_org_id, orgs)
+    : (profile.active_org_id ?? null)
 
   // Org-driven branding (B3): the workspace presents the caller's org. A
   // client whose projects are all commercial sees the org's commercial
@@ -79,6 +101,8 @@ export default async function AppLayout({
         role={profile.role}
         unreadCount={unreadCount ?? 0}
         brand={brand}
+        orgs={orgs}
+        activeOrgId={activeOrgId}
         // The jobs-list sidebar is desktop-only; the topbar hands the same
         // list to the mobile drawer so phones can switch jobs too.
         projects={projects ?? []}

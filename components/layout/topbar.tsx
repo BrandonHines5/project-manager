@@ -2,9 +2,11 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import {
   Bell,
+  Building2,
+  Check,
   ChevronDown,
   Clock,
   LogOut,
@@ -15,6 +17,7 @@ import {
   Wallet,
 } from "lucide-react"
 import dynamic from "next/dynamic"
+import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
 import { GlobalSearch } from "@/components/layout/global-search"
@@ -24,6 +27,7 @@ import { BrandTile } from "@/components/layout/brand-tile"
 import type { SidebarProject } from "@/components/layout/project-list-sidebar"
 import type { UserRole } from "@/lib/auth"
 import { HINES_HOMES, type Brand } from "@/lib/brand"
+import { setActiveOrg } from "@/app/actions/org"
 
 // AIAgent bundles the smart-update chat, its ~450-LOC plan-review UI, and the
 // Web-Speech shims — all of it only ever mounts behind the trigger button. Code-
@@ -86,6 +90,8 @@ export function Topbar({
   unreadCount,
   brand = HINES_HOMES,
   projects = [],
+  orgs = [],
+  activeOrgId = null,
 }: {
   fullName: string
   email: string
@@ -93,8 +99,27 @@ export function Topbar({
   unreadCount: number
   brand?: Brand
   projects?: SidebarProject[]
+  /** The user's org memberships — the switcher renders only for 2+. */
+  orgs?: { org_id: string; name: string }[]
+  activeOrgId?: string | null
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const [switching, setSwitching] = useState(false)
+  const router = useRouter()
+
+  const switchOrg = async (orgId: string) => {
+    if (switching || orgId === activeOrgId) return
+    setSwitching(true)
+    const result = await setActiveOrg(orgId)
+    setSwitching(false)
+    setMenuOpen(false)
+    // The whole workspace (branding, jobs, settings) follows the active org.
+    if (result.ok) {
+      router.refresh()
+    } else {
+      toast.error(result.error ?? "Couldn't switch organizations.")
+    }
+  }
   return (
     // min-h + safe-area padding (instead of a fixed h-14) so the dark bar
     // extends up under the iPhone status bar in home-screen mode without
@@ -165,6 +190,29 @@ export function Topbar({
                   <div className="text-sm font-medium">{fullName || "—"}</div>
                   <div className="text-xs text-muted">{email}</div>
                 </div>
+                {/* Org switcher — only when the user belongs to 2+ orgs
+                    (today nobody does; this is the B5 multi-org surface). */}
+                {orgs.length > 1 && (
+                  <div className="border-b border-border py-1">
+                    <div className="px-3 pt-1 pb-0.5 text-[10px] uppercase tracking-wider text-muted">
+                      Organization
+                    </div>
+                    {orgs.map((o) => (
+                      <button
+                        key={o.org_id}
+                        onClick={() => switchOrg(o.org_id)}
+                        disabled={switching}
+                        className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-background cursor-pointer disabled:opacity-50"
+                      >
+                        <Building2 className="h-4 w-4 text-muted" />
+                        <span className="flex-1 truncate">{o.name}</span>
+                        {o.org_id === activeOrgId && (
+                          <Check className="h-4 w-4 text-brand-600" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <Link
                   href="/settings/notifications"
                   onClick={() => setMenuOpen(false)}
