@@ -109,7 +109,10 @@ export async function resolveOrgForProfile(
 ): Promise<{ orgId: string | null; failed: boolean }> {
   if (!profileId) return { orgId: null, failed: false }
   const admin = createSupabaseAdminClient()
-  if (!admin) return { orgId: null, failed: false }
+  // No service-role client = the integration layer can't verify the org. Fail
+  // closed (like a query error) so a missing key can't masquerade as an
+  // unresolved org and let a non-legacy send borrow Hines' shared credentials.
+  if (!admin) return { orgId: null, failed: true }
   const { data, error } = await admin
     .from("organization_members")
     .select("org_id")

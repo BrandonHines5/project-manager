@@ -84,11 +84,16 @@ export default async function OrganizationSettingsPage() {
     }
     try {
       const integ = await getOrgIntegration(admin, orgId, "resend")
-      resendConnected = Boolean(integ?.enabled && integ.secrets?.apiKey)
       const fe = integ?.config?.fromEmail
       const fn = integ?.config?.fromName
       resendFromEmail = typeof fe === "string" ? fe : ""
       resendFromName = typeof fn === "string" ? fn : ""
+      // Match resolveResendConfig's send criteria: a key alone can't send —
+      // it also needs a From address. Otherwise a key-only org would show
+      // "Connected" while every outbound email silently no-ops.
+      resendConnected = Boolean(
+        integ?.enabled && integ.secrets?.apiKey && resendFromEmail
+      )
     } catch {
       resendError = true
     }
