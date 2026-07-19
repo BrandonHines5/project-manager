@@ -2075,6 +2075,7 @@ export type Database = {
       }
       profiles: {
         Row: {
+          active_org_id: string | null
           company_id: string | null
           created_at: string
           disclaimer_accepted_at: string | null
@@ -2093,6 +2094,7 @@ export type Database = {
           role: Database["public"]["Enums"]["user_role"]
         }
         Insert: {
+          active_org_id?: string | null
           company_id?: string | null
           created_at?: string
           disclaimer_accepted_at?: string | null
@@ -2111,6 +2113,7 @@ export type Database = {
           role?: Database["public"]["Enums"]["user_role"]
         }
         Update: {
+          active_org_id?: string | null
           company_id?: string | null
           created_at?: string
           disclaimer_accepted_at?: string | null
@@ -2129,6 +2132,13 @@ export type Database = {
           role?: Database["public"]["Enums"]["user_role"]
         }
         Relationships: [
+          {
+            foreignKeyName: "profiles_active_org_id_fkey"
+            columns: ["active_org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "profiles_company_id_fkey"
             columns: ["company_id"]
@@ -3785,6 +3795,7 @@ export type Database = {
       next_decision_number: { Args: { p_project: string }; Returns: number }
       next_po_number: { Args: { p_project: string }; Returns: number }
       normalize_phone: { Args: { p: string }; Returns: string }
+      org_admin: { Args: { org: string }; Returns: boolean }
       payment_in_my_org: { Args: { p_payment: string }; Returns: boolean }
       project_in_my_org: { Args: { p_project: string }; Returns: boolean }
       purchase_order_in_my_org: { Args: { p_po: string }; Returns: boolean }

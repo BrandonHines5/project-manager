@@ -197,8 +197,11 @@ its only org coupling is the env-singleton kill switch + sender, handled
 with the rest below.
 
 Env-var singletons become per-org rows (new table `org_integrations`, one row
-per org+kind, encrypted secrets via pgsodium or app-layer encryption with a
-KMS key in Vercel env):
+per org+kind). **Secrets decision (Brandon, 2026-07-19): app-layer AES-256-GCM
+envelope encryption** with a master key in the Vercel env
+(`INTEGRATION_SECRETS_KEY`, 32 random bytes) — not pgsodium/Vault. Secrets are
+encrypted before insert and unreadable via SQL alone; rotation is a re-encrypt
+sweep. Per-integration wiring:
 - **QBO**: `qbo_connection` already carries org_id; the OAuth connect flow
   keys state by org; webhook resolves org via realmId lookup.
 - **Quo/OpenPhone**: per-org API key + numbers; inbound webhook resolves org
@@ -215,10 +218,20 @@ KMS key in Vercel env):
 
 ## Stage B5 — Onboarding, org management, billing
 
+- **DONE (0108, part 1 — active-org + admin foundation)**:
+  `profiles.active_org_id` records which org a multi-org user is working in;
+  `getActiveOrgId(supabase, profileId?)` honors it when it names one of the
+  caller's own memberships and falls back to the earliest membership (the
+  pre-B5 behavior for every single-org user). A forged selection is inert —
+  the DB allows the self-update but resolution validates membership. Avatar-
+  menu switcher renders only for 2+ memberships (`setActiveOrg` action →
+  router.refresh, everything follows the active org). `org_admin(uuid)`
+  helper + `orgs_admin_update` policy open organizations updates (name /
+  settings) to owner/admin members — the first org-admin write surface.
 - Org admin UI: members list, invites (org-scoped `client_invites`-style
   tokens for staff), role management (owner/admin), org profile/branding
-  editor. Writes to organizations/organization_members get RLS policies here
-  (owner/admin only) — until then they stay service-role-only.
+  editor incl. logo upload. Membership writes get definer RPCs with
+  last-owner / escalation guards — until then they stay service-role-only.
 - Provisioning: create-org flow seeds cost codes, the Template project,
   default settings.
 - Billing: Stripe customer per org, subscription webhooks → `org_billing`

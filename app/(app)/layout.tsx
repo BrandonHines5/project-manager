@@ -6,7 +6,7 @@ import { ProjectListSidebar } from "@/components/layout/project-list-sidebar"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { brandForProjectTypes } from "@/lib/brand"
 import { getBrandConfig } from "@/lib/org-brand"
-import { getActiveOrgId } from "@/lib/org"
+import { getActiveOrgId, getOrgMemberships } from "@/lib/org"
 
 // Every authenticated page depends on cookies and per-user data, so we opt out
 // of any caching here — otherwise Vercel's edge can serve one user's response
@@ -26,7 +26,7 @@ export default async function AppLayout({
   // member of. We fetch the project list here (not in each page) so the
   // sidebar stays consistent across navigations and benefits from React's
   // server-component dedupe.
-  const [{ count: unreadCount }, { data: projects }, activeOrgId] =
+  const [{ count: unreadCount }, { data: projects }, activeOrgId, orgs] =
     await Promise.all([
       supabase
         .from("notifications")
@@ -40,7 +40,10 @@ export default async function AppLayout({
         )
         .order("project_number", { ascending: false }),
       // Org membership is independent of the other two — ride the same batch.
-      getActiveOrgId(supabase).catch(() => null),
+      getActiveOrgId(supabase, profile.id).catch(() => null),
+      getOrgMemberships(supabase, profile.id).catch(
+        () => [] as { org_id: string; name: string }[]
+      ),
     ])
 
   // Org-driven branding (B3): the workspace presents the caller's org. A
@@ -79,6 +82,8 @@ export default async function AppLayout({
         role={profile.role}
         unreadCount={unreadCount ?? 0}
         brand={brand}
+        orgs={orgs}
+        activeOrgId={activeOrgId}
         // The jobs-list sidebar is desktop-only; the topbar hands the same
         // list to the mobile drawer so phones can switch jobs too.
         projects={projects ?? []}
