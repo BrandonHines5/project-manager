@@ -3849,6 +3849,7 @@ export type Database = {
       next_po_number: { Args: { p_project: string }; Returns: number }
       normalize_phone: { Args: { p: string }; Returns: string }
       org_admin: { Args: { org: string }; Returns: boolean }
+      org_writable: { Args: { p_org: string }; Returns: boolean }
       payment_in_my_org: { Args: { p_payment: string }; Returns: boolean }
       project_in_my_org: { Args: { p_project: string }; Returns: boolean }
       purchase_order_in_my_org: { Args: { p_po: string }; Returns: boolean }

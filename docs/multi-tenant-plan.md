@@ -456,9 +456,11 @@ existing/provisioned org is `active_subscriber` and never participates.
   clears `sandbox_expires_at`); handle cancellation/downgrade. Its own
   multi-PR slice (subscriptions, webhooks, customer portal, plan gating).
 - **S4 — grace hard-delete cron**. Daily `/api/cron/sandbox-cleanup`
-  (`CRON_SECRET`) hard-deletes sandbox orgs past `sandbox_expires_at + 37 days`
-  (7-day trial + 30-day grace). Sandbox-only, logged, kill-switched OFF until
-  S1–S3 are proven — an irreversible tenant wipe ships last.
+  (`CRON_SECRET`) hard-deletes sandbox orgs past `sandbox_expires_at + 30 days`
+  — a 30-day grace measured from the trial's end (`sandbox_expires_at` is
+  already 7 days past signup, so don't re-add the trial). Sandbox-only,
+  logged, kill-switched OFF until S1–S3 are proven — an irreversible tenant
+  wipe ships last.
 
 ## Out of scope (unchanged from product scope)
 

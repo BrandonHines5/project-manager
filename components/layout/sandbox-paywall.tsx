@@ -1,26 +1,45 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Lock } from "lucide-react"
 
 /**
  * Full-screen paywall for an expired sandbox/trial org (S1). Rendered by the
  * app layout over the shell — the app stays visible underneath (reinforcing
- * "keep your data"), but every interaction is captured here. The mutation
- * block that backs this at the data layer lands in S1b; the "Subscribe now"
- * CTA is wired to Stripe Checkout in S3 (today it's a placeholder). A sign-out
- * escape hatch keeps the owner from feeling trapped.
+ * "keep your data"), but the layout marks that shell `inert` so it's neither
+ * clickable nor tabbable, and this dialog takes focus, making it a real modal
+ * for keyboard + screen-reader users. The mutation block that backs this at
+ * the data layer lands in S1b; the "Subscribe now" CTA is wired to Stripe
+ * Checkout in S3 (today it's a placeholder). A sign-out escape hatch keeps the
+ * owner from feeling trapped.
  */
 export function SandboxPaywall() {
   const [notice, setNotice] = useState(false)
+  const dialogRef = useRef<HTMLDivElement>(null)
+
+  // Move focus into the dialog on mount; with the underlying shell inert, Tab
+  // then cycles only within this dialog (an effective focus trap).
+  useEffect(() => {
+    dialogRef.current?.focus()
+  }, [])
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-md rounded-xl border border-border bg-surface p-6 text-center shadow-2xl space-y-4">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="sandbox-paywall-title"
+        tabIndex={-1}
+        className="w-full max-w-md rounded-xl border border-border bg-surface p-6 text-center shadow-2xl outline-none space-y-4"
+      >
         <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-brand-500/10">
           <Lock className="h-6 w-6 text-brand-600" />
         </div>
-        <h2 className="text-lg font-semibold tracking-tight">
+        <h2
+          id="sandbox-paywall-title"
+          className="text-lg font-semibold tracking-tight"
+        >
           Your trial has concluded
         </h2>
         <p className="text-sm text-muted">

@@ -104,9 +104,14 @@ export default async function AppLayout({
   // jobs list on the left, and the page content scrolling on its own inside
   // a viewport-height column (so the jobs list and its controls never
   // scroll out of view).
+  // When the trial paywall is up, the whole shell is inert (not clickable or
+  // tabbable) so the modal is a real block for keyboard + screen-reader users;
+  // the paywall itself renders OUTSIDE the inert subtree so it stays usable.
+  const shellInert = orgLifecycle === "sandbox_expired"
   return (
-    <div className="flex h-dvh flex-col">
-      {/* Skip-to-main: invisible until focused. Keyboard users hit Tab on
+    <>
+      <div className="flex h-dvh flex-col" inert={shellInert || undefined}>
+        {/* Skip-to-main: invisible until focused. Keyboard users hit Tab on
           load and get a way to bypass the topbar / jobs-list nav. */}
       <a
         href="#main-content"
@@ -149,7 +154,8 @@ export default async function AppLayout({
           {children}
         </main>
       </ProjectContextShell>
-      {orgLifecycle === "sandbox_expired" && <SandboxPaywall />}
-    </div>
+      </div>
+      {shellInert && <SandboxPaywall />}
+    </>
   )
 }
