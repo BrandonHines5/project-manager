@@ -381,8 +381,14 @@ PowerShell keygen one-liner is in the session log). Per-integration wiring:
   accept both during transition).
 - Sweep: per-org advisory-lock keys for numbering RPCs are already per-project
   (fine); pen-test pass with two orgs; load sanity on org-scoped indexes.
-- Drop any remaining bridge defaults; add a CI check that fails if a stamped
-  table still has the Hines default. **Remaining default**: only
+- **CI bridge-default guard: DONE** — `scripts/check-bridge-defaults.mjs`
+  (run by `.github/workflows/bridge-default-guard.yml` on any migration
+  change) replays the `org_id` DEFAULT set/drop history across the numbered
+  migrations and fails if any ROOT table still carries the Hines bridge
+  default outside the intentional allowlist. Pure static analysis — no DB or
+  secrets. The allowlist (`communications` today) fails on staleness too, so
+  it can't rot once the last default is dropped.
+- Drop any remaining bridge defaults. **Remaining default**: only
   `communications`, held by the shared Quo webhook secret (one OpenPhone
   workspace/endpoint today) + genuinely-unattributable inbound (shared line,
   unknown number). Dropping it needs per-org OpenPhone workspaces
