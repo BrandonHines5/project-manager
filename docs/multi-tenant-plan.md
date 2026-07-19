@@ -201,7 +201,24 @@ per org+kind). **Secrets decision (Brandon, 2026-07-19): app-layer AES-256-GCM
 envelope encryption** with a master key in the Vercel env
 (`INTEGRATION_SECRETS_KEY`, 32 random bytes) — not pgsodium/Vault. Secrets are
 encrypted before insert and unreadable via SQL alone; rotation is a re-encrypt
-sweep. Per-integration wiring:
+sweep.
+
+**DONE (0112, part 1 — storage foundation)**: `org_integrations` (PK
+org+provider; `config` jsonb non-secret, `secrets` jsonb = envelope only,
+`enabled` flag) with RLS enabled and NO policies — service-role-only, same
+accepted pattern as the qbo tables. `lib/crypto/secrets.ts` implements the
+envelope: AES-256-GCM under base64-32-byte `INTEGRATION_SECRETS_KEY`,
+versioned `kid` (sha256 prefix of the key) with
+`INTEGRATION_SECRETS_KEY_PREVIOUS` accepted during rotation sweeps, and
+`${orgId}/${provider}` as AAD so an envelope can't be replayed onto another
+row; everything fails closed (missing key / unknown kid / tamper / wrong
+AAD all throw — verified by round-trip tests of all six properties).
+`lib/integrations/org.ts` is the admin-client accessor
+(`getOrgIntegration` decrypts or throws; `upsertOrgIntegration` seals with
+undefined=keep / null=clear / object=replace semantics). Provider wiring
+moves over one integration at a time (below) once
+`INTEGRATION_SECRETS_KEY` is set in Vercel (asked Brandon 2026-07-19; the
+PowerShell keygen one-liner is in the session log). Per-integration wiring:
 - **QBO**: `qbo_connection` already carries org_id; the OAuth connect flow
   keys state by org; webhook resolves org via realmId lookup.
 - **Quo/OpenPhone**: per-org API key + numbers; inbound webhook resolves org

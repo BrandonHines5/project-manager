@@ -1797,6 +1797,44 @@ export type Database = {
           },
         ]
       }
+      org_integrations: {
+        Row: {
+          config: Json
+          created_at: string
+          enabled: boolean
+          org_id: string
+          provider: string
+          secrets: Json | null
+          updated_at: string
+        }
+        Insert: {
+          config?: Json
+          created_at?: string
+          enabled?: boolean
+          org_id: string
+          provider: string
+          secrets?: Json | null
+          updated_at?: string
+        }
+        Update: {
+          config?: Json
+          created_at?: string
+          enabled?: boolean
+          org_id?: string
+          provider?: string
+          secrets?: Json | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "org_integrations_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organization_members: {
         Row: {
           created_at: string
@@ -3860,6 +3898,17 @@ export type Database = {
       unreferenced_storage_paths: {
         Args: { p_paths: string[] }
         Returns: string[]
+      }
+      upsert_org_integration: {
+        Args: {
+          p_config?: Json
+          p_enabled?: boolean
+          p_org: string
+          p_provider: string
+          p_secrets?: Json
+          p_touch_secrets?: boolean
+        }
+        Returns: undefined
       }
       validate_media_tags: { Args: { p_tags: string[] }; Returns: undefined }
     }
