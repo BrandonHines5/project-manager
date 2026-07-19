@@ -263,8 +263,21 @@ sweep. Per-integration wiring:
   and removal blocked, admin member↔admin + non-owner removal allowed.
 - Org admin UI (remaining): invites (org-scoped `client_invites`-style
   tokens for staff joining an org directly).
-- Provisioning: create-org flow seeds cost codes, the Template project,
-  default settings.
+- **DONE (0111, part 4 — provisioning)**: `create_organization(name, slug,
+  owner, seed_from = org #1)` stands up a new org atomically — organizations
+  row, owner enrollment, and catalog seeding (ACTIVE cost codes + all roles
+  copied from the seed org; pass null to skip). Branding needs no seed
+  (parseBrandConfig's org-name fallback) and purchasing_templates /
+  app_settings are deliberately NOT copied (builder-specific content).
+  Execution is SERVICE-ROLE-ONLY (manual org creation first per this plan —
+  no app surface until self-serve/billing). 0111 also fixed two leftover
+  single-tenant uniqueness rules that made catalogs collide across orgs:
+  `cost_codes.code` global unique → `(org_id, code)`, and roles'
+  `uq_roles_name_lower` → `uq_roles_org_name_lower (org_id, lower(trim(name)))`.
+  Verified: provisioned a throwaway org (86/86 active codes, 51/51 roles,
+  1 owner), authenticated caller gets 42501, cleanup left zero residue.
+  Template-project cloning into a new org stays manual (duplicateProject
+  after the fact) until a real second builder needs it.
 - Billing: Stripe customer per org, subscription webhooks → `org_billing`
   table, plan gates enforced app-layer (same trust tier as financial_access).
 - Marketing-site handoff: demo → manual org creation first; self-serve signup

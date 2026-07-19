@@ -3756,6 +3756,15 @@ export type Database = {
         Args: { p_action: string; p_choice_id?: string; p_decision_id: string }
         Returns: Json
       }
+      create_organization: {
+        Args: {
+          p_name: string
+          p_owner: string
+          p_seed_from?: string
+          p_slug: string
+        }
+        Returns: string
+      }
       current_company_id: { Args: never; Returns: string }
       current_org_ids: { Args: never; Returns: string[] }
       current_role_name: {
