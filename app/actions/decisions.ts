@@ -5,6 +5,7 @@ import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { requireSession, requireStaff } from "@/lib/auth"
+import { getActiveOrgId } from "@/lib/org"
 import { addDays, formatCurrency, formatDate, todayISO } from "@/lib/utils"
 import { sendEmail, appUrl } from "@/lib/email"
 import { isChannelEnabled } from "@/lib/notifications/preferences"
@@ -2214,11 +2215,12 @@ export async function saveDecisionDisclaimer(input: {
   const supabase = await createSupabaseServerClient()
   const { error } = await supabase.from("app_settings").upsert(
     {
+      org_id: await getActiveOrgId(supabase),
       key: DECISION_DISCLAIMER_KEY,
       value: parsed.data.text.trim() || null,
       updated_by: profile.id,
     },
-    { onConflict: "key" }
+    { onConflict: "org_id,key" }
   )
   if (error) return { ok: false, error: error.message }
   // Every project's decisions tab renders the disclaimer — invalidate them

@@ -85,9 +85,20 @@ Order (blast radius, smallest first):
    and trade policies untouched (already row-scoped). Gate passed both ways
    plus write probes (own-org insert allowed, cross-org insert 42501,
    cross-org update touches 0 rows).
-4. app_settings (org-scoped settings reads/writes; drop legacy unique(key);
-   `getTemplateTagConfig`, budget_editors, disclaimer, notification recipients
-   all become per-org).
+4. **DONE (0103)** app_settings. The legacy uniqueness was the PRIMARY KEY
+   (key); 0103 promotes 0099's unique index to `primary key (org_id, key)`.
+   Policies keep their shapes (clients read only `decision_disclaimer`;
+   staff read/write the rest) with the org condition layered on. All six
+   upsert sites (template_tag_groups, delay_reasons, budget_editors,
+   qbo_push_defaults, invoice_payment_recipients, decision_disclaimer) stamp
+   org_id and use `onConflict: "org_id,key"`; bridge default dropped.
+   User-session READS need no code change — RLS guarantees at most one
+   visible row per key. The one admin-client reader (QBO webhook
+   `paymentRecipientIds`) filters by the connection row's org_id and scopes
+   both the configured list and the financial_access fallback to that org's
+   members. Gate passed: test org sees 0 rows and can write only its own
+   org; Hines staff see all 6; a Hines client sees exactly
+   decision_disclaimer.
 5. communications (stamp at insert in webhook/compose/matcher paths; hub
    queries filter by org).
 - Also in this stage: `profiles` read policies (staff can currently read all

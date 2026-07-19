@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
+import { getActiveOrgId } from "@/lib/org"
 import { parseSpreadsheet } from "@/lib/import/spreadsheet"
 
 // Budget data is money-out (what we expect to pay), same sensitivity as
@@ -140,11 +141,12 @@ export async function saveBudgetEditors(ids: string[]) {
   }
   const { error } = await supabase.from("app_settings").upsert(
     {
+      org_id: await getActiveOrgId(supabase),
       key: BUDGET_EDITORS_KEY,
       value: JSON.stringify(parsed),
       updated_by: profile.id,
     },
-    { onConflict: "key" }
+    { onConflict: "org_id,key" }
   )
   if (error) throw new Error(error.message)
   revalidatePath("/settings/budget")

@@ -68,7 +68,7 @@ export type Database = {
         }
         Insert: {
           key: string
-          org_id?: string
+          org_id: string
           updated_at?: string
           updated_by?: string | null
           value?: string | null
