@@ -497,19 +497,29 @@ existing/provisioned org is `active_subscriber` and never participates.
   webhook endpoint in the Stripe dashboard for checkout.session.completed and
   customer.subscription.created/updated/deleted). No customer-portal / plan-gating
   yet (future slice if wanted).
-- **S4 — grace hard-delete cron**. Daily `/api/cron/sandbox-cleanup`
-  (`CRON_SECRET`) hard-deletes sandbox orgs past `sandbox_expires_at + 30 days`
-  — a 30-day grace measured from the trial's end (`sandbox_expires_at` is
-  already 7 days past signup, so don't re-add the trial). Sandbox-only,
-  logged, kill-switched OFF until S1–S3 are proven — an irreversible tenant
-  wipe ships last. **NOTE for S4**: the ROOT `org_id` FKs (projects, companies,
-  cost_codes, roles, app_settings, … from 0099/0102) are plain
-  `references organizations(id)` with NO `ON DELETE CASCADE` (only
-  `organization_members` and `org_integrations` cascade). So the cron can't just
-  `DELETE FROM organizations` — it must delete child data first (in dependency
-  order) OR the FKs need an `ON DELETE CASCADE` migration. Building the deletion
-  as a single SECURITY DEFINER RPC (`delete_organization`) that tears down in
-  order is the likely shape; also delete the owner's auth users.
+- **S4 — grace hard-delete cron: DONE (0119)**. Daily `/api/cron/sandbox-cleanup`
+  (`CRON_SECRET`, registered in `vercel.json` at 14:15 UTC) hard-deletes sandbox
+  orgs whose `sandbox_expires_at < now() − 30 days` — a 30-day grace from the
+  trial's end (which is already 7 days past signup, so the trial isn't re-added).
+  Kill-switched OFF: it no-ops unless `SANDBOX_CLEANUP_ENABLED === "true"`, so the
+  irreversible wipe never runs until deliberately enabled after S1–S3 are proven.
+  Because the ROOT `org_id` FKs are NOT `ON DELETE CASCADE` (only
+  `organization_members`/`org_integrations` cascade), teardown goes through the
+  SECURITY DEFINER, service-role-only RPC `delete_organization(uuid)`: it REFUSES
+  any org whose status isn't `sandbox_expired`/`sandbox_active` (a subscriber /
+  Hines can never be wiped — verified: calling it on Hines raises and deletes
+  nothing), deletes org-scoped data in FK order (projects first — their children
+  cascade and clear the only blockers on companies/cost_codes: `purchase_orders`,
+  `project_budget_lines`, `project_cost_actuals` — then the flat roots, then the
+  org row which cascades members/integrations), and returns the member profile
+  ids. The cron then deletes each member's auth user IF they no longer belong to
+  any org (deleting the auth user cascades its profile). Per-org failures are
+  isolated (one bad org retries next day). Known low-risk gap: Storage objects
+  (`brand-assets/{org_id}/…`, project files) aren't swept — private/orphaned with
+  no access once the org is gone; a future sweep can reclaim them. Env Brandon
+  sets to arm it: `SANDBOX_CLEANUP_ENABLED=true` (leave unset to keep it off).
+  **Stage S is complete** — self-serve trial → paywall on lapse → subscribe to
+  restore → 30-day grace then hard delete.
 
 ## Out of scope (unchanged from product scope)
 
