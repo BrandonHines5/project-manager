@@ -99,8 +99,22 @@ Order (blast radius, smallest first):
    members. Gate passed: test org sees 0 rows and can write only its own
    org; Hines staff see all 6; a Hines client sees exactly
    decision_disclaimer.
-5. communications (stamp at insert in webhook/compose/matcher paths; hub
-   queries filter by org).
+5. **DONE (0104)** communications. comms_staff_all gains the org condition
+   (client/trade reads were already row-scoped); hub + job feeds are
+   user-session reads so RLS scopes them with zero code changes. All
+   communications INSERTS run on the admin client (lib/comms/log.ts funnel),
+   so stamping is explicit: `CommLogContext`/`CommLogRow` carry `org_id`
+   (compose stamps the acting staffer's org, hub replies the thread row's,
+   client compose the validated project's), and `logCommunication` resolves
+   a missing org from project_id → projects.org_id then company_id →
+   companies.org_id. clientComposeMessage's staff fan-out now notifies only
+   the project's org members. Bridge default KEPT (insurance_documents
+   precedent): Quo/Resend/Outlook inbound are env-singleton Hines channels
+   until B4 — fully unattributed inbound rows land on the default, and B4
+   drops it when the channels resolve org per-integration. B4 must also
+   org-filter `recentProjectForCompany` + the email plus-tag project
+   validation (both admin reads, today implicitly single-org). Gate passed
+   both ways with write probes.
 - Also in this stage: `profiles` read policies (staff can currently read all
   profiles) become org-scoped via shared membership.
 

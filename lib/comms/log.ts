@@ -7,6 +7,8 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin"
  * unattributed sends still get logged and show up in the global staff hub.
  */
 export type CommLogContext = {
+  /** Owning org — stamp when the call site knows it (see CommLogRow.org_id). */
+  org_id?: string | null
   project_id?: string | null
   company_id?: string | null
   /** Counterparty profile (client/trade) — powers their RLS read. */
@@ -22,6 +24,14 @@ export type CommLogRow = {
   channel: "email" | "sms" | "call"
   direction: "outbound" | "inbound"
   status?: "logged" | "needs_review" | "ignored"
+  /**
+   * Owning org (0104). Call sites with a session or a validated parent row
+   * should stamp it; when absent, logCommunication resolves it from
+   * project_id/company_id, and only a fully unattributed row falls back to
+   * the column's bridge default (dropped in B4 when the inbound channels
+   * become per-org).
+   */
+  org_id?: string | null
   project_id?: string | null
   company_id?: string | null
   profile_id?: string | null
@@ -55,7 +65,30 @@ export async function logCommunication(row: CommLogRow): Promise<void> {
   try {
     const admin = createSupabaseAdminClient()
     if (!admin) return
+    // Communications are org-scoped (0104) but this insert runs on the admin
+    // client, so RLS can't stamp the org for us. Prefer an explicit org from
+    // the call site, then the attributed project's/company's org (both are
+    // org-scoped roots), and only a row with no attribution at all leans on
+    // the bridge default.
+    let orgId = row.org_id ?? null
+    if (!orgId && row.project_id) {
+      const { data } = await admin
+        .from("projects")
+        .select("org_id")
+        .eq("id", row.project_id)
+        .maybeSingle()
+      orgId = data?.org_id ?? null
+    }
+    if (!orgId && row.company_id) {
+      const { data } = await admin
+        .from("companies")
+        .select("org_id")
+        .eq("id", row.company_id)
+        .maybeSingle()
+      orgId = data?.org_id ?? null
+    }
     const { error } = await admin.from("communications").insert({
+      ...(orgId ? { org_id: orgId } : {}),
       channel: row.channel,
       direction: row.direction,
       status: row.status ?? "logged",

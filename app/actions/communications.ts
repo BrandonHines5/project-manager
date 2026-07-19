@@ -5,6 +5,7 @@ import { z } from "zod"
 import { requireSession, requireStaff } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
+import { getActiveOrgId } from "@/lib/org"
 import { appUrl, sendEmail } from "@/lib/email"
 import { sendQuoSms, normalizeE164 } from "@/lib/quo"
 
@@ -70,7 +71,7 @@ export async function sendSmsReply(input: {
   const { data: comm, error } = await supabase
     .from("communications")
     .select(
-      "id, channel, direction, from_address, to_address, project_id, company_id, profile_id, counterparty_name"
+      "id, org_id, channel, direction, from_address, to_address, project_id, company_id, profile_id, counterparty_name"
     )
     .eq("id", parsed.communication_id)
     .maybeSingle()
@@ -87,6 +88,9 @@ export async function sendSmsReply(input: {
     to,
     content: parsed.body.trim(),
     log: {
+      // The reply belongs to the same org as the thread it answers (the
+      // RLS-scoped read above guarantees that's also the caller's org).
+      org_id: comm.org_id,
       project_id: comm.project_id,
       company_id: comm.company_id,
       profile_id: comm.profile_id,
@@ -270,6 +274,9 @@ export async function composeMessage(input: {
   }
 
   const log = {
+    // Stamp the acting staffer's org — the one place a custom-recipient send
+    // (no company/project to resolve through) can learn its org.
+    org_id: await getActiveOrgId(supabase),
     project_id: projectId,
     company_id: companyId,
     profile_id: profileId,
@@ -338,7 +345,7 @@ export async function clientComposeMessage(input: {
 
   const { data: project, error: pErr } = await supabase
     .from("projects")
-    .select("id, name")
+    .select("id, name, org_id")
     .eq("id", parsed.project_id)
     .maybeSingle()
   if (pErr) return { ok: false, error: pErr.message }
@@ -357,6 +364,9 @@ export async function clientComposeMessage(input: {
   // communications write policy, so this goes through the admin client after
   // the RLS-scoped project read above proved membership).
   const { error: cErr } = await admin.from("communications").insert({
+    // Admin-client insert — stamp the org from the membership-validated
+    // project row (RLS proved the client belongs to this job, hence this org).
+    org_id: project.org_id,
     channel: "email",
     direction: "inbound",
     status: "logged",
@@ -375,10 +385,21 @@ export async function clientComposeMessage(input: {
   // the message is already in the feed either way.
   const link = `/projects/${project.id}/communications`
   const title = `New message from ${clientName} — ${project.name}`
-  const { data: staff } = await admin
-    .from("profiles")
-    .select("id, email, notifications_enabled")
-    .eq("role", "staff")
+  // Only the job's own org hears about it — admin-client read, so the org
+  // filter is explicit (membership via organization_members, like the QBO
+  // webhook's recipient lookup).
+  const { data: members } = await admin
+    .from("organization_members")
+    .select("profile_id")
+    .eq("org_id", project.org_id)
+  const memberIds = (members ?? []).map((m) => m.profile_id)
+  const { data: staff } = memberIds.length
+    ? await admin
+        .from("profiles")
+        .select("id, email, notifications_enabled")
+        .eq("role", "staff")
+        .in("id", memberIds)
+    : { data: [] as { id: string; email: string | null; notifications_enabled: boolean }[] }
   const recipients = (staff ?? []).filter((s) => s.notifications_enabled)
   if (recipients.length) {
     const { error: nErr } = await admin.from("notifications").insert(
