@@ -138,6 +138,10 @@ function QuoIntegrationCard({
       if (result.ok) {
         toast.success(disconnect ? "Quo disconnected" : "Quo settings saved")
         setApiKey("")
+        // router.refresh() re-renders with fresh props but doesn't reset local
+        // state, so clear the disconnected field ourselves — otherwise a stale
+        // number lingers in the input and could be re-submitted on a later save.
+        if (disconnect) setSharedFrom("")
         router.refresh()
       } else {
         toast.error(result.error ?? "Couldn't save the integration.")
@@ -249,6 +253,13 @@ function ResendIntegrationCard({
       if (result.ok) {
         toast.success(disconnect ? "Email disconnected" : "Email settings saved")
         setApiKey("")
+        // router.refresh() re-renders with fresh props but doesn't reset local
+        // state, so clear the disconnected fields ourselves — otherwise a stale
+        // From address/name lingers and could be re-submitted on a later save.
+        if (disconnect) {
+          setFromEmail("")
+          setFromName("")
+        }
         router.refresh()
       } else {
         toast.error(result.error ?? "Couldn't save the integration.")
