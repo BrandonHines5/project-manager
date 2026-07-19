@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { requireStaff } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { getActiveOrgId } from "@/lib/org"
 import {
   baseTag,
   normalizeTag,
@@ -140,13 +141,15 @@ export async function saveTemplateTagConfig(input: {
 
   const { error } = await supabase.from("app_settings").upsert(
     {
+      org_id: await getActiveOrgId(supabase),
       key: TEMPLATE_TAG_CONFIG_KEY,
       value: JSON.stringify({ tags, groups }),
       updated_by: profile.id,
     },
-    { onConflict: "key" }
+    { onConflict: "org_id,key" }
   )
   if (error) return { ok: false, error: error.message }
+  revalidatePath("/settings/template-tags")
   return { ok: true, stripped }
 }
 
@@ -227,11 +230,12 @@ export async function saveDelayReasons(input: {
   const supabase = await createSupabaseServerClient()
   const { error } = await supabase.from("app_settings").upsert(
     {
+      org_id: await getActiveOrgId(supabase),
       key: DELAY_REASONS_KEY,
       value: JSON.stringify(reasons),
       updated_by: profile.id,
     },
-    { onConflict: "key" }
+    { onConflict: "org_id,key" }
   )
   if (error) return { ok: false, error: error.message }
   revalidatePath("/settings/delay-reasons")

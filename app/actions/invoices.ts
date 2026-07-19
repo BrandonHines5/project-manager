@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache"
 import { requireStaff } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
+import { getActiveOrgId } from "@/lib/org"
 import { qboQuery } from "@/lib/quickbooks/client"
 import { getQboConnection } from "@/lib/quickbooks/storage"
 import {
@@ -206,11 +207,12 @@ export async function saveInvoicePaymentRecipients(
   const supabase = await createSupabaseServerClient()
   const { error } = await supabase.from("app_settings").upsert(
     {
+      org_id: await getActiveOrgId(supabase),
       key: RECIPIENTS_KEY,
       value: JSON.stringify(parsed.data),
       updated_by: profile.id,
     },
-    { onConflict: "key" }
+    { onConflict: "org_id,key" }
   )
   if (error) return { ok: false, error: error.message }
   revalidatePath("/settings/quickbooks")

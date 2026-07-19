@@ -165,6 +165,7 @@ async function processNotifications(
         Number(row.balance) < previousBalance
       ) {
         await notifyStaffOfPayment({
+          orgId: conn.org_id,
           projectId: row.project_id,
           projectName,
           docNumber: row.doc_number,
@@ -188,6 +189,7 @@ async function processNotifications(
  * an explicitly saved empty list silences the notification entirely.
  */
 async function notifyStaffOfPayment(opts: {
+  orgId: string
   projectId: string
   projectName: string | null
   docNumber: string | null
@@ -197,7 +199,7 @@ async function notifyStaffOfPayment(opts: {
   try {
     const admin = createSupabaseAdminClient()
     if (!admin) return
-    const recipientIds = await paymentRecipientIds(admin)
+    const recipientIds = await paymentRecipientIds(admin, opts.orgId)
     if (!recipientIds.length) return
 
     const invoiceLabel = opts.docNumber ? `invoice #${opts.docNumber}` : "an invoice"
@@ -228,11 +230,16 @@ async function notifyStaffOfPayment(opts: {
 
 /** Resolve who receives the payment notification (see notifyStaffOfPayment). */
 async function paymentRecipientIds(
-  admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>
+  admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
+  orgId: string
 ): Promise<string[]> {
+  // The admin client bypasses RLS, so the org filter is explicit here —
+  // app_settings is per-org post-0103 and this must read the setting of the
+  // org that owns the QBO connection, never another tenant's.
   const { data: setting } = await admin
     .from("app_settings")
     .select("value")
+    .eq("org_id", orgId)
     .eq("key", "invoice_payment_recipients")
     .maybeSingle()
 
@@ -250,6 +257,16 @@ async function paymentRecipientIds(
     }
   }
 
+  // Both branches stay inside the connection's org: a stale or mistyped id
+  // in the configured list must never notify another org's staff, and the
+  // financial_access fallback means "this org's money people", not everyone's.
+  const { data: members } = await admin
+    .from("organization_members")
+    .select("profile_id")
+    .eq("org_id", orgId)
+  const memberIds = (members ?? []).map((m) => m.profile_id)
+  if (!memberIds.length) return []
+
   if (configured) {
     if (!configured.length) return []
     // Re-check against live staff so a departed or re-roled profile in a
@@ -258,7 +275,7 @@ async function paymentRecipientIds(
       .from("profiles")
       .select("id")
       .eq("role", "staff")
-      .in("id", configured)
+      .in("id", configured.filter((id) => memberIds.includes(id)))
     return (staff ?? []).map((p) => p.id)
   }
 
@@ -267,5 +284,6 @@ async function paymentRecipientIds(
     .select("id")
     .eq("role", "staff")
     .eq("financial_access", true)
+    .in("id", memberIds)
   return (staff ?? []).map((p) => p.id)
 }

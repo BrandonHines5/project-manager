@@ -13,6 +13,10 @@ import type { QboEnvironment } from "./config"
  */
 
 export type QboConnection = {
+  // Which org this connection belongs to (0099 stamped the column; v1 is a
+  // single Hines row). Consumers that read org-scoped settings on behalf of
+  // the webhook must filter by this — the admin client bypasses RLS.
+  org_id: string
   realm_id: string
   environment: QboEnvironment
   access_token: string
