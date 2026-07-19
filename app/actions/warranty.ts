@@ -5,6 +5,7 @@ import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createCrmClient } from "@/lib/supabase/crm"
 import { requireStaff } from "@/lib/auth"
+import { getActiveOrgId } from "@/lib/org"
 import { sendDashboardWebhook } from "@/lib/dashboard"
 import type { TablesUpdate } from "@/lib/db/types"
 
@@ -304,6 +305,7 @@ export async function addWarrantyProjectFromCrm(
   const { data, error } = await supabase
     .from("projects")
     .insert({
+      org_id: await getActiveOrgId(supabase),
       project_number: p.project_number,
       name,
       address: crmAddress(p.street_address, p.city),

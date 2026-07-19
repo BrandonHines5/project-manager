@@ -6,6 +6,7 @@ import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { getCrmProjectStatus } from "@/lib/supabase/crm"
 import { requireStaff } from "@/lib/auth"
+import { getActiveOrgId } from "@/lib/org"
 import { addDays } from "@/lib/utils"
 import {
   dashboardProjectUrl,
@@ -246,6 +247,7 @@ export async function createProject(
   const { data, error } = await supabase
     .from("projects")
     .insert({
+      org_id: await getActiveOrgId(supabase),
       project_number: input.project_number,
       name: input.name,
       address: emptyToNull(input.address),
@@ -1038,6 +1040,9 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
   // unconfigured) we fall back to those, preserving prior behavior.
   const crmStatus = await getCrmProjectStatus(parsed.new_project_number)
   const insertProject = {
+    // A copy stays in the source project's org (RLS already guarantees the
+    // caller is a member — they couldn't read the source otherwise).
+    org_id: source.org_id,
     project_number: parsed.new_project_number,
     name: parsed.new_name,
     address: ovr(parsed.override_address, source.address),

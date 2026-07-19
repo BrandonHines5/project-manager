@@ -2604,7 +2604,7 @@ export type Database = {
           longitude?: number | null
           name: string
           notes?: string | null
-          org_id?: string
+          org_id: string
           project_manager?: string | null
           project_number: string
           project_type?: Database["public"]["Enums"]["project_type"] | null
@@ -3621,6 +3621,7 @@ export type Database = {
           generated_file_paths: string[]
           id: string
           job_label: string | null
+          org_id: string
           paid_at: string | null
           payment_url: string | null
           project_id: string | null
@@ -3637,6 +3638,7 @@ export type Database = {
           generated_file_paths?: string[]
           id?: string
           job_label?: string | null
+          org_id?: string
           paid_at?: string | null
           payment_url?: string | null
           project_id?: string | null
@@ -3653,6 +3655,7 @@ export type Database = {
           generated_file_paths?: string[]
           id?: string
           job_label?: string | null
+          org_id?: string
           paid_at?: string | null
           payment_url?: string | null
           project_id?: string | null
@@ -3667,6 +3670,13 @@ export type Database = {
             columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "utility_requests_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
           {
@@ -3690,6 +3700,11 @@ export type Database = {
       award_bid: {
         Args: { p_create_po: boolean; p_recipient: string }
         Returns: Json
+      }
+      bid_package_in_my_org: { Args: { p_package: string }; Returns: boolean }
+      bid_recipient_in_my_org: {
+        Args: { p_recipient: string }
+        Returns: boolean
       }
       claim_deleted_item: {
         Args: { p_id: string }
@@ -3737,6 +3752,8 @@ export type Database = {
         Args: never
         Returns: Database["public"]["Enums"]["user_role"]
       }
+      daily_log_in_my_org: { Args: { p_log: string }; Returns: boolean }
+      decision_in_my_org: { Args: { p_decision: string }; Returns: boolean }
       finalize_purged_deleted_items: {
         Args: { p_ids: string[]; p_project: string }
         Returns: undefined
@@ -3768,6 +3785,9 @@ export type Database = {
       next_decision_number: { Args: { p_project: string }; Returns: number }
       next_po_number: { Args: { p_project: string }; Returns: number }
       normalize_phone: { Args: { p: string }; Returns: string }
+      payment_in_my_org: { Args: { p_payment: string }; Returns: boolean }
+      project_in_my_org: { Args: { p_project: string }; Returns: boolean }
+      purchase_order_in_my_org: { Args: { p_po: string }; Returns: boolean }
       save_company_with_trades: {
         Args: {
           p_address: string
@@ -3781,6 +3801,7 @@ export type Database = {
         }
         Returns: string
       }
+      schedule_item_in_my_org: { Args: { p_item: string }; Returns: boolean }
       set_project_label: {
         Args: { p_add: boolean; p_ids: string[]; p_label: string }
         Returns: number
