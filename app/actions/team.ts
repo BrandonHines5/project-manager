@@ -6,6 +6,7 @@ import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { requireStaff } from "@/lib/auth"
+import { getActiveOrgId } from "@/lib/org"
 
 const optStr = z.string().nullish()
 
@@ -156,9 +157,30 @@ export async function inviteTeamMember(input: InviteTeamMemberInputT) {
   const newId = data.user?.id
   if (!newId) throw new Error("createUser succeeded but returned no user id.")
 
+  // 1b. Enroll the new person in the acting staffer's org BEFORE the promote
+  // below — post-0105 the staff-session profiles policy requires a shared org,
+  // so an org-less profile would be untouchable (and invisible on /team).
+  // Membership writes are service-role-only until B5, hence the admin client;
+  // a delete of the auth user cascades the membership away, so the rollback
+  // path needs no extra cleanup.
+  const supabase = await createSupabaseServerClient()
+  const { error: memberErr } = await admin.from("organization_members").insert({
+    org_id: await getActiveOrgId(supabase),
+    profile_id: newId,
+    member_role: "member",
+  })
+  if (memberErr) {
+    const { error: rollbackErr } = await admin.auth.admin.deleteUser(newId)
+    if (rollbackErr) {
+      throw new Error(
+        `Org enrollment failed: ${memberErr.message}. Rollback also failed (orphaned auth user ${newId}): ${rollbackErr.message}`
+      )
+    }
+    throw new Error(memberErr.message)
+  }
+
   // 2. Promote to the requested role + set full_name. The calling session is
   // staff, so prevent_role_escalation lets this through.
-  const supabase = await createSupabaseServerClient()
   const { error: upErr } = await supabase
     .from("profiles")
     .update({ role: parsed.role, full_name: parsed.full_name })

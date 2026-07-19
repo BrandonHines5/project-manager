@@ -115,8 +115,26 @@ Order (blast radius, smallest first):
    org-filter `recentProjectForCompany` + the email plus-tag project
    validation (both admin reads, today implicitly single-org). Gate passed
    both ways with write probes.
-- Also in this stage: `profiles` read policies (staff can currently read all
-  profiles) become org-scoped via shared membership.
+- **DONE (0105)** Also in this stage: `profiles` read policies become
+  org-scoped via shared membership — helper `shares_org_with(profile)`
+  (definer). `profiles_self_read`'s staff arm and `profiles_staff_all`
+  require a shared org (self access untouched; clients/trades never had
+  cross-profile read). Same treatment for the profile-keyed stragglers
+  `notification_preferences` (staff policy) and `ai_plan_applications`
+  (staff read via `applied_by`). Companion code: `inviteTeamMember` enrolls
+  the new staffer in the acting staffer's org BEFORE the staff-session role
+  promote (which the new policy would otherwise reject), and client invite
+  acceptance enrolls the client in the invite project's org (post-0099
+  clients otherwise fail every `is_org_member` gate, e.g. the disclaimer
+  read). Zero membership orphans verified pre-migration. Ad-hoc dashboard
+  user creation must add a membership row manually until B5. Gate passed:
+  test-org staffer sees only itself; Hines staff see all-but-test-org;
+  a client sees only self; cross-org profile writes touch 0 rows.
+
+**Stage B2 is COMPLETE** — every module's RLS is org-scoped. Remaining
+bridge defaults (dropped in B4 when integrations become per-org):
+`insurance_documents`, `communications`, `utility_requests`, `app_settings`
+has none (0103), plus none on catalogs/companies/projects.
 
 **Testing gate for every B2 PR**: a second throwaway org + test user in the
 database; assert the test user sees zero Hines rows and vice versa. This is

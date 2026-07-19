@@ -145,6 +145,28 @@ export async function acceptClientInvite(input: {
     return { ok: false, error: memberErr.message }
   }
 
+  // Enroll them in the project's org (idempotent). Without this a post-0099
+  // client fails every is_org_member gate — e.g. reading the decision
+  // disclaimer (0103). Membership writes are service-role-only until B5, so
+  // this rides the admin client; best-effort like the notification fan-outs
+  // (a failure here must not eat an otherwise-accepted invite — the 0099-era
+  // backfill pattern can repair it).
+  const { data: inviteProject } = await admin
+    .from("projects")
+    .select("org_id")
+    .eq("id", invite.project_id)
+    .maybeSingle()
+  if (inviteProject?.org_id) {
+    const { error: orgErr } = await admin.from("organization_members").insert({
+      org_id: inviteProject.org_id,
+      profile_id: profileId,
+      member_role: "member",
+    })
+    if (orgErr && (orgErr as { code?: string }).code !== "23505") {
+      console.warn("[acceptInvite] org enrollment failed:", orgErr.message)
+    }
+  }
+
   // Claim the invite (compare-and-swap on accepted_at).
   await admin
     .from("client_invites")
