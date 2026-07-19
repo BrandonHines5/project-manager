@@ -7,6 +7,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { getCrmProjectStatus } from "@/lib/supabase/crm"
 import { requireStaff } from "@/lib/auth"
 import { getActiveOrgId } from "@/lib/org"
+import { assertActiveOrgWritable } from "@/lib/sandbox"
 import { addDays } from "@/lib/utils"
 import {
   dashboardProjectUrl,
@@ -125,6 +126,7 @@ export async function createProject(
   formData: FormData
 ): Promise<ProjectFormState> {
   const profile = await requireStaff()
+  await assertActiveOrgWritable()
   const parsed = ProjectInput.safeParse(Object.fromEntries(formData))
   if (!parsed.success) {
     const fieldErrors: Record<string, string> = {}
@@ -792,6 +794,7 @@ export type DuplicateProjectInputT = z.infer<typeof DuplicateProjectInput>
  */
 export async function duplicateProject(input: DuplicateProjectInputT) {
   const profile = await requireStaff()
+  await assertActiveOrgWritable()
   const result = DuplicateProjectInput.safeParse(input)
   if (!result.success) {
     const first = result.error.issues[0]

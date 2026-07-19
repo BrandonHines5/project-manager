@@ -5,6 +5,7 @@ import { after } from "next/server"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireSession, requireStaff } from "@/lib/auth"
+import { assertActiveOrgWritable } from "@/lib/sandbox"
 import { sendDashboardWebhook } from "@/lib/dashboard"
 import { sendQuoSms, normalizeE164 } from "@/lib/quo"
 import { notifyCommentPosted } from "@/lib/comms/notify"
@@ -74,6 +75,7 @@ function nz(v: string | null | undefined) {
 
 export async function saveDailyLog(input: DailyLogInputT) {
   const profile = await requireStaff()
+  await assertActiveOrgWritable()
   const result = DailyLogInput.safeParse(input)
   if (!result.success) {
     const first = result.error.issues[0]

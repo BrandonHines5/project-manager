@@ -5,6 +5,7 @@ import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
 import { getActiveOrgId } from "@/lib/org"
+import { assertActiveOrgWritable } from "@/lib/sandbox"
 import { parseSpreadsheet } from "@/lib/import/spreadsheet"
 
 // Budget data is money-out (what we expect to pay), same sensitivity as
@@ -162,6 +163,7 @@ const BudgetLineInput = z.object({
 
 export async function saveBudgetLine(input: z.infer<typeof BudgetLineInput>) {
   const profile = await requireBudgetEditor()
+  await assertActiveOrgWritable()
   const parsed = BudgetLineInput.parse(input)
   const supabase = await createSupabaseServerClient()
   // Merge-upsert: only the provided columns are written, so setting the

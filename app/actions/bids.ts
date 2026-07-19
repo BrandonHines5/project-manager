@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
+import { assertActiveOrgWritable } from "@/lib/sandbox"
 import { sendEmail, appUrl } from "@/lib/email"
 import { sendQuoSms, normalizeE164 } from "@/lib/quo"
 import { generateAccessToken } from "@/lib/tokens"
@@ -201,6 +202,7 @@ async function reconcileAttachments(
 
 export async function saveBidPackage(input: BidPackageInputT) {
   const profile = await requireStaff()
+  await assertActiveOrgWritable()
   const parsed = parseOrThrow(BidPackageInput, input)
   const supabase = await createSupabaseServerClient()
 
