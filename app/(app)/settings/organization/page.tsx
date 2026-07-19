@@ -68,6 +68,10 @@ export default async function OrganizationSettingsPage() {
   let quoConnected = false
   let quoSharedFrom = ""
   let quoError = false
+  let resendConnected = false
+  let resendFromEmail = ""
+  let resendFromName = ""
+  let resendError = false
   const admin = createSupabaseAdminClient()
   if (admin) {
     try {
@@ -78,10 +82,29 @@ export default async function OrganizationSettingsPage() {
     } catch {
       quoError = true
     }
+    try {
+      const integ = await getOrgIntegration(admin, orgId, "resend")
+      const fe = integ?.config?.fromEmail
+      const fn = integ?.config?.fromName
+      resendFromEmail = typeof fe === "string" ? fe : ""
+      resendFromName = typeof fn === "string" ? fn : ""
+      // Match resolveResendConfig's send criteria: a key alone can't send —
+      // it also needs a From address. Otherwise a key-only org would show
+      // "Connected" while every outbound email silently no-ops.
+      resendConnected = Boolean(
+        integ?.enabled && integ.secrets?.apiKey && resendFromEmail
+      )
+    } catch {
+      resendError = true
+    }
   }
-  // The legacy (Hines) org keeps working off env QUO_API_KEY even with no
-  // row — surface that so the editor doesn't imply it's disconnected.
+  // The legacy (Hines) org keeps working off env creds even with no row —
+  // surface that so the editor doesn't imply it's disconnected.
   const quoEnvFallback = orgId === LEGACY_ORG_ID && !!process.env.QUO_API_KEY
+  const resendEnvFallback =
+    orgId === LEGACY_ORG_ID &&
+    !!process.env.RESEND_API_KEY &&
+    !!process.env.RESEND_FROM_EMAIL
 
   const config = parseBrandConfig(org.settings, org.name)
   const members: OrgMemberRow[] = (memberRows ?? []).map((m) => ({
@@ -127,6 +150,11 @@ export default async function OrganizationSettingsPage() {
           quoSharedFrom={quoSharedFrom}
           quoError={quoError}
           quoEnvFallback={quoEnvFallback}
+          resendConnected={resendConnected}
+          resendFromEmail={resendFromEmail}
+          resendFromName={resendFromName}
+          resendError={resendError}
+          resendEnvFallback={resendEnvFallback}
         />
       </div>
     </>

@@ -266,8 +266,29 @@ PowerShell keygen one-liner is in the session log). Per-integration wiring:
   acting staffer's org). Probes: org-less inserts now fail (23502 / 42501
   via the RLS null-org check) and stamped inserts work. Comms inbound
   email gets the same treatment when comms goes per-org.
-- **Microsoft Graph**: per-org tenant credentials (optional; Resend fallback
-  covers orgs without M365).
+- **Resend outbound (email)**: **DONE (part 6, 0-migration)** — the API key
+  + verified From address move from env singletons into `org_integrations`
+  provider `resend` (`secrets.apiKey`, `config.fromEmail`/`fromName`).
+  `lib/email.ts:resolveResendConfig(orgId)` reads them, env `RESEND_API_KEY`
+  / `RESEND_FROM_EMAIL` as the fallback for the LEGACY org ONLY — a
+  non-legacy org with no row (or a decrypt failure) reads as "not
+  connected", and the Resend transport NO-OPS rather than sending a client
+  email out of Hines' address. `sendEmail` resolves org from `opts.orgId` →
+  `log.org_id` → the staffer's membership → the attributed project → company
+  (no call-site changes; the shared `resolveOrgForProfile` moved to
+  `lib/integrations/org.ts` and both senders use it). A non-legacy org
+  enters its own Resend key + From address + optional From name in the
+  Integrations section of `/settings/organization` (`saveResendIntegration`,
+  owner/admin app-layer gate, key write-only, decrypt failure → "Connection
+  error"). Env Resend keeps `communications`' bridge alive for fully-
+  unattributed inbound only.
+- **Microsoft Graph**: **DONE (part 6)** — Graph is Hines' Microsoft-365
+  tenant (a single-tenant app), so it serves the LEGACY org only. A
+  staffer's OWN mailbox stays their identity for any org, but the shared
+  `MS_SYSTEM_MAILBOX` is gated behind `canUseSharedInfra` (legacy/bridge
+  only): a non-legacy cron/system send skips Graph entirely and goes out
+  through that org's Resend. Other orgs don't need M365 — their outbound is
+  Resend end to end.
 - **CRM / SpecMagician / dashboard**: Hines-only; become org #1 settings and
   simply absent for other orgs (all call sites already no-op when unset).
 - Cron jobs iterate orgs (insurance reminders, digests) instead of assuming
@@ -371,9 +392,10 @@ PowerShell keygen one-liner is in the session log). Per-integration wiring:
 
 **Substantively complete.** Every root table is org-scoped with RLS
 enforcement (B2), branding + utilities are org-driven (B3), all live
-integrations — insurance ingest, QBO connections, Quo — are per-org with
-an org-admin integrations editor and app-layer AES-256-GCM secret storage
-(B4), and org management (active-org switcher, settings/brand editor,
+integrations — insurance ingest, QBO connections, Quo, and outbound email
+(Resend) — are per-org with an org-admin integrations editor and app-layer
+AES-256-GCM secret storage (B4), and org management (active-org switcher,
+settings/brand editor,
 member-management RPCs, provisioning RPC) is shipped (B5). Three of four
 0099 bridge defaults are dropped; the last (`communications`) is blocked on
 per-org phone infrastructure, not code. The testing gate — a second

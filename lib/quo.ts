@@ -1,7 +1,7 @@
 import "server-only"
 import { logCommunication, type CommLogContext } from "@/lib/comms/log"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
-import { getOrgIntegration } from "@/lib/integrations/org"
+import { getOrgIntegration, resolveOrgForProfile } from "@/lib/integrations/org"
 import { LEGACY_ORG_ID } from "@/lib/org"
 
 /** org_integrations provider slug for Quo/OpenPhone. */
@@ -60,33 +60,6 @@ export async function resolveQuoConfig(
     sharedFrom = sharedFrom ?? process.env.QUO_FROM_NUMBER ?? null
   }
   return { apiKey, sharedFrom }
-}
-
-/**
- * The org a staffer belongs to, resolved admin-side (the send path has no
- * session). Earliest membership — one org per user today. `failed`
- * distinguishes a query ERROR (caller must fail closed — a transient hiccup
- * must never borrow Hines' env key) from a genuine no-membership (`orgId`
- * null, `failed` false — the single-tenant bridge).
- */
-async function resolveOrgForProfile(
-  profileId: string | null | undefined
-): Promise<{ orgId: string | null; failed: boolean }> {
-  if (!profileId) return { orgId: null, failed: false }
-  const admin = createSupabaseAdminClient()
-  if (!admin) return { orgId: null, failed: false }
-  const { data, error } = await admin
-    .from("organization_members")
-    .select("org_id")
-    .eq("profile_id", profileId)
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle()
-  if (error) {
-    console.warn("[quo] profile → org lookup failed:", error.message)
-    return { orgId: null, failed: true }
-  }
-  return { orgId: data?.org_id ?? null, failed: false }
 }
 
 /**
