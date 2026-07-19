@@ -27,6 +27,9 @@ const ERROR_LABELS: Record<string, string> = {
   save_failed: "Connected to QuickBooks, but couldn't store the connection. Try again.",
   not_configured: "QuickBooks isn't configured yet. Set the QBO_* environment variables, then retry.",
   authorize_url_failed: "Couldn't build the QuickBooks authorization link. Check the app configuration.",
+  no_org: "Your account isn't in an organization, so the connection couldn't be saved.",
+  realm_other_org:
+    "That QuickBooks company is already connected to a different organization. Disconnect it there first.",
 }
 
 export function QuickBooksSettingsClient({

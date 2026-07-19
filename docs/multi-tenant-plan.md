@@ -219,8 +219,19 @@ undefined=keep / null=clear / object=replace semantics). Provider wiring
 moves over one integration at a time (below) once
 `INTEGRATION_SECRETS_KEY` is set in Vercel (asked Brandon 2026-07-19; the
 PowerShell keygen one-liner is in the session log). Per-integration wiring:
-- **QBO**: `qbo_connection` already carries org_id; the OAuth connect flow
-  keys state by org; webhook resolves org via realmId lookup.
+- **QBO**: **DONE (part 3)** — one Intuit app serves the platform (client
+  id/secret + webhook verifier stay env), but connections are per-org:
+  `getQboConnection(orgId)` / `getQboConnectionByRealm(realmId)`, every
+  client helper threads orgId (`qboGet/Query/Post(orgId, …)`), staff
+  actions + the settings page resolve the active org, the OAuth callback
+  stamps the connecting staffer's org and REFUSES a realm already owned by
+  a different org (`realm_other_org`), and the webhook groups events by
+  realm → connection row → org (invoice project lookups scope to that org
+  since customer ids are only unique within a realm). 0114 dropped the
+  qbo_connection bridge default (org-less inserts now 23502) and enforces
+  EXACTLY one connection per org (unique index; the save replaces the
+  org's prior row on a company switch, and PO pushes derive their org from
+  the OWNING project, not the caller's active org).
 - **Quo/OpenPhone**: per-org API key + numbers; inbound webhook resolves org
   by phone-number id.
 - **Resend inbound**: **DONE for insurance (part 2)** — the recipient

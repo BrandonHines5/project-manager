@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto"
 import { NextRequest, NextResponse, after } from "next/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
-import { getQboConnection } from "@/lib/quickbooks/storage"
+import { getQboConnectionByRealm } from "@/lib/quickbooks/storage"
 import {
   invoiceIdsFromPayment,
   syncSingleInvoice,
@@ -107,44 +107,60 @@ export async function POST(req: NextRequest) {
 async function processNotifications(
   notifications: NonNullable<WebhookPayload["eventNotifications"]>
 ) {
-  const conn = await getQboConnection()
-  if (!conn) return
+  // One Intuit app serves every org, so a delivery can carry several realms —
+  // each realm resolves to its own org's connection and processes under it.
+  const byRealm = new Map<string, WebhookEntity[]>()
+  for (const notification of notifications) {
+    if (!notification.realmId) continue
+    const list = byRealm.get(notification.realmId) ?? []
+    list.push(...(notification.dataChangeEvent?.entities ?? []))
+    byRealm.set(notification.realmId, list)
+  }
 
+  for (const [realmId, entities] of byRealm) {
+    // Events for a company we're not connected to are none of ours.
+    const conn = await getQboConnectionByRealm(realmId)
+    if (!conn) continue
+    await processRealmEntities(conn.org_id, realmId, entities)
+  }
+}
+
+async function processRealmEntities(
+  orgId: string,
+  realmId: string,
+  entities: WebhookEntity[]
+) {
   // One invoice can be touched by several entities in a batch (its own Update
   // plus a Payment) — collapse to one sync per invoice, keeping the strongest
   // signal (a Void op must not be downgraded by a plain Update).
   const invoiceOps = new Map<string, { voided: boolean }>()
 
-  for (const notification of notifications) {
-    // Events for a company we're no longer connected to are none of ours.
-    if (notification.realmId !== conn.realm_id) continue
-    for (const entity of notification.dataChangeEvent?.entities ?? []) {
-      if (!entity.id) continue
-      if (entity.name === "Invoice") {
-        const prior = invoiceOps.get(entity.id)
-        invoiceOps.set(entity.id, {
-          voided: (prior?.voided ?? false) || entity.operation === "Void",
-        })
-      } else if (entity.name === "Payment") {
-        try {
-          for (const invoiceId of await invoiceIdsFromPayment(entity.id)) {
-            if (!invoiceOps.has(invoiceId)) {
-              invoiceOps.set(invoiceId, { voided: false })
-            }
+  for (const entity of entities) {
+    if (!entity.id) continue
+    if (entity.name === "Invoice") {
+      const prior = invoiceOps.get(entity.id)
+      invoiceOps.set(entity.id, {
+        voided: (prior?.voided ?? false) || entity.operation === "Void",
+      })
+    } else if (entity.name === "Payment") {
+      try {
+        for (const invoiceId of await invoiceIdsFromPayment(orgId, entity.id)) {
+          if (!invoiceOps.has(invoiceId)) {
+            invoiceOps.set(invoiceId, { voided: false })
           }
-        } catch (e) {
-          console.error(
-            `[qbo webhook] payment ${entity.id} lookup failed:`,
-            e instanceof Error ? e.message : String(e)
-          )
         }
+      } catch (e) {
+        console.error(
+          `[qbo webhook] payment ${entity.id} lookup failed:`,
+          e instanceof Error ? e.message : String(e)
+        )
       }
     }
   }
 
   for (const [invoiceId, op] of invoiceOps) {
     try {
-      const result = await syncSingleInvoice(invoiceId, {
+      const result = await syncSingleInvoice(realmId, invoiceId, {
         voided: op.voided,
       })
       if ("error" in result) {
@@ -165,7 +181,7 @@ async function processNotifications(
         Number(row.balance) < previousBalance
       ) {
         await notifyStaffOfPayment({
-          orgId: conn.org_id,
+          orgId,
           projectId: row.project_id,
           projectName,
           docNumber: row.doc_number,

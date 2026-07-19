@@ -28,10 +28,12 @@ const searchSchema = z.string().trim().min(2).max(80)
 export async function searchQboCustomers(
   query: string
 ): Promise<{ ok: true; customers: QboCustomerHit[] } | { ok: false; error: string }> {
-  await requireStaff()
+  const profile = await requireStaff()
   const parsed = searchSchema.safeParse(query)
   if (!parsed.success) return { ok: false, error: "Type at least 2 characters." }
-  const conn = await getQboConnection()
+  const supabase = await createSupabaseServerClient()
+  const orgId = await getActiveOrgId(supabase, profile.id)
+  const conn = await getQboConnection(orgId)
   if (!conn) return { ok: false, error: "QuickBooks is not connected." }
 
   // % and _ are LIKE wildcards with no documented escape — strip them, then
@@ -42,6 +44,7 @@ export async function searchQboCustomers(
     .replace(/'/g, "\\'")
   try {
     const json = (await qboQuery(
+      orgId,
       `SELECT Id, DisplayName, FullyQualifiedName FROM Customer WHERE Active = true AND DisplayName LIKE '%${term}%' MAXRESULTS 20`
     )) as {
       QueryResponse?: {
@@ -89,7 +92,7 @@ export async function linkProjectQboCustomer(input: {
     .from("projects")
     .update({ qbo_customer_id: customer_id, qbo_customer_name: customer_name })
     .eq("id", project_id)
-    .select("id")
+    .select("id, org_id")
     .maybeSingle()
   if (error) return { ok: false, error: error.message }
   if (!updated) return { ok: false, error: "Project not found." }
@@ -104,7 +107,8 @@ export async function linkProjectQboCustomer(input: {
       .eq("project_id", project_id)
   }
 
-  const result = await syncProjectInvoicesFromQbo({
+  // Sync under the PROJECT's org — the connection that owns this job.
+  const result = await syncProjectInvoicesFromQbo(updated.org_id, {
     id: project_id,
     qbo_customer_id: customer_id,
   })
@@ -231,7 +235,7 @@ export async function syncProjectInvoices(input: {
   const supabase = await createSupabaseServerClient()
   const { data: project, error } = await supabase
     .from("projects")
-    .select("id, qbo_customer_id")
+    .select("id, org_id, qbo_customer_id")
     .eq("id", project_id)
     .maybeSingle()
   if (error) return { ok: false, error: error.message }
@@ -240,7 +244,7 @@ export async function syncProjectInvoices(input: {
     return { ok: false, error: "Link a QuickBooks customer first." }
   }
 
-  const result = await syncProjectInvoicesFromQbo({
+  const result = await syncProjectInvoicesFromQbo(project.org_id, {
     id: project.id,
     qbo_customer_id: project.qbo_customer_id,
   })

@@ -42,11 +42,12 @@ export class QboNotConnectedError extends Error {
 
 /** Authenticated request to `/v3/company/{realm}/{path}`, retrying once on 401. */
 async function qboRequest(
+  orgId: string,
   path: string,
   init: RequestInit,
   attempt = 0
 ): Promise<unknown> {
-  const auth = await getValidAccessToken(attempt > 0)
+  const auth = await getValidAccessToken(orgId, attempt > 0)
   if (!auth) throw new QboNotConnectedError()
 
   const base = qboApiBase(auth.connection.environment)
@@ -65,7 +66,7 @@ async function qboRequest(
 
   // One retry on 401 (token invalidated early) — force a refresh, then give up.
   if (res.status === 401 && attempt === 0) {
-    return qboRequest(path, init, 1)
+    return qboRequest(orgId, path, init, 1)
   }
   const text = await res.text().catch(() => "")
   const intuitTid = res.headers.get("intuit_tid")
@@ -76,19 +77,19 @@ async function qboRequest(
   return text ? JSON.parse(text) : null
 }
 
-/** GET a QBO entity/query path. */
-export function qboGet(path: string): Promise<unknown> {
-  return qboRequest(path, { method: "GET" })
+/** GET a QBO entity/query path (against the org's connected realm). */
+export function qboGet(orgId: string, path: string): Promise<unknown> {
+  return qboRequest(orgId, path, { method: "GET" })
 }
 
 /** Run a QBO SQL-like query (SELECT ... FROM Entity WHERE ...). */
-export function qboQuery(query: string): Promise<unknown> {
-  return qboGet(`query?query=${encodeURIComponent(query)}`)
+export function qboQuery(orgId: string, query: string): Promise<unknown> {
+  return qboGet(orgId, `query?query=${encodeURIComponent(query)}`)
 }
 
 /** POST a body to a QBO entity path (create/update). */
-export function qboPost(path: string, body: unknown): Promise<unknown> {
-  return qboRequest(path, {
+export function qboPost(orgId: string, path: string, body: unknown): Promise<unknown> {
+  return qboRequest(orgId, path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -108,13 +109,14 @@ type QboNamedRow = {
 // QBO returns query rows under a key equal to the entity name
 // (QueryResponse.Item / .Customer / .Class). Pages via STARTPOSITION/MAXRESULTS
 // so a company with >1000 active rows isn't silently truncated.
-async function queryOptions(entity: string): Promise<QboOption[]> {
+async function queryOptions(orgId: string, entity: string): Promise<QboOption[]> {
   const out: QboOption[] = []
   const pageSize = 1000
   const maxPages = 20 // 20k active rows is far beyond any real picklist
   for (let page = 0; page < maxPages; page++) {
     const start = page * pageSize + 1
     const json = (await qboQuery(
+      orgId,
       `SELECT * FROM ${entity} WHERE Active = true STARTPOSITION ${start} MAXRESULTS ${pageSize}`
     )) as { QueryResponse?: Record<string, QboNamedRow[]> }
     const rows = json?.QueryResponse?.[entity] ?? []
@@ -132,32 +134,34 @@ async function queryOptions(entity: string): Promise<QboOption[]> {
 }
 
 /** Active Items (Products/Services) — the cost-code analog for PO lines. */
-export function listItems(): Promise<QboOption[]> {
-  return queryOptions("Item")
+export function listItems(orgId: string): Promise<QboOption[]> {
+  return queryOptions(orgId, "Item")
 }
 
 /** Active Customers (jobs) for the default CustomerRef. */
-export function listCustomers(): Promise<QboOption[]> {
-  return queryOptions("Customer")
+export function listCustomers(orgId: string): Promise<QboOption[]> {
+  return queryOptions(orgId, "Customer")
 }
 
 /** Active Classes for the default ClassRef. */
-export function listClasses(): Promise<QboOption[]> {
-  return queryOptions("Class")
+export function listClasses(orgId: string): Promise<QboOption[]> {
+  return queryOptions(orgId, "Class")
 }
 
 /** The Accounts Payable account id (target of a PO's APAccountRef). */
-export async function getApAccountId(): Promise<string | null> {
+export async function getApAccountId(orgId: string): Promise<string | null> {
   const json = (await qboQuery(
+    orgId,
     "SELECT * FROM Account WHERE AccountType = 'Accounts Payable' MAXRESULTS 1"
   )) as { QueryResponse?: { Account?: Array<{ Id?: string }> } }
   return json?.QueryResponse?.Account?.[0]?.Id ?? null
 }
 
 /** Resolve a QBO Vendor id by exact DisplayName (case-insensitive). */
-export async function findVendorIdByName(name: string): Promise<string | null> {
+export async function findVendorIdByName(orgId: string, name: string): Promise<string | null> {
   const escaped = name.replace(/\\/g, "\\\\").replace(/'/g, "\\'")
   const json = (await qboQuery(
+    orgId,
     `SELECT * FROM Vendor WHERE DisplayName = '${escaped}'`
   )) as { QueryResponse?: { Vendor?: Array<{ Id?: string }> } }
   return json?.QueryResponse?.Vendor?.[0]?.Id ?? null
@@ -165,10 +169,12 @@ export async function findVendorIdByName(name: string): Promise<string | null> {
 
 /** Look up an existing PurchaseOrder by DocNumber (idempotency check). */
 export async function findPurchaseOrderByDocNumber(
+  orgId: string,
   docNumber: string
 ): Promise<{ Id: string; SyncToken: string } | null> {
   const escaped = docNumber.replace(/\\/g, "\\\\").replace(/'/g, "\\'")
   const json = (await qboQuery(
+    orgId,
     `SELECT * FROM PurchaseOrder WHERE DocNumber = '${escaped}' MAXRESULTS 1`
   )) as { QueryResponse?: { PurchaseOrder?: Array<{ Id?: string; SyncToken?: string }> } }
   const po = json?.QueryResponse?.PurchaseOrder?.[0]
@@ -184,8 +190,8 @@ export type QboCompanyInfo = {
 }
 
 /** The connected company's profile (name shown in the settings UI). */
-export async function getCompanyInfo(): Promise<QboCompanyInfo | null> {
-  const json = (await qboQuery("SELECT * FROM CompanyInfo")) as {
+export async function getCompanyInfo(orgId: string): Promise<QboCompanyInfo | null> {
+  const json = (await qboQuery(orgId, "SELECT * FROM CompanyInfo")) as {
     QueryResponse?: { CompanyInfo?: QboCompanyInfo[] }
   }
   return json?.QueryResponse?.CompanyInfo?.[0] ?? null
@@ -196,7 +202,10 @@ export async function getCompanyInfo(): Promise<QboCompanyInfo | null> {
  * diagnostic. Every field is optional; a failing sub-query is reported rather
  * than aborting the whole diagnostic.
  */
-export async function fetchDiagnosticSnapshot(exampleDocNumber?: string): Promise<{
+export async function fetchDiagnosticSnapshot(
+  orgId: string,
+  exampleDocNumber?: string
+): Promise<{
   company: QboCompanyInfo | null
   vendors: unknown[]
   accounts: unknown[]
@@ -215,11 +224,11 @@ export async function fetchDiagnosticSnapshot(exampleDocNumber?: string): Promis
     }
   }
 
-  const company = await safe("company", () => getCompanyInfo(), null)
+  const company = await safe("company", () => getCompanyInfo(orgId), null)
   const vendors = await safe(
     "vendors",
     async () =>
-      ((await qboQuery("SELECT * FROM Vendor WHERE Active = true MAXRESULTS 10")) as {
+      ((await qboQuery(orgId, "SELECT * FROM Vendor WHERE Active = true MAXRESULTS 10")) as {
         QueryResponse?: { Vendor?: unknown[] }
       })?.QueryResponse?.Vendor ?? [],
     [] as unknown[]
@@ -228,6 +237,7 @@ export async function fetchDiagnosticSnapshot(exampleDocNumber?: string): Promis
     "accounts",
     async () =>
       ((await qboQuery(
+        orgId,
         "SELECT * FROM Account WHERE AccountType IN ('Expense','Cost of Goods Sold','Accounts Payable') MAXRESULTS 20"
       )) as { QueryResponse?: { Account?: unknown[] } })?.QueryResponse?.Account ?? [],
     [] as unknown[]
@@ -235,7 +245,7 @@ export async function fetchDiagnosticSnapshot(exampleDocNumber?: string): Promis
   const items = await safe(
     "items",
     async () =>
-      ((await qboQuery("SELECT * FROM Item MAXRESULTS 20")) as {
+      ((await qboQuery(orgId, "SELECT * FROM Item MAXRESULTS 20")) as {
         QueryResponse?: { Item?: unknown[] }
       })?.QueryResponse?.Item ?? [],
     [] as unknown[]
@@ -249,6 +259,7 @@ export async function fetchDiagnosticSnapshot(exampleDocNumber?: string): Promis
         ? ` WHERE DocNumber = '${exampleDocNumber.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`
         : ""
       const json = (await qboQuery(
+        orgId,
         `SELECT * FROM PurchaseOrder${where} MAXRESULTS 1`
       )) as { QueryResponse?: { PurchaseOrder?: unknown[] } }
       return json?.QueryResponse?.PurchaseOrder?.[0] ?? null

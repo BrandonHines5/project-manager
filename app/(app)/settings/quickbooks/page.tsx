@@ -1,5 +1,7 @@
 import { requireStaff } from "@/lib/auth"
 import { appUrl } from "@/lib/email"
+import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { getActiveOrgId } from "@/lib/org"
 import { qboConfigured } from "@/lib/quickbooks/config"
 import { getQboStatus } from "@/lib/quickbooks/storage"
 import { getQboPushDefaults } from "@/app/actions/quickbooks"
@@ -15,8 +17,10 @@ export default async function QuickBooksSettingsPage({
   searchParams: Promise<{ connected?: string; error?: string }>
 }) {
   // Staff-only; requireStaff redirects clients/trades to /projects.
-  await requireStaff()
-  const status = await getQboStatus()
+  const profile = await requireStaff()
+  const supabase = await createSupabaseServerClient()
+  const orgId = await getActiveOrgId(supabase, profile.id)
+  const status = await getQboStatus(orgId)
   // Only fetch push defaults when connected (getQboPushDefaults is cheap, but
   // keep the shape tidy).
   const [params, pushDefaults, paymentRecipients] = await Promise.all([
