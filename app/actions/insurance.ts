@@ -22,6 +22,7 @@ import {
   type VendorDocExtraction,
 } from "@/lib/insurance/extract"
 import { userError } from "@/lib/user-error"
+import { getActiveOrgId } from "@/lib/org"
 import type { Json } from "@/lib/db/types"
 
 const INSURANCE_PATH = "/companies/vendor-documents"
@@ -56,6 +57,9 @@ export async function processStoredInsuranceDocument(input: {
     })
     .parse(input)
 
+  // The pipeline runs on the admin client, so the acting staffer's org is
+  // resolved here (session-scoped) and stamped explicitly.
+  const supabase = await createSupabaseServerClient()
   const result = await ingestInsuranceDocument({
     storagePath: parsed.storagePath,
     fileName: parsed.fileName,
@@ -64,6 +68,7 @@ export async function processStoredInsuranceDocument(input: {
     source: "manual",
     companyId: parsed.companyId ?? undefined,
     docKind: parsed.docKind,
+    orgId: await getActiveOrgId(supabase),
   })
   revalidatePath(INSURANCE_PATH)
   return result

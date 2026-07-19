@@ -69,7 +69,7 @@ export async function POST(req: Request) {
 
   const { data: company } = await admin
     .from("companies")
-    .select("id")
+    .select("id, org_id")
     .eq("insurance_upload_token", token)
     .maybeSingle()
   if (!company) {
@@ -84,6 +84,9 @@ export async function POST(req: Request) {
     fileSize: bytes.length,
     source: "upload",
     companyId: company.id,
+    // The token company's org owns the document (admin-client insert, so
+    // the stamp is explicit rather than RLS-derived).
+    orgId: company.org_id,
   })
 
   if (!result.ok) {

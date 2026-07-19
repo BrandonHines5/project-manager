@@ -43,6 +43,15 @@ export type IngestInput = {
   emailSubject?: string
   // Known company (tokenized sub upload, or staff picked one).
   companyId?: string
+  /**
+   * Owning org, when the caller knows it (B4 groundwork): the sub upload
+   * route passes the token company's org, staff manual upload the acting
+   * staffer's. Stamped on the document row AND used to scope company
+   * matching. Absent (the shared inbound-email webhook) the row lands on
+   * the bridge default and matching stays directory-wide — that channel
+   * becomes per-org in B4 proper, which is when the default drops.
+   */
+  orgId?: string
   // Explicit staff-chosen document kind. When ABSENT, the Claude extraction
   // classifies the document (COI / W9 / SMA / other) — that's the default
   // for every ingest path now. COIs materialize policy rows; W9s and
@@ -115,6 +124,7 @@ export async function ingestInsuranceDocument(
   const { data: doc, error: docErr } = await admin
     .from("insurance_documents")
     .insert({
+      ...(input.orgId ? { org_id: input.orgId } : {}),
       company_id: input.companyId ?? null,
       storage_bucket: INSURANCE_BUCKET,
       storage_path: storagePath,
@@ -175,14 +185,34 @@ export async function ingestInsuranceDocument(
   const kind: InsuranceDocKind = explicitKind ?? extraction.doc_kind
 
   // 4. Resolve the company: explicit > email match > history/name match —
-  // the same signals for every document kind.
+  // the same signals for every document kind, scoped to the caller's org
+  // when one is known.
   let companyId = input.companyId ?? null
   if (!companyId) {
-    companyId = await matchCompany(admin, {
-      emailFrom: input.emailFrom,
-      companyName: extraction.company_name,
-    })
+    companyId = await matchCompany(
+      admin,
+      {
+        emailFrom: input.emailFrom,
+        companyName: extraction.company_name,
+      },
+      input.orgId ?? null
+    )
   }
+
+  // The document's org follows its company (companies are org-scoped roots).
+  // When the caller didn't supply an org but a company matched, adopt the
+  // company's — keeping doc.org_id consistent with company.org_id so the
+  // org-scoped dashboard shows the doc to the right tenant.
+  let orgId = input.orgId ?? null
+  if (companyId && !orgId) {
+    const { data: co } = await admin
+      .from("companies")
+      .select("org_id")
+      .eq("id", companyId)
+      .maybeSingle()
+    orgId = co?.org_id ?? null
+  }
+  const orgPatch = orgId ? { org_id: orgId } : {}
 
   // 5. Persist the outcome.
   // Unrecognized documents always need a human: even with a company known,
@@ -192,6 +222,7 @@ export async function ingestInsuranceDocument(
     const { error: updErr } = await admin
       .from("insurance_documents")
       .update({
+        ...orgPatch,
         status: "needs_review",
         doc_kind: kind,
         extracted_company_name: extraction.company_name,
@@ -212,6 +243,7 @@ export async function ingestInsuranceDocument(
     const { error: updErr } = await admin
       .from("insurance_documents")
       .update({
+        ...orgPatch,
         status: "processed",
         doc_kind: kind,
         company_id: companyId,
@@ -233,6 +265,7 @@ export async function ingestInsuranceDocument(
     const { error: updErr } = await admin
       .from("insurance_documents")
       .update({
+        ...orgPatch,
         status: "failed",
         doc_kind: kind,
         company_id: companyId,
@@ -250,6 +283,7 @@ export async function ingestInsuranceDocument(
   const { error: finalErr } = await admin
     .from("insurance_documents")
     .update({
+      ...orgPatch,
       status: "processed",
       doc_kind: kind,
       company_id: companyId,
@@ -371,17 +405,25 @@ export async function materializePolicies(
  *      a one-word name must never auto-file.
  * Only returns a company when the match is unambiguous — anything fuzzy
  * (or matching more than one company) goes to the review queue instead.
+ *
+ * `orgId` scopes every directory/history query to one org when the ingest
+ * channel knows whose document this is (sub upload token, staff manual);
+ * null (the shared email inbox) searches directory-wide, which is safe only
+ * while that channel serves a single org — B4 proper makes it per-org.
  */
 async function matchCompany(
   admin: Admin,
-  hints: { emailFrom?: string; companyName?: string | null }
+  hints: { emailFrom?: string; companyName?: string | null },
+  orgId: string | null
 ): Promise<string | null> {
+  const inOrg = <Q extends { eq(col: string, v: string): Q }>(q: Q): Q =>
+    orgId ? q.eq("org_id", orgId) : q
+
   const address = parseEmailAddress(hints.emailFrom)
   if (address) {
-    const { data } = await admin
-      .from("companies")
-      .select("id")
-      .ilike("email", address)
+    const { data } = await inOrg(
+      admin.from("companies").select("id").ilike("email", address)
+    )
     if (data && data.length === 1) return data[0].id
   }
 
@@ -396,14 +438,18 @@ async function matchCompany(
   // company — a name that was ever filed two different ways stays manual.
   if (normalized.length >= 4) {
     const HISTORY_CAP = 1000
-    const { data: history } = await admin
-      .from("insurance_documents")
-      .select("company_id, extracted_company_name")
-      .eq("status", "processed")
-      .not("company_id", "is", null)
-      .not("extracted_company_name", "is", null)
-      .ilike("extracted_company_name", `%${escapeLike(stripCompanySuffix(name).slice(0, 60))}%`)
-      .limit(HISTORY_CAP)
+    const { data: history } = await inOrg(
+      admin
+        .from("insurance_documents")
+        .select("company_id, extracted_company_name")
+        .eq("status", "processed")
+        .not("company_id", "is", null)
+        .not("extracted_company_name", "is", null)
+        .ilike(
+          "extracted_company_name",
+          `%${escapeLike(stripCompanySuffix(name).slice(0, 60))}%`
+        )
+    ).limit(HISTORY_CAP)
     // Unanimity is only meaningful over the COMPLETE match set — if the
     // query hit its cap, a disagreeing assignment could sit past the cut,
     // so fall through to name matching instead of trusting a subset.
@@ -420,10 +466,12 @@ async function matchCompany(
   }
 
   // Exact (case-insensitive) on name or AKA first.
-  const { data: exact } = await admin
-    .from("companies")
-    .select("id")
-    .or(`name.ilike.${escapeOrValue(name)},aka.ilike.${escapeOrValue(name)}`)
+  const { data: exact } = await inOrg(
+    admin
+      .from("companies")
+      .select("id")
+      .or(`name.ilike.${escapeOrValue(name)},aka.ilike.${escapeOrValue(name)}`)
+  )
   if (exact && exact.length === 1) return exact[0].id
 
   // Then suffix-insensitive EQUALITY (never a contains-match — "ABC"
@@ -434,10 +482,12 @@ async function matchCompany(
   const stripped = stripCompanySuffix(name)
   if (stripped.length >= 4) {
     const pattern = `%${escapeLike(stripped)}%`
-    const { data: candidates } = await admin
-      .from("companies")
-      .select("id, name, aka")
-      .or(`name.ilike.${escapeOrValue(pattern)},aka.ilike.${escapeOrValue(pattern)}`)
+    const { data: candidates } = await inOrg(
+      admin
+        .from("companies")
+        .select("id, name, aka")
+        .or(`name.ilike.${escapeOrValue(pattern)},aka.ilike.${escapeOrValue(pattern)}`)
+    )
     const equal = (candidates ?? []).filter(
       (c) =>
         normalizeCompanyName(c.name) === normalized ||
@@ -456,7 +506,9 @@ async function matchCompany(
   // containment in an ilike.
   const extractedTokens = nameTokens(name)
   if (extractedTokens.size >= 1) {
-    const { data: all } = await admin.from("companies").select("id, name, aka")
+    const { data: all } = await inOrg(
+      admin.from("companies").select("id, name, aka")
+    )
     const subsetMatches = (all ?? []).filter(
       (c) =>
         tokenSubsetMatch(extractedTokens, nameTokens(c.name)) ||
