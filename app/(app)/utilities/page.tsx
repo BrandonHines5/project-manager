@@ -2,15 +2,11 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createCrmClient } from "@/lib/supabase/crm"
 import { requireStaff } from "@/lib/auth"
 import {
-  CAW_BUILDER,
-  CAW_PAYMENT_URL,
-  CAW_SUBMISSION_EMAIL,
+  getUtilityConfig,
   isCawConfigured,
-} from "@/lib/utilities/caw/config"
-import {
-  LUMBER_ONE_SUBMISSION_EMAIL,
   isLumberOneConfigured,
-} from "@/lib/utilities/lumber-one/config"
+} from "@/lib/utilities/org-config"
+import { getActiveOrgId } from "@/lib/org"
 import { UtilitiesClient, type UtilitiesData, type UtilityJob } from "./utilities-client"
 
 export const metadata = { title: "Initiate Utilities — BuildFox" }
@@ -56,18 +52,27 @@ export default async function UtilitiesPage() {
   await requireStaff()
   const supabase = await createSupabaseServerClient()
 
-  const [{ data: projects, error: pErr }, { data: requests, error: rErr }, crmJobs] =
-    await Promise.all([
-      supabase
-        .from("projects")
-        .select("id, project_number, name, address, client_name")
-        .order("project_number"),
-      supabase
-        .from("utility_requests")
-        .select("*")
-        .order("created_at", { ascending: false }),
-      fetchCrmJobs(),
-    ])
+  const [
+    { data: projects, error: pErr },
+    { data: requests, error: rErr },
+    crmJobs,
+    cfg,
+  ] = await Promise.all([
+    supabase
+      .from("projects")
+      .select("id, project_number, name, address, client_name")
+      .order("project_number"),
+    supabase
+      .from("utility_requests")
+      .select("*")
+      .order("created_at", { ascending: false }),
+    fetchCrmJobs(),
+    // The org's utility config (B3 part 2). Null = this org doesn't have the
+    // Utilities module — the client renders its not-configured state.
+    getActiveOrgId(supabase)
+      .catch(() => null)
+      .then((orgId) => getUtilityConfig(supabase, orgId)),
+  ])
   if (pErr) throw new Error(pErr.message)
   if (rErr) throw new Error(rErr.message)
 
@@ -180,18 +185,18 @@ export default async function UtilitiesPage() {
       }
     }),
     builder: {
-      companyName: CAW_BUILDER.companyName,
-      email: CAW_BUILDER.email,
-      phone: CAW_BUILDER.businessPhone,
-      mailingAddress: CAW_BUILDER.mailingAddress,
-      preparerName: CAW_BUILDER.preparerName,
-      tinSet: !!CAW_BUILDER.tin,
+      companyName: cfg?.builder.companyName ?? "",
+      email: cfg?.builder.email ?? "",
+      phone: cfg?.builder.businessPhone ?? "",
+      mailingAddress: cfg?.builder.mailingAddress ?? "",
+      preparerName: cfg?.builder.preparerName ?? "",
+      tinSet: !!cfg?.builder.tin,
     },
-    cawConfigured: isCawConfigured(),
-    lumberConfigured: isLumberOneConfigured(),
-    paymentUrl: CAW_PAYMENT_URL,
-    cawSubmissionEmail: CAW_SUBMISSION_EMAIL,
-    lumberSubmissionEmail: LUMBER_ONE_SUBMISSION_EMAIL,
+    cawConfigured: cfg ? isCawConfigured(cfg) : false,
+    lumberConfigured: cfg ? isLumberOneConfigured(cfg) : false,
+    paymentUrl: cfg?.caw.paymentUrl ?? "",
+    cawSubmissionEmail: cfg?.caw.submissionEmail ?? "",
+    lumberSubmissionEmail: cfg?.lumberOne.submissionEmail ?? "",
   }
 
   return <UtilitiesClient data={data} />

@@ -168,10 +168,20 @@ select count(*) from <each newly scoped table>;  -- must all be 0
   header, Pricing page/PDF, PO + bid token pages (incl. link-preview
   metadata), PO release/comment emails. Org #1 seeded with the exact
   historical values — zero visible change.
+- **DONE (0107, part 2 — utility configs)**: the Initiate Utilities module's
+  builder identity, provider intake emails, CAW payment URL, and regional
+  lookup maps (ZIP by subdivision/city, county by city, per-subdivision
+  delivery notes) live in `organizations.settings.utilities`, parsed by
+  `lib/utilities/org-config.ts` (`getUtilityConfig(client, orgId)` — null =
+  org lacks the module: page renders not-configured, actions refuse with a
+  typed error). Secrets/env-overridable values (builder TIN, both submission
+  emails, payment URL) keep their env fallbacks — the seed leaves them
+  unset, so env continues to win until a B5 settings editor. Product
+  constants (form enums, CAW_FIXED/CAW_DEFAULTS, meter threshold) stay in
+  code. Org #1 seeded with the exact historical literals — zero behavior
+  change for Hines.
 - Remaining in B3: per-org logo upload into a `brand/` storage prefix (lands
-  with the org-settings editor); the Hines-specific utilities/PDF configs
-  (CAW, Lumber One — TIN, addresses, submission emails currently in env
-  vars) move into org settings and hide for orgs that lack them.
+  with the org-settings editor in B5).
 
 ## Stage B4 — Per-org integrations
 
