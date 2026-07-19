@@ -86,6 +86,27 @@ export async function ingestInsuranceDocument(
     }
   }
 
+  // An explicit company must belong to the caller's org — this pipeline runs
+  // on the admin client, so nothing else enforces it. Validated BEFORE any
+  // side effect (storage upload, document row) so a mismatch records nothing.
+  // When the caller knows the company but not the org (none today), the
+  // company's org becomes the document's.
+  let orgId = input.orgId ?? null
+  if (input.companyId) {
+    const { data: co, error: coErr } = await admin
+      .from("companies")
+      .select("org_id")
+      .eq("id", input.companyId)
+      .maybeSingle()
+    if (coErr || !co) {
+      return { ok: false, error: "Company not found" }
+    }
+    if (orgId && co.org_id !== orgId) {
+      return { ok: false, error: "Company belongs to a different organization" }
+    }
+    orgId = co.org_id
+  }
+
   // 1. Make sure the file is in Storage and we have its bytes.
   let storagePath = input.storagePath
   let bytes = input.bytes
@@ -124,7 +145,7 @@ export async function ingestInsuranceDocument(
   const { data: doc, error: docErr } = await admin
     .from("insurance_documents")
     .insert({
-      ...(input.orgId ? { org_id: input.orgId } : {}),
+      ...(orgId ? { org_id: orgId } : {}),
       company_id: input.companyId ?? null,
       storage_bucket: INSURANCE_BUCKET,
       storage_path: storagePath,
@@ -195,15 +216,15 @@ export async function ingestInsuranceDocument(
         emailFrom: input.emailFrom,
         companyName: extraction.company_name,
       },
-      input.orgId ?? null
+      orgId
     )
   }
 
   // The document's org follows its company (companies are org-scoped roots).
-  // When the caller didn't supply an org but a company matched, adopt the
+  // When the caller didn't supply an org but a company MATCHED, adopt the
   // company's — keeping doc.org_id consistent with company.org_id so the
-  // org-scoped dashboard shows the doc to the right tenant.
-  let orgId = input.orgId ?? null
+  // org-scoped dashboard shows the doc to the right tenant. (An explicit
+  // company already resolved and validated the org above.)
   if (companyId && !orgId) {
     const { data: co } = await admin
       .from("companies")
