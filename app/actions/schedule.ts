@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff, requireSession } from "@/lib/auth"
+import { assertActiveOrgWritable } from "@/lib/sandbox"
 import {
   wouldCreateCycle,
   cascadeFromPredecessors,
@@ -195,6 +196,7 @@ async function logMoveReasons(
 
 export async function saveScheduleItem(input: ScheduleItemInputT) {
   const profile = await requireStaff()
+  await assertActiveOrgWritable()
   const result = ScheduleItemInput.safeParse(input)
   if (!result.success) {
     const first = result.error.issues[0]

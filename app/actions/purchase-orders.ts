@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
+import { assertActiveOrgWritable } from "@/lib/sandbox"
 import { sendEmail, appUrl } from "@/lib/email"
 import { sendQuoSms, normalizeE164 } from "@/lib/quo"
 import { isChannelEnabled } from "@/lib/notifications/preferences"
@@ -83,6 +84,7 @@ function nz(v: string | null | undefined) {
  */
 export async function savePurchaseOrder(input: PurchaseOrderInputT) {
   const profile = await requireStaff()
+  await assertActiveOrgWritable()
   const result = PurchaseOrderInput.safeParse(input)
   if (!result.success) {
     const first = result.error.issues[0]

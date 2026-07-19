@@ -2,6 +2,8 @@ import "server-only"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { Database } from "@/lib/db/types"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
+import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { getActiveOrgId } from "@/lib/org"
 
 // Sandbox / trial org lifecycle (S1). A self-serve trial (S2) mints orgs as
 // 'sandbox_active' with a 7-day sandbox_expires_at; once past that they're
@@ -60,4 +62,43 @@ export async function resolveOrgLifecycle(
   } catch {
     return "active_subscriber"
   }
+}
+
+/** Thrown by assertActiveOrgWritable when a lapsed trial tries to mutate. */
+export class TrialExpiredError extends Error {
+  constructor() {
+    super(
+      "Your trial has ended. Subscribe to keep working in your organization."
+    )
+    this.name = "TrialExpiredError"
+  }
+}
+
+/**
+ * Mutation guard (S1b): throws `TrialExpiredError` when the CALLER's active org
+ * is a lapsed sandbox trial. Because it checks the caller's OWN org — never a
+ * target row's — one call at the top of a mutating server action gates every
+ * write that user could attempt (create, update, delete, any table), and it
+ * can NEVER freeze a non-trial org (an active_subscriber always resolves
+ * writable). The paywall's inert shell is the primary block; this is the
+ * server-side backstop for anything that bypasses the UI. Reuses
+ * resolveOrgLifecycle, so it also performs the lazy expiry flip and fails open.
+ */
+export async function assertActiveOrgWritable(
+  supabase?: SupabaseClient<Database>,
+  profileId?: string
+): Promise<void> {
+  // Self-contained (creates its own session client if none is passed) so it
+  // drops in as a single line right after a mutating action's auth guard,
+  // regardless of where that action builds its client.
+  const client = supabase ?? (await createSupabaseServerClient())
+  let orgId: string | null
+  try {
+    orgId = await getActiveOrgId(client, profileId)
+  } catch {
+    // No resolvable org → not a sandbox tenant, nothing to gate.
+    return
+  }
+  const status = await resolveOrgLifecycle(client, orgId)
+  if (status === "sandbox_expired") throw new TrialExpiredError()
 }

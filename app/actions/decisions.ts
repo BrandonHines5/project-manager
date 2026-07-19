@@ -6,6 +6,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { requireSession, requireStaff } from "@/lib/auth"
 import { getActiveOrgId } from "@/lib/org"
+import { assertActiveOrgWritable } from "@/lib/sandbox"
 import { addDays, formatCurrency, formatDate, todayISO } from "@/lib/utils"
 import { sendEmail, appUrl } from "@/lib/email"
 import { isChannelEnabled } from "@/lib/notifications/preferences"
@@ -222,6 +223,7 @@ function round2(n: number) {
 
 export async function saveDecision(input: DecisionInputT) {
   const profile = await requireStaff()
+  await assertActiveOrgWritable()
   const result = DecisionInput.safeParse(input)
   if (!result.success) {
     const first = result.error.issues[0]

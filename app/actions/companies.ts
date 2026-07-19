@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
+import { assertActiveOrgWritable } from "@/lib/sandbox"
 import type { TablesUpdate } from "@/lib/db/types"
 
 const optStr = z.string().nullish()
@@ -64,6 +65,7 @@ function emptyToNull(v: string | null | undefined) {
 
 export async function saveCompany(input: CompanyInputT) {
   await requireStaff()
+  await assertActiveOrgWritable()
   const result = CompanyInput.safeParse(input)
   if (!result.success) {
     const first = result.error.issues[0]

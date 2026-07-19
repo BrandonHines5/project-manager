@@ -438,15 +438,22 @@ existing/provisioned org is `active_subscriber` and never participates.
   `SandboxPaywall`. Inert until S2 mints the first sandbox org; verified the
   flip + `org_writable` end to end against a throwaway org, and every existing
   org stayed `active_subscriber`.
-- **S1b — mutation block**. Enforce `org_writable` for `sandbox_expired` orgs
-  so an expired trial can't write even if it bypasses the UI. The org-scoped
-  write policies are all `FOR ALL` with a shared read/write predicate, so a
-  clean RLS block that doesn't also break reads means either splitting ~50
-  policies or a WITH-CHECK-only pass (+ per-parent-chain writable helpers) —
-  deferred from S1 to build + test carefully (a policy typo could freeze
-  Hines' production writes), and it needn't ship until a sandbox org can
-  actually expire (S2 + 7 days). App-layer guard is the fallback if RLS proves
-  too sprawling.
+- **S1b — mutation block: DONE (app-layer)**. `lib/sandbox.ts:assertActiveOrgWritable`
+  throws `TrialExpiredError` when the CALLER's active org is `sandbox_expired`;
+  it's dropped in right after the auth guard of the core create/save actions
+  (createProject/duplicateProject, saveDecision, saveScheduleItem,
+  saveDailyLog, saveBidPackage, savePurchaseOrder, saveCompany,
+  saveBudgetLine). Checking the *caller's own* org (not a target row's) means
+  one line gates every write that user could attempt, and it can NEVER freeze a
+  non-trial org (an `active_subscriber` always resolves writable). Chose the
+  app-layer guard over RLS because the org-scoped write policies are all
+  `FOR ALL` with a shared read/write predicate, so an RLS block that spares
+  reads is a ~50-policy sweep whose typo could freeze Hines' production writes;
+  the guard is safe and complete-per-user, with S1's inert-shell paywall as the
+  primary block. Coverage is the primary create/save surface; extending the
+  one-line guard to every remaining update/delete action (or an additive RLS
+  restrictive-policy pass) is a mechanical follow-up, and moot until a sandbox
+  org exists (S2).
 - **S2 — self-serve trial signup**. A PUBLIC endpoint the (separate) sales
   site POSTs to; mints a sandbox org + owner (provisioning internals,
   `sandbox_active` + `now()+7d`). Public org creation is abuse-prone —
