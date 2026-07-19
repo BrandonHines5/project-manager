@@ -21,6 +21,13 @@ function slugify(input: string): string {
 
 type Success = Extract<ProvisionOrgResult, { ok: true }>
 
+/**
+ * New-org provisioning form (platform-operator only; the page + action gate
+ * access). Collects the org name, an auto-derived-but-editable slug, and the
+ * owner's name/email, then calls `provisionOrganization`. On success it swaps
+ * to a one-time credentials card (owner email + temp password with a copy
+ * button) — the password is shown once and can't be retrieved later.
+ */
 export function ProvisionOrgClient() {
   const [pending, startTransition] = useTransition()
   const [orgName, setOrgName] = useState("")
@@ -140,7 +147,13 @@ export function ProvisionOrgClient() {
           </Button>
         </div>
       ) : (
-        <div className="rounded-lg border border-border bg-surface p-5 space-y-4">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            submit()
+          }}
+          className="rounded-lg border border-border bg-surface p-5 space-y-4"
+        >
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted">
               Organization name
@@ -198,11 +211,15 @@ export function ProvisionOrgClient() {
           </div>
 
           <div className="flex items-center gap-2 pt-1">
-            <Button size="sm" onClick={submit} disabled={pending || !canSubmit}>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={pending || !canSubmit}
+            >
               {pending ? "Creating…" : "Create organization"}
             </Button>
           </div>
-        </div>
+        </form>
       )}
     </div>
   )

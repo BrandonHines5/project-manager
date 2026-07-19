@@ -1,6 +1,6 @@
 import { requireStaff } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
-import { LEGACY_ORG_ID } from "@/lib/org"
+import { isLegacyOrgOwner } from "@/lib/org"
 import { ProvisionOrgClient } from "./provision-org-client"
 
 export const metadata = { title: "Provision organization — BuildFox" }
@@ -15,14 +15,8 @@ export const dynamic = "force-dynamic"
 export default async function ProvisionOrgPage() {
   const profile = await requireStaff()
   const supabase = await createSupabaseServerClient()
-  const { data: membership } = await supabase
-    .from("organization_members")
-    .select("member_role")
-    .eq("org_id", LEGACY_ORG_ID)
-    .eq("profile_id", profile.id)
-    .maybeSingle()
 
-  if (membership?.member_role !== "owner") {
+  if (!(await isLegacyOrgOwner(supabase, profile.id))) {
     return (
       <div className="max-w-2xl mx-auto px-4 md:px-6 py-6">
         <h1 className="text-xl font-semibold tracking-tight">

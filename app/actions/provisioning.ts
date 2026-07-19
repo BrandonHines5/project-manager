@@ -5,7 +5,7 @@ import { z } from "zod"
 import { requireStaff } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
-import { LEGACY_ORG_ID } from "@/lib/org"
+import { LEGACY_ORG_ID, isLegacyOrgOwner } from "@/lib/org"
 import { generateTempPassword } from "@/lib/auth/temp-password"
 
 // Org provisioning (B5 onboarding). Standing up a NEW builder org is the
@@ -38,22 +38,6 @@ export type ProvisionOrgResult =
   | { ok: false; error: string }
 
 /**
- * The platform operator = OWNER of the legacy (Hines) org. Read under the
- * caller's own session so RLS proves the membership; a non-owner (or a
- * non-legacy-org staffer) is rejected.
- */
-async function isLegacyOrgOwner(profileId: string): Promise<boolean> {
-  const supabase = await createSupabaseServerClient()
-  const { data } = await supabase
-    .from("organization_members")
-    .select("member_role")
-    .eq("org_id", LEGACY_ORG_ID)
-    .eq("profile_id", profileId)
-    .maybeSingle()
-  return data?.member_role === "owner"
-}
-
-/**
  * Provision a brand-new builder organization end to end:
  *  1. create the owner's auth user (temp password, returned once to share),
  *  2. promote that profile to staff (admin client — service_role is exempt
@@ -77,7 +61,8 @@ export async function provisionOrganization(
   }
   const { orgName, slug, ownerName, ownerEmail } = parsed.data
 
-  if (!(await isLegacyOrgOwner(me.id))) {
+  const supabase = await createSupabaseServerClient()
+  if (!(await isLegacyOrgOwner(supabase, me.id))) {
     return {
       ok: false,
       error: "Only the platform owner can provision new organizations.",
