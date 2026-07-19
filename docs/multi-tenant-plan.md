@@ -228,10 +228,28 @@ sweep. Per-integration wiring:
   router.refresh, everything follows the active org). `org_admin(uuid)`
   helper + `orgs_admin_update` policy open organizations updates (name /
   settings) to owner/admin members — the first org-admin write surface.
-- Org admin UI: members list, invites (org-scoped `client_invites`-style
-  tokens for staff), role management (owner/admin), org profile/branding
-  editor incl. logo upload. Membership writes get definer RPCs with
-  last-owner / escalation guards — until then they stay service-role-only.
+- **DONE (0109, part 2 — org settings editor)**: `/settings/organization`
+  (avatar-menu "Organization" link, rendered only for owner/admin members of
+  the active org — layout reads `member_role` off `getOrgMemberships`). Edits
+  org name + the default/commercial brand names, with logo + square-icon
+  uploads per sub-brand. Uploads go browser → PUBLIC `brand-assets` bucket
+  under `{org_id}/…` (public because brand marks render sessionless — token-
+  page og:image, email headers — and signed URLs would rot stored configs;
+  the `brand_assets_admin_all` storage policy restricts writes to owner/admin
+  members of the prefix org). `saveOrgSettings` (app/actions/org.ts) runs on
+  the session client so `orgs_admin_update` is the real gate (0 rows → clean
+  error), accepts only storage PATHS (re-checks the org prefix, derives the
+  public URL server-side — config can never point at another org's assets),
+  keeps untouched slots' raw stored values + `key` verbatim (org #1's
+  hines/mjv keys and seeded asset paths survive name-only edits), drops
+  cleared slots so `parseBrandConfig` falls back to neutral, and preserves
+  sibling settings blocks (utilities). Gate probed both ways: test-org owner
+  ↔ Hines on organizations updates (0 rows cross-org) and storage.objects
+  inserts (42501 cross-prefix, allowed own-prefix).
+- Org admin UI (remaining): members list, invites (org-scoped
+  `client_invites`-style tokens for staff), role management (owner/admin).
+  Membership writes get definer RPCs with last-owner / escalation guards —
+  until then they stay service-role-only.
 - Provisioning: create-org flow seeds cost codes, the Template project,
   default settings.
 - Billing: Stripe customer per org, subscription webhooks → `org_billing`
