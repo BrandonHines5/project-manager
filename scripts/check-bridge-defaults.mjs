@@ -55,15 +55,26 @@ function stripLineComments(sql) {
 // can't be associated with the wrong table. Function-parameter defaults
 // (0111's `p_seed_from uuid default '<hines>'`) never mention org_id or
 // `alter table`, so they can't match.
+//
+// A table reference: optional ONLY, optional schema qualifier, optional
+// double-quotes on either identifier; captures the bare table name. So the
+// guard can't be evaded (a false negative — the worst failure mode here) by
+// writing `alter table public.foo …`, `alter table "foo" …`, or
+// `alter table only public."foo" …` instead of the bare `alter table foo …`.
+// `alter column` may drop the COLUMN keyword too (Postgres allows it).
+const TABLE_REF = `(?:only\\s+)?(?:"?\\w+"?\\s*\\.\\s*)?"?(\\w+)"?`
 const SET_ADD_COLUMN = new RegExp(
-  `alter\\s+table\\s+(\\w+)\\b[\\s\\S]*\\badd\\s+column\\b[\\s\\S]*\\borg_id\\b[\\s\\S]*\\bdefault\\s+'${HINES_ORG_ID}'`,
+  `alter\\s+table\\s+${TABLE_REF}\\s[\\s\\S]*\\badd\\s+column\\b[\\s\\S]*\\borg_id\\b[\\s\\S]*\\bdefault\\s+'${HINES_ORG_ID}'`,
   "i"
 )
 const SET_ALTER_COLUMN = new RegExp(
-  `alter\\s+table\\s+(\\w+)\\s+alter\\s+column\\s+org_id\\s+set\\s+default\\s+'${HINES_ORG_ID}'`,
+  `alter\\s+table\\s+${TABLE_REF}\\s+alter\\s+(?:column\\s+)?org_id\\s+set\\s+default\\s+'${HINES_ORG_ID}'`,
   "i"
 )
-const DROP_DEFAULT = /alter\s+table\s+(\w+)\s+alter\s+column\s+org_id\s+drop\s+default/i
+const DROP_DEFAULT = new RegExp(
+  `alter\\s+table\\s+${TABLE_REF}\\s+alter\\s+(?:column\\s+)?org_id\\s+drop\\s+default`,
+  "i"
+)
 
 function migrationFiles() {
   return readdirSync(MIGRATIONS_DIR)
