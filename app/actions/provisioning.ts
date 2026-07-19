@@ -5,8 +5,8 @@ import { z } from "zod"
 import { requireStaff } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
-import { LEGACY_ORG_ID, isLegacyOrgOwner } from "@/lib/org"
-import { generateTempPassword } from "@/lib/auth/temp-password"
+import { isLegacyOrgOwner } from "@/lib/org"
+import { provisionOrgCore } from "@/lib/provisioning/core"
 
 // Org provisioning (B5 onboarding). Standing up a NEW builder org is the
 // SaaS-operator action — distinct from the per-org admin surfaces — so it's
@@ -38,18 +38,12 @@ export type ProvisionOrgResult =
   | { ok: false; error: string }
 
 /**
- * Provision a brand-new builder organization end to end:
- *  1. create the owner's auth user (temp password, returned once to share),
- *  2. promote that profile to staff (admin client — service_role is exempt
- *     from prevent_role_escalation, and the caller doesn't yet share an org
- *     with this user so a session update would be RLS-blocked),
- *  3. run `create_organization` (org row + owner enrolled as 'owner' + active
- *     cost codes/roles seeded from Hines),
- *  4. point the owner's active_org_id at the new org so they land there.
- *
- * Any failure after the auth user is created rolls it back (deleting the auth
- * user cascades the profile) so a retry starts clean. The temp password never
- * round-trips from the client — it's generated server-side and returned once.
+ * Provision a brand-new builder organization as a full subscriber (no trial).
+ * The operator surface: gated to the legacy-org owner, then delegates the
+ * end-to-end sequence (create owner auth user → promote to staff → create the
+ * org seeded from Hines → land the owner in it, with rollback on failure) to
+ * the shared `provisionOrgCore`. The temp password is generated inside the core
+ * and returned once to share — it never round-trips from the client.
  */
 export async function provisionOrganization(
   input: ProvisionOrgInputT
@@ -74,95 +68,20 @@ export async function provisionOrganization(
     return { ok: false, error: "Server admin (service role) is not configured." }
   }
 
-  const tempPassword = generateTempPassword()
-
-  // 1. Owner auth user. handle_new_user inserts a role='client' profile.
-  const { data: created, error: createErr } = await admin.auth.admin.createUser({
-    email: ownerEmail,
-    password: tempPassword,
-    email_confirm: true,
-    user_metadata: { full_name: ownerName },
+  const result = await provisionOrgCore(admin, {
+    orgName,
+    slug,
+    ownerName,
+    ownerEmail,
+    lifecycle: "active_subscriber",
   })
-  if (createErr) {
-    const taken = /already been registered|already exists|duplicate/i.test(
-      createErr.message
-    )
-    return {
-      ok: false,
-      error: taken
-        ? "That email already has an account — use a different owner email."
-        : createErr.message,
-    }
-  }
-  const ownerId = created.user?.id
-  if (!ownerId) return { ok: false, error: "createUser returned no user id." }
-
-  // Roll the auth user back (cascades its profile + any org membership) so a
-  // failure leaves nothing half-provisioned. Surfaces a compound error if the
-  // rollback itself fails, so an orphaned auth user is never silent.
-  const rollback = async (message: string): Promise<ProvisionOrgResult> => {
-    const { error: delErr } = await admin.auth.admin.deleteUser(ownerId)
-    return {
-      ok: false,
-      error: delErr
-        ? `${message} (Cleanup also failed — orphaned auth user ${ownerId}: ${delErr.message})`
-        : message,
-    }
-  }
-
-  // 2. Promote to staff.
-  const { error: roleErr } = await admin
-    .from("profiles")
-    .update({ role: "staff", full_name: ownerName })
-    .eq("id", ownerId)
-  if (roleErr) {
-    return rollback(`Couldn't set up the owner profile: ${roleErr.message}`)
-  }
-
-  // 3. Create the org (+ enroll owner, seed catalogs) in one transaction. We
-  // always seed cost codes + roles from Hines so the new org starts with a
-  // usable catalog the owner can then edit; brands/settings/integrations are
-  // deliberately NOT copied (they're configured per-org afterward).
-  const { data: newOrgId, error: rpcErr } = await admin.rpc(
-    "create_organization",
-    {
-      p_name: orgName,
-      p_slug: slug,
-      p_owner: ownerId,
-      p_seed_from: LEGACY_ORG_ID,
-    }
-  )
-  if (rpcErr) {
-    // Only a slug collision maps to the friendly "taken" message — key on the
-    // organizations slug unique constraint specifically. A generic
-    // unique/duplicate match would mislabel any OTHER failure (e.g. a seeded
-    // cost-code/role constraint) as a slug problem, which it isn't.
-    const slugTaken =
-      /organizations_slug_key/i.test(rpcErr.message) ||
-      (rpcErr.code === "23505" && /\bslug\b/i.test(rpcErr.message))
-    return rollback(
-      slugTaken
-        ? "That URL slug is already taken — pick another."
-        : `Couldn't create the organization: ${rpcErr.message}`
-    )
-  }
-  if (!newOrgId) return rollback("create_organization returned no id.")
-
-  // 4. Land the owner in their new org on first login. Non-fatal: getActiveOrgId
-  // falls back to the earliest membership, which is this org anyway.
-  const { error: activeErr } = await admin
-    .from("profiles")
-    .update({ active_org_id: newOrgId as string })
-    .eq("id", ownerId)
-  if (activeErr) {
-    console.warn("[provision] active_org_id set failed:", activeErr.message)
-  }
+  if (!result.ok) return result
 
   revalidatePath("/", "layout")
   return {
     ok: true,
-    orgId: newOrgId as string,
-    ownerEmail,
-    tempPassword,
+    orgId: result.orgId,
+    ownerEmail: result.ownerEmail,
+    tempPassword: result.tempPassword,
   }
 }
