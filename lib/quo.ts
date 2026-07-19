@@ -1,22 +1,114 @@
+import "server-only"
 import { logCommunication, type CommLogContext } from "@/lib/comms/log"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
+import { getOrgIntegration } from "@/lib/integrations/org"
+import { LEGACY_ORG_ID } from "@/lib/org"
+
+/** org_integrations provider slug for Quo/OpenPhone. */
+const QUO_PROVIDER = "quo"
+
+export type QuoConfig = {
+  /** OpenPhone API key for this org, or null when not connected. */
+  apiKey: string | null
+  /** Shared workspace from-number (Quo id or E.164), or null. */
+  sharedFrom: string | null
+}
+
+/**
+ * Per-org Quo credentials (B4): `apiKey` from the org's `org_integrations`
+ * 'quo' secrets envelope, `sharedFrom` from its config. Env
+ * `QUO_API_KEY` / `QUO_FROM_NUMBER` are the fallback for the LEGACY org
+ * ONLY (the pre-multi-tenant Hines line) — every other org must carry its
+ * own row, so a missing config reads as "Quo not connected", never as
+ * "borrow Hines' number". A null orgId (org couldn't be resolved) is the
+ * single-tenant bridge state and also falls back to legacy env.
+ *
+ * Fails closed for non-legacy orgs: getOrgIntegration THROWS on a decrypt
+ * failure (a misconfigured master key), which must never silently degrade
+ * to the env key of another tenant.
+ */
+export async function resolveQuoConfig(
+  orgId: string | null | undefined
+): Promise<QuoConfig> {
+  let apiKey: string | null = null
+  let sharedFrom: string | null = null
+
+  const admin = createSupabaseAdminClient()
+  if (admin && orgId) {
+    try {
+      const integ = await getOrgIntegration(admin, orgId, QUO_PROVIDER)
+      if (integ && integ.enabled) {
+        const secretKey = integ.secrets?.apiKey
+        const cfgFrom = integ.config?.sharedFromNumber
+        apiKey = typeof secretKey === "string" && secretKey ? secretKey : null
+        sharedFrom = typeof cfgFrom === "string" && cfgFrom ? cfgFrom : null
+      }
+    } catch (e) {
+      console.error(
+        "[quo] org integration read failed:",
+        e instanceof Error ? e.message : e
+      )
+      // A non-legacy org must NOT fall through to Hines' env key.
+      if (orgId !== LEGACY_ORG_ID) return { apiKey: null, sharedFrom: null }
+    }
+  }
+
+  // Legacy (or unresolved single-tenant) org: env is the source of truth
+  // until its org_integrations row is populated.
+  if (!orgId || orgId === LEGACY_ORG_ID) {
+    apiKey = apiKey ?? process.env.QUO_API_KEY ?? null
+    sharedFrom = sharedFrom ?? process.env.QUO_FROM_NUMBER ?? null
+  }
+  return { apiKey, sharedFrom }
+}
+
+/**
+ * The org a staffer belongs to, resolved admin-side (the send path has no
+ * session). Earliest membership — one org per user today. `failed`
+ * distinguishes a query ERROR (caller must fail closed — a transient hiccup
+ * must never borrow Hines' env key) from a genuine no-membership (`orgId`
+ * null, `failed` false — the single-tenant bridge).
+ */
+async function resolveOrgForProfile(
+  profileId: string | null | undefined
+): Promise<{ orgId: string | null; failed: boolean }> {
+  if (!profileId) return { orgId: null, failed: false }
+  const admin = createSupabaseAdminClient()
+  if (!admin) return { orgId: null, failed: false }
+  const { data, error } = await admin
+    .from("organization_members")
+    .select("org_id")
+    .eq("profile_id", profileId)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle()
+  if (error) {
+    console.warn("[quo] profile → org lookup failed:", error.message)
+    return { orgId: null, failed: true }
+  }
+  return { orgId: data?.org_id ?? null, failed: false }
+}
 
 /**
  * Sends an SMS via Quo (built on OpenPhone — host is api.openphone.com).
- * Graceful no-op if QUO_API_KEY is missing (and no usable `from` resolves) so
- * dev / preview environments don't break.
+ * Graceful no-op if the org's Quo API key is missing (and no usable `from`
+ * resolves) so dev / preview environments don't break.
+ *
+ * Per-org (B4): the API key and shared from-number come from the org's
+ * `org_integrations` 'quo' row (env fallback for the legacy Hines org). The
+ * org is `opts.orgId` → `log.org_id` → the acting staffer's membership.
  *
  * Per-user sending: each text goes out from the ACTING staffer's own Quo
  * number when they have one, so the sub's reply — and any follow-up call —
  * comes back to that person, not a shared inbox. The number is resolved from
  * `senderProfileId` (or, if omitted, `log.sent_by`, which every call site
  * already sets to the staffer who initiated the send). A staffer with no Quo
- * number assigned falls back to the shared QUO_FROM_NUMBER. An explicit `from`
+ * number assigned falls back to the org's shared number. An explicit `from`
  * always wins.
  *
- * `from` / QUO_FROM_NUMBER / a profile's stored number each accept either a
- * Quo phone number ID ("PN…") or an E.164 number ("+15555555555"); the Quo
- * API takes either form.
+ * `from` / the org's shared number / a profile's stored number each accept
+ * either a Quo phone number ID ("PN…") or an E.164 number ("+15555555555");
+ * the Quo API takes either form.
  *
  * Auth header is `Authorization: <api-key>` (raw key, no `Bearer` prefix) —
  * that's what the Quo OpenAPI spec specifies for its apiKey security scheme.
@@ -30,27 +122,48 @@ export async function sendQuoSms(opts: {
   // The staffer this text is sent on behalf of — used to look up their Quo
   // number. Defaults to log.sent_by so no call site has to pass it twice.
   senderProfileId?: string | null
+  // Which org's Quo account sends this. Falls back to log.org_id, then the
+  // sender's membership — so most call sites need not pass it.
+  orgId?: string | null
   // Counterparty-facing sends pass this so the text lands in the project's
   // Communications feed. Omitted → not logged.
   log?: CommLogContext
 }): Promise<{ sent: boolean; reason?: string; providerId?: string }> {
-  const key = process.env.QUO_API_KEY
+  // Resolve the sending org, then its Quo credentials.
+  const senderId = opts.senderProfileId ?? opts.log?.sent_by ?? null
+  let orgId = opts.orgId ?? opts.log?.org_id ?? null
+  if (!orgId && senderId) {
+    const resolved = await resolveOrgForProfile(senderId)
+    // A membership-lookup FAILURE must fail closed like the decrypt path — a
+    // transient error must never let a non-legacy staffer's text bill Hines'
+    // shared Quo account. A genuine no-membership stays the single-tenant
+    // bridge (null → legacy env fallback in resolveQuoConfig).
+    if (resolved.failed) {
+      return {
+        sent: false,
+        reason: "Couldn't resolve the sending organization",
+      }
+    }
+    orgId = resolved.orgId
+  }
+  const cfg = await resolveQuoConfig(orgId)
+  const key = cfg.apiKey
   if (!key) {
-    return { sent: false, reason: "QUO_API_KEY not set" }
+    return { sent: false, reason: "Quo is not connected for this organization" }
   }
 
   // Resolve the sending number: explicit override → the acting staffer's own
-  // Quo number → the shared default. Never throws; falls back on any miss.
-  const senderId = opts.senderProfileId ?? opts.log?.sent_by ?? null
+  // Quo number → the org's shared default. Never throws; falls back on any miss.
   const from =
     opts.from ??
     (await resolveStaffQuoNumber(senderId)) ??
-    process.env.QUO_FROM_NUMBER
+    cfg.sharedFrom ??
+    undefined
   if (!from) {
     return {
       sent: false,
       reason:
-        "No sending number — QUO_FROM_NUMBER not set and sender has no Quo number",
+        "No sending number — the org has no shared Quo number and the sender has none assigned",
     }
   }
 
@@ -99,7 +212,11 @@ export async function sendQuoSms(opts: {
       await logCommunication({
         channel: "sms",
         direction: "outbound",
-        org_id: opts.log.org_id,
+        // Fall back to the org we resolved to pick the Quo account — a manual
+        // send to a raw number has no project/company for logCommunication to
+        // derive org from, so without this the row would hit the bridge
+        // default (Hines) even though it went out on another org's number.
+        org_id: opts.log.org_id ?? orgId ?? undefined,
         project_id: opts.log.project_id,
         company_id: opts.log.company_id,
         profile_id: opts.log.profile_id,
@@ -136,12 +253,15 @@ export type QuoPhoneNumber = {
 }
 
 /**
- * Lists the numbers in the Quo (OpenPhone) workspace so staff can map each one
- * to a person on the Team page. Returns [] (never throws) when QUO_API_KEY is
- * unset or the API is unreachable, so /team still renders without Quo wired up.
+ * Lists the numbers in the org's Quo (OpenPhone) workspace so staff can map
+ * each one to a person on the Team page. Returns [] (never throws) when the
+ * org has no Quo key or the API is unreachable, so /team still renders
+ * without Quo wired up.
  */
-export async function listQuoPhoneNumbers(): Promise<QuoPhoneNumber[]> {
-  const key = process.env.QUO_API_KEY
+export async function listQuoPhoneNumbers(
+  orgId: string | null | undefined
+): Promise<QuoPhoneNumber[]> {
+  const { apiKey: key } = await resolveQuoConfig(orgId)
   if (!key) return []
   try {
     const res = await fetch("https://api.openphone.com/v1/phone-numbers", {
