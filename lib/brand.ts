@@ -8,7 +8,11 @@ import type { Enums } from "@/lib/db/types"
 // light backgrounds such as the printable Pricing PDF).
 
 export type Brand = {
-  key: "hines" | "mjv"
+  /**
+   * Stable identifier. "hines" keeps its special tile-fill rendering in
+   * BrandTile; org-configured brands can use any slug.
+   */
+  key: string
   name: string
   /** White square mark for the brand-colored nav tiles (in /public). */
   mark: string
@@ -44,6 +48,84 @@ export const MJV_BUILDING_GROUP: Brand = {
   icon: "/brand/mjv-icon.png",
 }
 
+/**
+ * An org's client-facing branding (Stage B3): the default brand plus an
+ * optional commercial sub-brand that commercial project types present under.
+ * Stored as `organizations.settings.brands` and parsed with
+ * `parseBrandConfig`; org #1 is seeded with the historical Hines/MJV values,
+ * so behavior there is unchanged.
+ */
+export type BrandConfig = {
+  default: Brand
+  commercial?: Brand
+}
+
+/**
+ * The pre-B3 static config — Hines Homes with the MJV commercial sub-brand.
+ * Call sites without an org context (the login page, static fallbacks) keep
+ * using this, which is exactly the old hardcoded behavior.
+ */
+export const DEFAULT_BRAND_CONFIG: BrandConfig = {
+  default: HINES_HOMES,
+  commercial: MJV_BUILDING_GROUP,
+}
+
+function parseBrand(v: unknown): Brand | null {
+  if (!v || typeof v !== "object") return null
+  const o = v as Record<string, unknown>
+  if (typeof o.key !== "string" || typeof o.name !== "string" || !o.name.trim()) {
+    return null
+  }
+  const str = (x: unknown, fallback: string): string =>
+    typeof x === "string" && x.trim() ? x : fallback
+  return {
+    key: o.key,
+    name: o.name,
+    mark: str(o.mark, "/brand/buildfox-mark.svg"),
+    logo: str(o.logo, "/brand/buildfox-mark.svg"),
+    icon: str(o.icon, "/icon-512.png"),
+  }
+}
+
+/**
+ * Parse `organizations.settings` into a BrandConfig. A missing or malformed
+ * `brands` block degrades to a neutral app-branded default carrying the org's
+ * NAME (never another org's logos); a missing commercial entry just means the
+ * org has no commercial sub-brand.
+ */
+export function parseBrandConfig(
+  settings: unknown,
+  orgName?: string | null
+): BrandConfig {
+  const brands =
+    settings && typeof settings === "object"
+      ? (settings as Record<string, unknown>).brands
+      : null
+  const def = parseBrand(
+    brands && typeof brands === "object"
+      ? (brands as Record<string, unknown>).default
+      : null
+  )
+  const commercial = parseBrand(
+    brands && typeof brands === "object"
+      ? (brands as Record<string, unknown>).commercial
+      : null
+  )
+  if (!def) {
+    return {
+      default: {
+        key: "org",
+        name: orgName?.trim() || "BuildFox",
+        mark: "/brand/buildfox-mark.svg",
+        logo: "/brand/buildfox-mark.svg",
+        icon: "/icon-512.png",
+      },
+      ...(commercial ? { commercial } : {}),
+    }
+  }
+  return { default: def, ...(commercial ? { commercial } : {}) }
+}
+
 export const PROJECT_TYPE_LABEL: Record<Enums<"project_type">, string> = {
   residential_new: "Residential — New construction",
   residential_remodel: "Residential — Remodel / Addition",
@@ -52,29 +134,33 @@ export const PROJECT_TYPE_LABEL: Record<Enums<"project_type">, string> = {
 }
 
 /**
- * Brand for a single project type. Commercial → MJV Building Group; everything
- * else (residential, or unset) → Hines Homes (the default house brand).
+ * Brand for a single project type. Commercial → the org's commercial
+ * sub-brand (when it has one); everything else (residential, or unset) → the
+ * org's default brand. Without a config this is the historical static rule:
+ * commercial → MJV Building Group, otherwise Hines Homes.
  */
 export function brandForProjectType(
-  type: Enums<"project_type"> | null | undefined
+  type: Enums<"project_type"> | null | undefined,
+  config: BrandConfig = DEFAULT_BRAND_CONFIG
 ): Brand {
   return type === "commercial_new" || type === "commercial_remodel"
-    ? MJV_BUILDING_GROUP
-    : HINES_HOMES
+    ? config.commercial ?? config.default
+    : config.default
 }
 
 /**
  * Brand to show a client across the whole app (e.g. the sidebar), derived from
  * the set of projects they can see. If every one of their projects is a
- * commercial (MJV) job, present MJV; otherwise fall back to Hines Homes. A
+ * commercial job, present the commercial sub-brand; otherwise the default. A
  * client with no projects also gets the default.
  */
 export function brandForProjectTypes(
-  types: (Enums<"project_type"> | null | undefined)[]
+  types: (Enums<"project_type"> | null | undefined)[],
+  config: BrandConfig = DEFAULT_BRAND_CONFIG
 ): Brand {
-  if (types.length === 0) return HINES_HOMES
-  const allMjv = types.every(
-    (t) => brandForProjectType(t).key === "mjv"
+  if (types.length === 0 || !config.commercial) return config.default
+  const allCommercial = types.every(
+    (t) => brandForProjectType(t, config) === config.commercial
   )
-  return allMjv ? MJV_BUILDING_GROUP : HINES_HOMES
+  return allCommercial ? config.commercial : config.default
 }

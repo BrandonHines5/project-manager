@@ -11,6 +11,7 @@ import { generateAccessToken } from "@/lib/tokens"
 import { formatDate } from "@/lib/utils"
 import { notifyCommentPosted } from "@/lib/comms/notify"
 import { brandForProjectType } from "@/lib/brand"
+import { getBrandConfig } from "@/lib/org-brand"
 import { canonicalizeLinkedAttachments } from "@/lib/purchasing/linked-files"
 import type { Enums } from "@/lib/db/types"
 
@@ -701,7 +702,7 @@ export async function releasePurchaseOrder({
   const { data: po, error: poErr } = await supabase
     .from("purchase_orders")
     .select(
-      "id, number, title, approval_deadline, status, company_id, companies:company_id(name, email, phone, notifications_enabled), projects:project_id(name, project_type)"
+      "id, number, title, approval_deadline, status, company_id, companies:company_id(name, email, phone, notifications_enabled), projects:project_id(name, project_type, org_id)"
     )
     .eq("id", id)
     .maybeSingle()
@@ -734,13 +735,20 @@ export async function releasePurchaseOrder({
   ).companies
   const project = (
     po as unknown as {
-      projects: { name: string; project_type: Enums<"project_type"> | null } | null
+      projects: {
+        name: string
+        project_type: Enums<"project_type"> | null
+        org_id: string
+      } | null
     }
   ).projects
   const projectName = project?.name ?? "our project"
-  // Client-/sub-facing brand for this job: commercial → MJV Building Group,
-  // otherwise the default house brand (Hines Homes).
-  const brand = brandForProjectType(project?.project_type)
+  // Client-/sub-facing brand for this job from its org's config (commercial
+  // jobs present under the org's commercial sub-brand).
+  const brand = brandForProjectType(
+    project?.project_type,
+    await getBrandConfig(supabase, project?.org_id)
+  )
 
   if (company?.notifications_enabled) {
     const link = appUrl(`/po/${token}`)
@@ -986,7 +994,7 @@ export async function postPoCommentStaff({
   const { data: po } = await supabase
     .from("purchase_orders")
     .select(
-      "number, title, token, company_id, companies:company_id(name, email, notifications_enabled), projects:project_id(name, project_type)"
+      "number, title, token, company_id, companies:company_id(name, email, notifications_enabled), projects:project_id(name, project_type, org_id)"
     )
     .eq("id", purchase_order_id)
     .maybeSingle()
@@ -1000,10 +1008,17 @@ export async function postPoCommentStaff({
       email: string | null
       notifications_enabled: boolean
     } | null
-    projects: { name: string; project_type: Enums<"project_type"> | null } | null
+    projects: {
+      name: string
+      project_type: Enums<"project_type"> | null
+      org_id: string
+    } | null
   } | null
   if (info?.token && info.companies?.email && info.companies.notifications_enabled) {
-    const brand = brandForProjectType(info.projects?.project_type)
+    const brand = brandForProjectType(
+      info.projects?.project_type,
+      await getBrandConfig(supabase, info.projects?.org_id)
+    )
     await sendEmail({
       to: [info.companies.email],
       subject: `New message on PO-${info.number}: ${info.title}`,
