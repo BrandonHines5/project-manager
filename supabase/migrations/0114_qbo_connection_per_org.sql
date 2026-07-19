@@ -23,9 +23,11 @@ alter table qbo_connection alter column org_id drop default;
 -- two connects fail loudly instead of leaving two rows.
 delete from qbo_connection
 where realm_id not in (
+  -- realm_id desc breaks updated_at ties deterministically (the table has
+  -- no surrogate id; realm_id is the PK).
   select distinct on (org_id) realm_id
   from qbo_connection
-  order by org_id, updated_at desc
+  order by org_id, updated_at desc, realm_id desc
 );
 create unique index if not exists qbo_connection_org_key
   on qbo_connection (org_id);
