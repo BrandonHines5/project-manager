@@ -602,10 +602,19 @@ export async function sendUtilityForms({
     .maybeSingle()
   if (error) throw new Error(error.message)
   if (!req) throw new Error("Request not found or not visible.")
-  const cfg = await getUtilityConfig(
-    supabase,
-    await getActiveOrgId(supabase).catch(() => null)
-  )
+  // Typed refusals, not throws — production redacts thrown action messages.
+  let cfg: UtilityOrgConfig | null
+  try {
+    cfg = await getUtilityConfig(
+      supabase,
+      await getActiveOrgId(supabase).catch(() => null)
+    )
+  } catch (e) {
+    return {
+      sent: false,
+      reason: e instanceof Error ? e.message : "Could not load utility settings.",
+    }
+  }
   if (!cfg) {
     return {
       sent: false,
@@ -747,11 +756,19 @@ export async function updateUtilityStatus(
 
   const patch: TablesUpdate<"utility_requests"> = { status }
   if (status === "awaiting_payment") {
-    // Typed error, not a throw — production redacts thrown action messages.
-    const cfg = await getUtilityConfig(
-      supabase,
-      await getActiveOrgId(supabase).catch(() => null)
-    )
+    // Typed errors, not throws — production redacts thrown action messages.
+    let cfg: UtilityOrgConfig | null
+    try {
+      cfg = await getUtilityConfig(
+        supabase,
+        await getActiveOrgId(supabase).catch(() => null)
+      )
+    } catch (e) {
+      return {
+        ok: false,
+        error: e instanceof Error ? e.message : "Could not load utility settings.",
+      }
+    }
     if (!cfg) {
       return {
         ok: false,

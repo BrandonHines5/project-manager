@@ -45,7 +45,11 @@ export type UtilityOrgConfig = {
   }
 }
 
-const str = (v: unknown): string => (typeof v === "string" ? v : "")
+const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "")
+
+// Deliberately simple: catches "not an address at all" (whitespace, missing
+// domain), not RFC edge cases — the send path surfaces real bounces.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 /** Validate a JSON object into a lowercase-keyed string→string lookup map. */
 function rec(v: unknown): Record<string, string> {
@@ -106,8 +110,10 @@ export function parseUtilityConfig(settings: unknown): UtilityOrgConfig | null {
 
 /**
  * The acting org's utility config. Works with the session client (the module
- * is staff-only and orgs_member_read covers the caller's own org). Null =
- * the org doesn't have the Utilities module.
+ * is staff-only and orgs_member_read covers the caller's own org). Null is
+ * reserved for "the org doesn't have the Utilities module" (no row / no
+ * utilities block); a query failure THROWS so a database or RLS hiccup never
+ * masquerades as the module being absent.
  */
 export async function getUtilityConfig(
   client: SupabaseClient<Database>,
@@ -119,7 +125,10 @@ export async function getUtilityConfig(
     .select("settings")
     .eq("id", orgId)
     .maybeSingle()
-  if (error || !data) return null
+  if (error) {
+    throw new Error(`Could not load utility settings: ${error.message}`)
+  }
+  if (!data) return null
   return parseUtilityConfig(data.settings)
 }
 
@@ -128,6 +137,7 @@ export async function getUtilityConfig(
  * payment URL (only used later, at the awaiting_payment step). */
 export function isCawConfigured(cfg: UtilityOrgConfig): boolean {
   const b = cfg.builder
+  // Values are trimmed at parse time, so non-empty means non-whitespace.
   const builderReady = [
     b.companyName,
     b.businessPhone,
@@ -135,7 +145,7 @@ export function isCawConfigured(cfg: UtilityOrgConfig): boolean {
     b.mailingAddress,
     b.preparerName,
   ].every((v) => v.length > 0 && !v.startsWith("PLACEHOLDER_"))
-  return builderReady && !cfg.caw.submissionEmail.startsWith("PLACEHOLDER_")
+  return builderReady && EMAIL_RE.test(cfg.caw.submissionEmail)
 }
 
 /** Whether enough is configured to email a valid form to Lumber One. */
@@ -143,7 +153,7 @@ export function isLumberOneConfigured(cfg: UtilityOrgConfig): boolean {
   return (
     cfg.builder.companyName.length > 0 &&
     !cfg.builder.companyName.startsWith("PLACEHOLDER_") &&
-    cfg.lumberOne.submissionEmail.includes("@")
+    EMAIL_RE.test(cfg.lumberOne.submissionEmail)
   )
 }
 
