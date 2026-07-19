@@ -24,6 +24,10 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
+// The sweep is bounded (MAX_PER_RUN) but sequential — an RPC plus a per-member
+// count query per org — so give it well beyond the 10s default so a full run
+// can't be cut off mid-org.
+export const maxDuration = 300
 
 // Grace AFTER the trial's end (sandbox_expires_at) before the hard delete.
 const GRACE_DAYS = 30

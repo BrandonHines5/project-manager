@@ -21,6 +21,7 @@ set search_path = public, pg_temp
 as $$
 declare
   v_status text;
+  v_project_ids uuid[];
 begin
   select status into v_status from public.organizations where id = p_org;
   if v_status is null then
@@ -37,11 +38,29 @@ begin
   return query
     select om.profile_id from public.organization_members om where om.org_id = p_org;
 
+  -- Snapshot the org's project ids before the cascade removes them: the audit /
+  -- trash / QBO-mirror tables key off project_id as a BARE uuid (no FK to
+  -- projects — history/trash keep it bare so project deletes can't deadlock), so
+  -- the projects cascade never reaches them. Without an explicit purge a
+  -- "permanent" delete would strand their snapshots (full row payloads, actor
+  -- names, invoice data) forever.
+  select array_agg(id) into v_project_ids from public.projects where org_id = p_org;
+
   -- Teardown in dependency order. Projects first: their many children cascade
   -- via project_id, which also clears the only blockers on companies/cost_codes
   -- (purchase_orders → companies, and project_budget_lines / project_cost_actuals
   -- → cost_codes are all project children, deleted by that cascade).
   delete from public.projects             where org_id = p_org;
+
+  -- Now purge the bare-uuid project references the cascade couldn't reach. Runs
+  -- AFTER the projects delete so any history rows the cascade itself recorded
+  -- (record_project_history fires on child deletes) are swept too.
+  if v_project_ids is not null then
+    delete from public.project_history where project_id = any(v_project_ids);
+    delete from public.deleted_items    where project_id = any(v_project_ids);
+    delete from public.qbo_invoices     where project_id = any(v_project_ids);
+  end if;
+
   delete from public.insurance_documents  where org_id = p_org; -- cascades insurance_policies
   delete from public.companies            where org_id = p_org;
   delete from public.cost_codes           where org_id = p_org;

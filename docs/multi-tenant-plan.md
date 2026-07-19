@@ -512,11 +512,16 @@ existing/provisioned org is `active_subscriber` and never participates.
   cascade and clear the only blockers on companies/cost_codes: `purchase_orders`,
   `project_budget_lines`, `project_cost_actuals` — then the flat roots, then the
   org row which cascades members/integrations), and returns the member profile
-  ids. The cron then deletes each member's auth user IF they no longer belong to
-  any org (deleting the auth user cascades its profile). Per-org failures are
-  isolated (one bad org retries next day). Known low-risk gap: Storage objects
-  (`brand-assets/{org_id}/…`, project files) aren't swept — private/orphaned with
-  no access once the org is gone; a future sweep can reclaim them. Env Brandon
+  ids. It also snapshots the org's project ids before that cascade and purges the
+  three tables that key off `project_id` as a BARE uuid with no FK
+  (`project_history`, `deleted_items`, `qbo_invoices`) — the projects cascade
+  can't reach them, so without this a "permanent" delete would strand their
+  snapshots (full row payloads, actor names, invoice data) forever. The cron then
+  deletes each member's auth user IF they no longer belong to any org (deleting
+  the auth user cascades its profile). Per-org failures are isolated (one bad org
+  retries next day). Known low-risk gap: Storage objects (`brand-assets/{org_id}/…`,
+  project files) aren't swept — private/orphaned with no access once the org is
+  gone; a future sweep can reclaim them. Env Brandon
   sets to arm it: `SANDBOX_CLEANUP_ENABLED=true` (leave unset to keep it off).
   **Stage S is complete** — self-serve trial → paywall on lapse → subscribe to
   restore → 30-day grace then hard delete.
