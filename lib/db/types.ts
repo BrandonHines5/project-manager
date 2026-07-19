@@ -1880,6 +1880,9 @@ export type Database = {
           settings: Json
           slug: string
           status: string
+          stripe_customer_id: string | null
+          stripe_subscription_id: string | null
+          stripe_subscription_status: string | null
         }
         Insert: {
           created_at?: string
@@ -1889,6 +1892,9 @@ export type Database = {
           settings?: Json
           slug: string
           status?: string
+          stripe_customer_id?: string | null
+          stripe_subscription_id?: string | null
+          stripe_subscription_status?: string | null
         }
         Update: {
           created_at?: string
@@ -1898,6 +1904,9 @@ export type Database = {
           settings?: Json
           slug?: string
           status?: string
+          stripe_customer_id?: string | null
+          stripe_subscription_id?: string | null
+          stripe_subscription_status?: string | null
         }
         Relationships: []
       }

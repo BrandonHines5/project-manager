@@ -476,10 +476,27 @@ existing/provisioned org is `active_subscriber` and never participates.
   same RLS visibility — the sandbox variant only adds a status stamp).
   End-to-end go-live check (create a real sandbox org, confirm zero Hines rows +
   paywall on expiry) runs once **TRIAL_SIGNUP_SECRET** is set in Vercel.
-- **S3 — Stripe billing**. Customer per org, Checkout wired to the paywall's
-  "Subscribe now", webhook flips `sandbox_expired → active_subscriber` (+
-  clears `sandbox_expires_at`); handle cancellation/downgrade. Its own
-  multi-PR slice (subscriptions, webhooks, customer portal, plan gating).
+- **S3 — Stripe billing: DONE (0118)**. `organizations.stripe_customer_id`
+  (partial-unique) `/stripe_subscription_id/stripe_subscription_status`.
+  `lib/stripe.ts` is env-gated (null client without `STRIPE_SECRET_KEY`;
+  `stripeConfigured` needs the key + `STRIPE_PRICE_ID`). The paywall's
+  "Subscribe now" calls `app/actions/billing.ts:createSubscriptionCheckout`
+  (owner/admin only; creates/reuses the org's Stripe customer, opens a
+  subscription Checkout session tagged with `client_reference_id`/subscription
+  metadata = org id, returns the URL to redirect to). Deliberately does NOT run
+  the S1b write guard — the caller's org is the frozen trial and paying is how
+  they escape it; the customer-id write goes through the admin client. The
+  webhook `/api/stripe/webhook` (signature-verified with
+  `STRIPE_WEBHOOK_SECRET`) is the sole state-flipper: active/trialing/past_due →
+  `active_subscriber` (clears `sandbox_expires_at`), anything else (canceled/
+  unpaid) → back to `sandbox_expired`; resolves the org by session/subscription
+  metadata or the stored customer id, idempotent upserts so Stripe's
+  at-least-once delivery is harmless. Non-trial orgs never have a subscription,
+  so this never touches Hines. Env Brandon adds in Vercel to go live:
+  `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_WEBHOOK_SECRET` (+ register the
+  webhook endpoint in the Stripe dashboard for checkout.session.completed and
+  customer.subscription.created/updated/deleted). No customer-portal / plan-gating
+  yet (future slice if wanted).
 - **S4 — grace hard-delete cron**. Daily `/api/cron/sandbox-cleanup`
   (`CRON_SECRET`) hard-deletes sandbox orgs past `sandbox_expires_at + 30 days`
   — a 30-day grace measured from the trial's end (`sandbox_expires_at` is
