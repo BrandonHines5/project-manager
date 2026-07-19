@@ -133,9 +133,15 @@ export async function provisionOrganization(
     }
   )
   if (rpcErr) {
-    const dupSlug = /duplicate key|unique|slug/i.test(rpcErr.message)
+    // Only a slug collision maps to the friendly "taken" message — key on the
+    // organizations slug unique constraint specifically. A generic
+    // unique/duplicate match would mislabel any OTHER failure (e.g. a seeded
+    // cost-code/role constraint) as a slug problem, which it isn't.
+    const slugTaken =
+      /organizations_slug_key/i.test(rpcErr.message) ||
+      (rpcErr.code === "23505" && /\bslug\b/i.test(rpcErr.message))
     return rollback(
-      dupSlug
+      slugTaken
         ? "That URL slug is already taken — pick another."
         : `Couldn't create the organization: ${rpcErr.message}`
     )
