@@ -3799,6 +3799,10 @@ export type Database = {
       payment_in_my_org: { Args: { p_payment: string }; Returns: boolean }
       project_in_my_org: { Args: { p_project: string }; Returns: boolean }
       purchase_order_in_my_org: { Args: { p_po: string }; Returns: boolean }
+      remove_org_member: {
+        Args: { p_org: string; p_profile: string }
+        Returns: undefined
+      }
       save_company_with_trades: {
         Args: {
           p_address: string
@@ -3813,6 +3817,10 @@ export type Database = {
         Returns: string
       }
       schedule_item_in_my_org: { Args: { p_item: string }; Returns: boolean }
+      set_org_member_role: {
+        Args: { p_org: string; p_profile: string; p_role: string }
+        Returns: undefined
+      }
       set_project_label: {
         Args: { p_add: boolean; p_ids: string[]; p_label: string }
         Returns: number

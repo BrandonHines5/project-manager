@@ -203,3 +203,59 @@ export async function saveOrgSettings(
   revalidatePath("/", "layout")
   return { ok: true }
 }
+
+// ---------------------------------------------------------------------------
+// Org member management (B5 part 3)
+//
+// Both actions are thin wrappers over the 0110 SECURITY DEFINER RPCs — the
+// permission matrix (owners manage everyone; admins manage non-owners only;
+// last-owner protection) lives in the database, so a forged call gets the
+// same rejection the UI would.
+
+const MemberRoleSchema = z.enum(["owner", "admin", "member"])
+export type OrgMemberRole = z.infer<typeof MemberRoleSchema>
+
+export async function setOrgMemberRole(input: {
+  orgId: string
+  profileId: string
+  role: OrgMemberRole
+}): Promise<{ ok: boolean; error?: string }> {
+  await requireSession()
+  const parsed = z
+    .object({
+      orgId: z.string().uuid(),
+      profileId: z.string().uuid(),
+      role: MemberRoleSchema,
+    })
+    .safeParse(input)
+  if (!parsed.success) return { ok: false, error: "Invalid member update." }
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase.rpc("set_org_member_role", {
+    p_org: parsed.data.orgId,
+    p_profile: parsed.data.profileId,
+    p_role: parsed.data.role,
+  })
+  if (error) return { ok: false, error: error.message }
+  // Role changes move the target's Organization link + this page's controls.
+  revalidatePath("/", "layout")
+  return { ok: true }
+}
+
+export async function removeOrgMember(input: {
+  orgId: string
+  profileId: string
+}): Promise<{ ok: boolean; error?: string }> {
+  await requireSession()
+  const parsed = z
+    .object({ orgId: z.string().uuid(), profileId: z.string().uuid() })
+    .safeParse(input)
+  if (!parsed.success) return { ok: false, error: "Invalid member removal." }
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase.rpc("remove_org_member", {
+    p_org: parsed.data.orgId,
+    p_profile: parsed.data.profileId,
+  })
+  if (error) return { ok: false, error: error.message }
+  revalidatePath("/", "layout")
+  return { ok: true }
+}

@@ -246,10 +246,23 @@ sweep. Per-integration wiring:
   sibling settings blocks (utilities). Gate probed both ways: test-org owner
   ↔ Hines on organizations updates (0 rows cross-org) and storage.objects
   inserts (42501 cross-prefix, allowed own-prefix).
-- Org admin UI (remaining): members list, invites (org-scoped
-  `client_invites`-style tokens for staff), role management (owner/admin).
-  Membership writes get definer RPCs with last-owner / escalation guards —
-  until then they stay service-role-only.
+- **DONE (0110, part 3 — member management)**: organization_members writes
+  open to org admins through two SECURITY DEFINER RPCs —
+  `set_org_member_role(org, profile, role)` and
+  `remove_org_member(org, profile)` — with the guards RLS can't express:
+  owners manage everyone; admins manage NON-owners only (never grant/revoke
+  owner, never touch an owner row); the last owner can't be demoted or
+  removed (per-org advisory lock slot 5 makes the owner-count check atomic);
+  removal nulls the target's matching `profiles.active_org_id`. The RPCs
+  only manage EXISTING rows — enrollment stays with inviteTeamMember /
+  client-invite acceptance (admin client), and cross-org email invites are a
+  later slice. UI: a Members roster on `/settings/organization` (role select
+  + two-tap remove; controls mirror the matrix, DB enforces it). Guard
+  matrix probed via SQL impersonation: cross-org caller rejected, member
+  caller rejected, admin blocked from owner rows/grants, last-owner demote
+  and removal blocked, admin member↔admin + non-owner removal allowed.
+- Org admin UI (remaining): invites (org-scoped `client_invites`-style
+  tokens for staff joining an org directly).
 - Provisioning: create-org flow seeds cost codes, the Template project,
   default settings.
 - Billing: Stripe customer per org, subscription webhooks → `org_billing`
