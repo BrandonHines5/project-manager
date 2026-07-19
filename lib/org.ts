@@ -32,18 +32,20 @@ export async function getActiveOrgId(
 
   // org_members_member_read exposes every membership row of the caller's
   // orgs (member lists need that), so filter to the caller's OWN rows.
-  const [{ data: prof }, { data: memberships, error }] = await Promise.all([
-    supabase
-      .from("profiles")
-      .select("active_org_id")
-      .eq("id", uid)
-      .maybeSingle(),
-    supabase
-      .from("organization_members")
-      .select("org_id")
-      .eq("profile_id", uid)
-      .order("created_at", { ascending: true }),
-  ])
+  const [{ data: prof, error: profErr }, { data: memberships, error }] =
+    await Promise.all([
+      supabase
+        .from("profiles")
+        .select("active_org_id")
+        .eq("id", uid)
+        .maybeSingle(),
+      supabase
+        .from("organization_members")
+        .select("org_id")
+        .eq("profile_id", uid)
+        .order("created_at", { ascending: true }),
+    ])
+  if (profErr) throw new Error(profErr.message)
   if (error) throw new Error(error.message)
 
   const mine = memberships ?? []

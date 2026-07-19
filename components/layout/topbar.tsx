@@ -17,6 +17,7 @@ import {
   Wallet,
 } from "lucide-react"
 import dynamic from "next/dynamic"
+import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
 import { GlobalSearch } from "@/components/layout/global-search"
@@ -113,7 +114,11 @@ export function Topbar({
     setSwitching(false)
     setMenuOpen(false)
     // The whole workspace (branding, jobs, settings) follows the active org.
-    if (result.ok) router.refresh()
+    if (result.ok) {
+      router.refresh()
+    } else {
+      toast.error(result.error ?? "Couldn't switch organizations.")
+    }
   }
   return (
     // min-h + safe-area padding (instead of a fixed h-14) so the dark bar

@@ -6,7 +6,7 @@ import { ProjectListSidebar } from "@/components/layout/project-list-sidebar"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { brandForProjectTypes } from "@/lib/brand"
 import { getBrandConfig } from "@/lib/org-brand"
-import { getActiveOrgId, getOrgMemberships } from "@/lib/org"
+import { getOrgMemberships } from "@/lib/org"
 
 // Every authenticated page depends on cookies and per-user data, so we opt out
 // of any caching here — otherwise Vercel's edge can serve one user's response
@@ -26,25 +26,32 @@ export default async function AppLayout({
   // member of. We fetch the project list here (not in each page) so the
   // sidebar stays consistent across navigations and benefits from React's
   // server-component dedupe.
-  const [{ count: unreadCount }, { data: projects }, activeOrgId, orgs] =
-    await Promise.all([
-      supabase
-        .from("notifications")
-        .select("id", { count: "exact", head: true })
-        .eq("recipient_id", profile.id)
-        .is("read_at", null),
-      supabase
-        .from("projects")
-        .select(
-          "id, name, project_number, address, status, crm_status, project_type, labels"
-        )
-        .order("project_number", { ascending: false }),
-      // Org membership is independent of the other two — ride the same batch.
-      getActiveOrgId(supabase, profile.id).catch(() => null),
-      getOrgMemberships(supabase, profile.id).catch(
-        () => [] as { org_id: string; name: string }[]
-      ),
-    ])
+  const [{ count: unreadCount }, { data: projects }, orgs] = await Promise.all([
+    supabase
+      .from("notifications")
+      .select("id", { count: "exact", head: true })
+      .eq("recipient_id", profile.id)
+      .is("read_at", null),
+    supabase
+      .from("projects")
+      .select(
+        "id, name, project_number, address, status, crm_status, project_type, labels"
+      )
+      .order("project_number", { ascending: false }),
+    // Org membership is independent of the other two — ride the same batch.
+    getOrgMemberships(supabase, profile.id).catch(
+      () => [] as { org_id: string; name: string }[]
+    ),
+  ])
+
+  // Same resolution as getActiveOrgId, but from data already in hand — the
+  // session profile carries active_org_id and `orgs` IS the membership list,
+  // so the layout skips the duplicate organization_members read.
+  const activeOrgId =
+    (profile.active_org_id &&
+    orgs.some((o) => o.org_id === profile.active_org_id)
+      ? profile.active_org_id
+      : orgs[0]?.org_id) ?? null
 
   // Org-driven branding (B3): the workspace presents the caller's org. A
   // client whose projects are all commercial sees the org's commercial
