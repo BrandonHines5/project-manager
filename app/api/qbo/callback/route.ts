@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 import { cookies } from "next/headers"
 import { requireStaff } from "@/lib/auth"
+import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { getActiveOrgId } from "@/lib/org"
 import { exchangeCodeForTokens } from "@/lib/quickbooks/oauth"
 import { saveQboConnection } from "@/lib/quickbooks/storage"
 import { getCompanyInfo } from "@/lib/quickbooks/client"
@@ -45,11 +47,23 @@ export async function GET(req: Request) {
   const expectedState = jar.get(STATE_COOKIE)?.value
   if (!expectedState || expectedState !== state) return fail("state_mismatch")
 
+  // The connection belongs to the staffer's ACTIVE org — resolved from the
+  // same authenticated session that started the flow, so a forged state
+  // can't re-home it (and the save refuses a realm another org owns).
+  let orgId: string
+  try {
+    const supabase = await createSupabaseServerClient()
+    orgId = await getActiveOrgId(supabase, profile.id)
+  } catch {
+    return fail("no_org")
+  }
+
   const tokens = await exchangeCodeForTokens(code)
   if (!tokens) return fail("token_exchange_failed")
 
   const environment = qboEnvironment()
   const saved = await saveQboConnection({
+    org_id: orgId,
     realm_id: realmId,
     environment,
     access_token: tokens.access_token,
@@ -59,15 +73,18 @@ export async function GET(req: Request) {
     company_name: null,
     connected_by: profile.id,
   })
-  if (!saved) return fail("save_failed")
+  if (!saved.ok) {
+    return fail(saved.reason === "realm_other_org" ? "realm_other_org" : "save_failed")
+  }
 
   // Best-effort: fetch the company name for display (reads the just-saved
   // token). A failure here doesn't undo the successful connection.
   try {
-    const company = await getCompanyInfo()
+    const company = await getCompanyInfo(orgId)
     const name = company?.CompanyName ?? company?.LegalName ?? null
     if (name) {
       await saveQboConnection({
+        org_id: orgId,
         realm_id: realmId,
         environment,
         access_token: tokens.access_token,

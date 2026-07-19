@@ -33,16 +33,20 @@ import {
 
 const PUSH_DEFAULTS_KEY = "qbo_push_defaults"
 
-/** Redacted connection status for the settings page. */
+/** Redacted connection status for the settings page (active org's). */
 export async function qboStatusAction(): Promise<QboConnectionStatus | null> {
-  await requireStaff()
-  return getQboStatus()
+  const profile = await requireStaff()
+  const supabase = await createSupabaseServerClient()
+  const orgId = await getActiveOrgId(supabase, profile.id)
+  return getQboStatus(orgId)
 }
 
 /** Disconnect: revoke the refresh token at Intuit, then drop the stored row. */
 export async function disconnectQboAction(): Promise<{ ok: boolean; error?: string }> {
-  await requireStaff()
-  const conn = await getQboConnection()
+  const profile = await requireStaff()
+  const supabase = await createSupabaseServerClient()
+  const orgId = await getActiveOrgId(supabase, profile.id)
+  const conn = await getQboConnection(orgId)
   if (!conn) return { ok: true }
   await revokeToken(conn.refresh_token)
   const deleted = await deleteQboConnection(conn.realm_id)
@@ -67,13 +71,15 @@ const diagnosticInputSchema = z.string().trim().max(21).optional()
 export async function runQboDiagnosticAction(
   exampleDocNumber?: string
 ): Promise<QboDiagnosticResult> {
-  await requireStaff()
+  const profile = await requireStaff()
   const parsed = diagnosticInputSchema.safeParse(exampleDocNumber)
   if (!parsed.success) return { ok: false, error: "Invalid document number." }
-  const conn = await getQboConnection()
+  const supabase = await createSupabaseServerClient()
+  const orgId = await getActiveOrgId(supabase, profile.id)
+  const conn = await getQboConnection(orgId)
   if (!conn) return { ok: false, error: "QuickBooks is not connected." }
   try {
-    const snapshot = await fetchDiagnosticSnapshot(parsed.data || undefined)
+    const snapshot = await fetchDiagnosticSnapshot(orgId, parsed.data || undefined)
     return { ok: true, snapshot }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
@@ -138,14 +144,16 @@ export type QboLists = { items: QboOption[]; customers: QboOption[]; classes: Qb
 export async function getQboLists(): Promise<
   { ok: true; lists: QboLists } | { ok: false; error: string }
 > {
-  await requireStaff()
-  const conn = await getQboConnection()
+  const profile = await requireStaff()
+  const supabase = await createSupabaseServerClient()
+  const orgId = await getActiveOrgId(supabase, profile.id)
+  const conn = await getQboConnection(orgId)
   if (!conn) return { ok: false, error: "QuickBooks is not connected." }
   try {
     const [items, customers, classes] = await Promise.all([
-      listItems(),
-      listCustomers(),
-      listClasses(),
+      listItems(orgId),
+      listCustomers(orgId),
+      listClasses(orgId),
     ])
     return { ok: true, lists: { items, customers, classes } }
   } catch (e) {
@@ -174,8 +182,10 @@ export async function pushPurchaseOrderToQbo(input: {
   id: string
   project_id: string
 }): Promise<PushPoResult> {
-  await requireStaff()
-  const conn = await getQboConnection()
+  const profile = await requireStaff()
+  const orgSupabase = await createSupabaseServerClient()
+  const orgId = await getActiveOrgId(orgSupabase, profile.id)
+  const conn = await getQboConnection(orgId)
   if (!conn) return { ok: false, error: "QuickBooks is not connected." }
 
   const defaults = await getQboPushDefaults()
@@ -227,14 +237,14 @@ export async function pushPurchaseOrderToQbo(input: {
   }
 
   try {
-    const vendorId = await findVendorIdByName(company.name)
+    const vendorId = await findVendorIdByName(orgId, company.name)
     if (!vendorId) {
       return {
         ok: false,
         error: `No QuickBooks vendor named "${company.name}". Create it in QuickBooks (or rename to match), then retry.`,
       }
     }
-    const apAccountId = await getApAccountId()
+    const apAccountId = await getApAccountId(orgId)
     if (!apAccountId) {
       return { ok: false, error: "No Accounts Payable account found in QuickBooks." }
     }
@@ -255,7 +265,7 @@ export async function pushPurchaseOrderToQbo(input: {
       })),
     }
 
-    const result = await createPurchaseOrder(poInput, defaults)
+    const result = await createPurchaseOrder(orgId, poInput, defaults)
     await upsertPoSync({
       purchase_order_id: po.id,
       qbo_realm_id: conn.realm_id,

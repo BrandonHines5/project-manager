@@ -148,9 +148,10 @@ async function refreshTokens(
  * to recover from a 401).
  */
 export async function getValidAccessToken(
+  orgId: string,
   force = false
 ): Promise<{ accessToken: string; realmId: string; connection: QboConnection } | null> {
-  const conn = await getQboConnection()
+  const conn = await getQboConnection(orgId)
   if (!conn) return null
 
   const expiresAt = new Date(conn.access_token_expires_at).getTime()

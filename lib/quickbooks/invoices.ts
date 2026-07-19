@@ -1,7 +1,7 @@
 import "server-only"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { qboGet, QboApiError } from "./client"
-import { getQboConnection } from "./storage"
+import { getQboConnection, getQboConnectionByRealm } from "./storage"
 import type { Tables } from "@/lib/db/types"
 
 /**
@@ -54,6 +54,7 @@ function qboEscape(value: string): string {
  * endpoint is the documented home of include=invoiceLink.
  */
 async function fetchInvoicesForCustomer(
+  orgId: string,
   customerId: string
 ): Promise<QboInvoiceRaw[]> {
   const out: QboInvoiceRaw[] = []
@@ -63,6 +64,7 @@ async function fetchInvoicesForCustomer(
       customerId
     )}' STARTPOSITION ${start} MAXRESULTS ${PAGE_SIZE}`
     const json = (await qboGet(
+      orgId,
       `query?query=${encodeURIComponent(query)}&include=invoiceLink`
     )) as { QueryResponse?: { Invoice?: QboInvoiceRaw[] } }
     const rows = json?.QueryResponse?.Invoice ?? []
@@ -77,7 +79,7 @@ async function fetchInvoicesForCustomer(
     (r) => r.Id && !r.InvoiceLink && (r.Balance ?? 0) > 0
   )
   for (const raw of missing.slice(0, 25)) {
-    const fresh = await fetchInvoiceById(raw.Id as string)
+    const fresh = await fetchInvoiceById(orgId, raw.Id as string)
     if (fresh?.InvoiceLink) raw.InvoiceLink = fresh.InvoiceLink
   }
   return out
@@ -85,10 +87,12 @@ async function fetchInvoicesForCustomer(
 
 /** One invoice by QBO id (with its pay link), or null when it's gone. */
 export async function fetchInvoiceById(
+  orgId: string,
   qboInvoiceId: string
 ): Promise<QboInvoiceRaw | null> {
   try {
     const json = (await qboGet(
+      orgId,
       `invoice/${encodeURIComponent(qboInvoiceId)}?include=invoiceLink`
     )) as { Invoice?: QboInvoiceRaw }
     return json?.Invoice ?? null
@@ -143,18 +147,21 @@ export type InvoiceSyncResult =
  * Upserts everything QBO returns and marks cached rows QBO no longer has as
  * 'deleted' (they stay visible to staff, hidden from clients).
  */
-export async function syncProjectInvoicesFromQbo(project: {
-  id: string
-  qbo_customer_id: string
-}): Promise<InvoiceSyncResult> {
-  const conn = await getQboConnection()
+export async function syncProjectInvoicesFromQbo(
+  orgId: string,
+  project: {
+    id: string
+    qbo_customer_id: string
+  }
+): Promise<InvoiceSyncResult> {
+  const conn = await getQboConnection(orgId)
   if (!conn) return { ok: false, error: "QuickBooks is not connected." }
   const admin = createSupabaseAdminClient()
   if (!admin) return { ok: false, error: "Server storage is not configured." }
 
   let raws: QboInvoiceRaw[]
   try {
-    raws = (await fetchInvoicesForCustomer(project.qbo_customer_id)).filter(
+    raws = (await fetchInvoicesForCustomer(orgId, project.qbo_customer_id)).filter(
       (r) => r.Id
     )
   } catch (e) {
@@ -209,10 +216,12 @@ export type SingleInvoiceSync = {
  * before/after balance so the caller can detect a payment.
  */
 export async function syncSingleInvoice(
+  realmId: string,
   qboInvoiceId: string,
   opts?: { voided?: boolean }
 ): Promise<SingleInvoiceSync | { error: string }> {
-  const conn = await getQboConnection()
+  // Webhook path: the event's realm identifies the connection AND the org.
+  const conn = await getQboConnectionByRealm(realmId)
   if (!conn) return { error: "QuickBooks is not connected." }
   const admin = createSupabaseAdminClient()
   if (!admin) return { error: "Server storage is not configured." }
@@ -224,7 +233,7 @@ export async function syncSingleInvoice(
     .eq("qbo_invoice_id", qboInvoiceId)
     .maybeSingle()
 
-  const raw = await fetchInvoiceById(qboInvoiceId)
+  const raw = await fetchInvoiceById(conn.org_id, qboInvoiceId)
   if (!raw?.Id) {
     if (cached && cached.status !== "deleted") {
       await admin
@@ -241,10 +250,14 @@ export async function syncSingleInvoice(
   let projectName: string | null = null
   const customerId = raw.CustomerRef?.value
   if (!projectId && customerId) {
+    // Customer ids are only unique within a realm — scope the lookup to the
+    // connection's org so another tenant's identically-numbered customer can
+    // never claim this invoice.
     const { data: project } = await admin
       .from("projects")
       .select("id, name")
       .eq("qbo_customer_id", customerId)
+      .eq("org_id", conn.org_id)
       .order("created_at", { ascending: true })
       .limit(1)
       .maybeSingle()
@@ -277,6 +290,7 @@ export async function syncSingleInvoice(
 
 /** The QBO Invoice ids a Payment applies to (webhook Payment events). */
 export async function invoiceIdsFromPayment(
+  orgId: string,
   qboPaymentId: string
 ): Promise<string[]> {
   type PaymentRaw = {
@@ -286,6 +300,7 @@ export async function invoiceIdsFromPayment(
   }
   try {
     const json = (await qboGet(
+      orgId,
       `payment/${encodeURIComponent(qboPaymentId)}`
     )) as { Payment?: PaymentRaw }
     const ids = new Set<string>()

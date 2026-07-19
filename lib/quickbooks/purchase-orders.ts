@@ -117,10 +117,11 @@ export type CreatePoResult = {
  * DocNumber) untouched if one is already there, so a re-push never duplicates.
  */
 export async function createPurchaseOrder(
+  orgId: string,
   po: PoInput,
   defaults: PushDefaults
 ): Promise<CreatePoResult> {
-  const existing = await findPurchaseOrderByDocNumber(po.doc_number)
+  const existing = await findPurchaseOrderByDocNumber(orgId, po.doc_number)
   if (existing) {
     return {
       qbo_po_id: existing.Id,
@@ -134,6 +135,7 @@ export async function createPurchaseOrder(
   // RequestId keyed on our PO id → Intuit replays the original response on a
   // rapid retry instead of creating a second PO.
   const json = (await qboPost(
+    orgId,
     `purchaseorder?requestid=${encodeURIComponent(po.purchase_order_id)}`,
     payload
   )) as { PurchaseOrder?: { Id?: string; SyncToken?: string } }
