@@ -82,6 +82,26 @@ export async function getActiveOrgId(
   return orgId
 }
 
+/**
+ * Whether the caller is the OWNER of the legacy (Hines) org — the platform
+ * operator who can provision new organizations (B5). Read through the given
+ * RLS session, so it's the single source of truth for both the
+ * `/settings/provision-org` page gate and `provisionOrganization`'s
+ * server-side re-check; a non-owner (or non-legacy-org staffer) is false.
+ */
+export async function isLegacyOrgOwner(
+  supabase: SupabaseClient<Database>,
+  profileId: string
+): Promise<boolean> {
+  const { data } = await supabase
+    .from("organization_members")
+    .select("member_role")
+    .eq("org_id", LEGACY_ORG_ID)
+    .eq("profile_id", profileId)
+    .maybeSingle()
+  return data?.member_role === "owner"
+}
+
 export type OrgMembership = {
   org_id: string
   name: string

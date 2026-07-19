@@ -12,6 +12,7 @@ import {
   LogOut,
   MessageSquarePlus,
   Plug,
+  PlusCircle,
   Settings,
   Tags,
   Wallet,
@@ -93,6 +94,7 @@ export function Topbar({
   orgs = [],
   activeOrgId = null,
   orgAdmin = false,
+  platformAdmin = false,
 }: {
   fullName: string
   email: string
@@ -105,6 +107,9 @@ export function Topbar({
   activeOrgId?: string | null
   /** Owner/admin of the active org — unlocks the Organization settings link. */
   orgAdmin?: boolean
+  /** Owner of the legacy (Hines) org — the platform operator who can
+   * provision new organizations. */
+  platformAdmin?: boolean
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [switching, setSwitching] = useState(false)
@@ -224,6 +229,16 @@ export function Topbar({
                   >
                     <Building2 className="h-4 w-4 text-muted" />
                     Organization
+                  </Link>
+                )}
+                {role === "staff" && platformAdmin && (
+                  <Link
+                    href="/settings/provision-org"
+                    onClick={() => setMenuOpen(false)}
+                    className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-background cursor-pointer"
+                  >
+                    <PlusCircle className="h-4 w-4 text-muted" />
+                    Provision organization
                   </Link>
                 )}
                 <Link

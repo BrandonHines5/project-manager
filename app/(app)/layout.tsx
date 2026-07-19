@@ -6,7 +6,7 @@ import { ProjectListSidebar } from "@/components/layout/project-list-sidebar"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { brandForProjectTypes } from "@/lib/brand"
 import { getBrandConfig } from "@/lib/org-brand"
-import { getOrgMemberships, resolveActiveOrgId } from "@/lib/org"
+import { getOrgMemberships, resolveActiveOrgId, LEGACY_ORG_ID } from "@/lib/org"
 
 // Every authenticated page depends on cookies and per-user data, so we opt out
 // of any caching here — otherwise Vercel's edge can serve one user's response
@@ -71,6 +71,12 @@ export default async function AppLayout({
     activeMembership?.member_role === "owner" ||
     activeMembership?.member_role === "admin"
 
+  // The platform operator (owner of the legacy Hines org) gets the
+  // "Provision organization" link — standing up new tenants is their job.
+  const platformAdmin = orgs.some(
+    (o) => o.org_id === LEGACY_ORG_ID && o.member_role === "owner"
+  )
+
   // Org-driven branding (B3): the workspace presents the caller's org. A
   // client whose projects are all commercial sees the org's commercial
   // sub-brand across the app; everyone else (staff/trade, or a client with
@@ -110,6 +116,7 @@ export default async function AppLayout({
         orgs={orgs}
         activeOrgId={activeOrgId}
         orgAdmin={orgAdmin}
+        platformAdmin={platformAdmin}
         // The jobs-list sidebar is desktop-only; the topbar hands the same
         // list to the mobile drawer so phones can switch jobs too.
         projects={projects ?? []}
