@@ -105,6 +105,10 @@ function StatusBadge({
   )
 }
 
+/**
+ * Quo/OpenPhone credentials card: a write-only API key + the shared fallback
+ * sending number. `save(true)` disconnects (clears the stored key).
+ */
 function QuoIntegrationCard({
   orgId,
   connected,
@@ -207,6 +211,11 @@ function QuoIntegrationCard({
   )
 }
 
+/**
+ * Resend email credentials card: a write-only API key + the verified From
+ * address and optional display name the org sends under. `save(true)`
+ * disconnects (clears the stored key).
+ */
 function ResendIntegrationCard({
   orgId,
   connected,
