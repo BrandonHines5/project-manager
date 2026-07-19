@@ -1876,22 +1876,28 @@ export type Database = {
           created_at: string
           id: string
           name: string
+          sandbox_expires_at: string | null
           settings: Json
           slug: string
+          status: string
         }
         Insert: {
           created_at?: string
           id?: string
           name: string
+          sandbox_expires_at?: string | null
           settings?: Json
           slug: string
+          status?: string
         }
         Update: {
           created_at?: string
           id?: string
           name?: string
+          sandbox_expires_at?: string | null
           settings?: Json
           slug?: string
+          status?: string
         }
         Relationships: []
       }
