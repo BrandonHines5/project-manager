@@ -1,12 +1,12 @@
 "use server"
 
-import { randomInt } from "node:crypto"
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { requireStaff } from "@/lib/auth"
 import { getActiveOrgId } from "@/lib/org"
+import { generateTempPassword } from "@/lib/auth/temp-password"
 
 const optStr = z.string().nullish()
 
@@ -49,22 +49,6 @@ const ResetPasswordInput = z.object({
 
 function nz(v: string | null | undefined) {
   return v && v !== "" ? v : null
-}
-
-// Generate a 14-char temporary password using crypto-grade randomness. Mirrors
-// the client-side generator in the team-client InviteDialog so resets and new
-// invites produce the same shape of password. Server-side because the result
-// is the auth secret — we don't want it bouncing through the browser.
-//
-// Uses crypto.randomInt for uniform character selection (no modulo bias).
-function generateTempPassword() {
-  const alphabet =
-    "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
-  const symbols = "!@#$%&*?"
-  let out = ""
-  for (let i = 0; i < 13; i++) out += alphabet[randomInt(alphabet.length)]
-  out += symbols[randomInt(symbols.length)]
-  return out
 }
 
 export async function updateProfile(input: UpdateProfileInputT) {

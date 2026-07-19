@@ -356,6 +356,22 @@ PowerShell keygen one-liner is in the session log). Per-integration wiring:
   1 owner), authenticated caller gets 42501, cleanup left zero residue.
   Template-project cloning into a new org stays manual (duplicateProject
   after the fact) until a real second builder needs it.
+- **DONE (0-migration, part 5 — provisioning UI)**: `/settings/provision-org`
+  turns org creation from a manual SQL step into a single operator action.
+  Gated to the OWNER of the legacy (Hines) org — the platform operator today
+  (`platformAdmin` in the app layout gates the avatar-menu link;
+  `provisionOrganization` in `app/actions/provisioning.ts` re-checks it
+  server-side). It wraps `create_organization` with the one thing the RPC
+  can't do — bootstrap the owner's login: create the owner auth user (temp
+  password, returned once to share), promote that profile to staff via the
+  admin client (service_role is exempt from `prevent_role_escalation`, and the
+  caller doesn't yet share an org with the brand-new user so a session update
+  would be RLS-blocked), run the RPC (always seeds from Hines — the NULL-no-
+  seed path isn't typed in the generated RPC args, so the UI doesn't expose
+  it), then set the owner's `active_org_id`. Any failure after createUser
+  rolls the auth user back (cascades the profile); a taken email or slug
+  surfaces a friendly error. Still NOT built below: self-serve signup +
+  billing.
 - Billing: Stripe customer per org, subscription webhooks → `org_billing`
   table, plan gates enforced app-layer (same trust tier as financial_access).
 - Marketing-site handoff: demo → manual org creation first; self-serve signup
