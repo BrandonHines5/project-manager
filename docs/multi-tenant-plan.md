@@ -243,9 +243,14 @@ PowerShell keygen one-liner is in the session log). Per-integration wiring:
   `log.org_id` → the sender's membership (no call-site changes); the Team
   picker (`listQuoPhoneNumbers(orgId)`) resolves the active org's key. The
   inbound webhook stamps `communications.org_id` when it can (line owner's
-  org → matched project → matched company). Seeding a non-legacy org's Quo
-  creds is via `upsertOrgIntegration` until an integrations settings editor
-  lands. Two things stay env/shared and keep `communications`' bridge
+  org → matched project → matched company). A non-legacy org enters its own
+  Quo API key + shared number in the Integrations section of
+  `/settings/organization` (**part 5**): `saveQuoIntegration` (owner/admin
+  app-layer gate, since `org_integrations` is service-role-only) seals the
+  key through `upsertOrgIntegration`, and the key is write-only — the page
+  passes only a boolean "connected" + the non-secret number, never the key
+  value; a decrypt failure surfaces as a "Connection error" badge, not a
+  crash. Two things stay env/shared and keep `communications`' bridge
   default alive: `QUO_WEBHOOK_SECRET` (one endpoint, one OpenPhone
   workspace today — per-org inbound needs per-org webhook secrets/endpoints)
   and any fully-unattributed inbound row (shared line + unknown number has
