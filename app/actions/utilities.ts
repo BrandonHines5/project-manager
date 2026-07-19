@@ -285,12 +285,16 @@ export async function saveUtilityDrafts(
   const supabase = await createSupabaseServerClient()
 
   const job = await resolveJob(parsed.data)
+  // New drafts stamp the acting staffer's org (0113 dropped the bridge
+  // default). Resolved once — every entry in the call belongs to the same
+  // user, so the same org.
+  const orgId = await getActiveOrgId(supabase, profile.id)
 
   const ids: Partial<Record<UtilityProvider, string>> = {}
   const errors: Partial<Record<UtilityProvider, string>> = {}
   for (const entry of parsed.data.entries) {
     try {
-      ids[entry.provider] = await saveOneDraft(supabase, profile.id, entry, job)
+      ids[entry.provider] = await saveOneDraft(supabase, profile.id, orgId, entry, job)
     } catch (e) {
       errors[entry.provider] = e instanceof Error ? e.message : "Save failed."
     }
@@ -302,6 +306,7 @@ export async function saveUtilityDrafts(
 async function saveOneDraft(
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
   createdBy: string,
+  orgId: string,
   entry: z.infer<typeof SaveEntry>,
   job: { projectId: string | null; crmProjectId: string | null; jobLabel: string }
 ): Promise<string> {
@@ -369,6 +374,7 @@ async function saveOneDraft(
     status: "draft",
     form_data: form,
     created_by: createdBy,
+    org_id: orgId,
   }
   const { data, error } = await supabase
     .from("utility_requests")

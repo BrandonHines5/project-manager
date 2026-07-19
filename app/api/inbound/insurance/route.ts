@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server"
 import { Resend, type WebhookEventPayload } from "resend"
 import {
+  inboundOrgSlug,
   ingestInsuranceDocument,
   parseEmailAddress,
+  stripPlusTag,
 } from "@/lib/insurance/ingest"
 import { isExtractableType } from "@/lib/insurance/extract"
+import { createSupabaseAdminClient } from "@/lib/supabase/admin"
+import { LEGACY_ORG_ID } from "@/lib/org"
 
 /**
  * Resend inbound-email webhook. Point a Resend webhook (event
@@ -70,22 +74,44 @@ export async function POST(req: Request) {
 
   const email = event.data
 
+  const toList = (Array.isArray(email.to) ? email.to : [email.to]).filter(
+    (t): t is string => typeof t === "string"
+  )
+
   // Once the domain receives non-insurance mail (comms replies with PDF
   // attachments, say), only process messages actually addressed to the
   // insurance inbox — otherwise a client's reply with a contract PDF would
-  // be ingested as a COI. No-op when INSURANCE_INBOUND_EMAIL is unset or
-  // this webhook is scoped to a single address in Resend.
+  // be ingested as a COI. Compared with org plus-tags stripped on BOTH
+  // sides: insurance+{org-slug}@domain is still the insurance inbox. No-op
+  // when INSURANCE_INBOUND_EMAIL is unset or this webhook is scoped to a
+  // single address in Resend.
   const insuranceInbox = process.env.INSURANCE_INBOUND_EMAIL?.toLowerCase()
   if (insuranceInbox) {
-    const toList = (Array.isArray(email.to) ? email.to : [email.to]).filter(
-      (t): t is string => typeof t === "string"
-    )
+    const inboxBase = stripPlusTag(insuranceInbox)
     const addressed = toList.some(
-      (t) => (parseEmailAddress(t) ?? t).toLowerCase() === insuranceInbox
+      (t) => stripPlusTag((parseEmailAddress(t) ?? t).toLowerCase()) === inboxBase
     )
     if (!addressed) {
       return NextResponse.json({ ok: true, skipped: "not-insurance-inbox" })
     }
+  }
+
+  // Per-org inbound addressing (B4): the recipient's plus-tag is the org's
+  // slug (insurance+{slug}@domain). Untagged mail — today's Hines address —
+  // files to the legacy org, so the bridge default on insurance_documents
+  // is gone and every ingest stamps an explicit org. An unknown tag also
+  // falls back rather than dropping a sub's certificate on the floor.
+  let orgId: string = LEGACY_ORG_ID
+  const slug = inboundOrgSlug(toList)
+  const admin = slug ? createSupabaseAdminClient() : null
+  if (slug && admin) {
+    const { data: org } = await admin
+      .from("organizations")
+      .select("id")
+      .eq("slug", slug)
+      .maybeSingle()
+    if (org) orgId = org.id
+    else console.warn(`[insurance-inbound] unknown org slug in recipient: ${slug}`)
   }
 
   const from = parseEmailAddress(email.from) ?? email.from
@@ -126,6 +152,7 @@ export async function POST(req: Request) {
         source: "email",
         emailFrom: from,
         emailSubject: email.subject,
+        orgId,
       })
       summary.push({
         attachment: name,

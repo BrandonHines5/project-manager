@@ -223,9 +223,17 @@ PowerShell keygen one-liner is in the session log). Per-integration wiring:
   keys state by org; webhook resolves org via realmId lookup.
 - **Quo/OpenPhone**: per-org API key + numbers; inbound webhook resolves org
   by phone-number id.
-- **Resend inbound**: per-org inbound addresses (`insurance+<org>@…`,
-  `comms+<org>@…`) or per-org subdomains; ingest resolves org before
-  matching companies.
+- **Resend inbound**: **DONE for insurance (part 2)** — the recipient
+  plus-tag IS the org slug (`insurance+{org-slug}@domain`, zero per-org
+  address config): the webhook resolves the org before ingest, untagged
+  legacy mail files to org #1 via `lib/org.ts:LEGACY_ORG_ID`, an unknown
+  tag warns + falls back rather than dropping a certificate, and the
+  inbox-match check strips plus-tags on both sides. With all three ingest
+  paths stamping explicitly, 0113 dropped the `insurance_documents` bridge
+  default (and `utility_requests`' too — saveUtilityDrafts stamps the
+  acting staffer's org). Probes: org-less inserts now fail (23502 / 42501
+  via the RLS null-org check) and stamped inserts work. Comms inbound
+  email gets the same treatment when comms goes per-org.
 - **Microsoft Graph**: per-org tenant credentials (optional; Resend fallback
   covers orgs without M365).
 - **CRM / SpecMagician / dashboard**: Hines-only; become org #1 settings and

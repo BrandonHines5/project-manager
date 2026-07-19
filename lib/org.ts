@@ -2,6 +2,14 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import type { Database } from "@/lib/db/types"
 
 /**
+ * Org #1 (Hines Homes) — the pre-multi-tenant tenant. Shared inbound
+ * channels that predate per-org addressing (untagged insurance email) file
+ * here until every channel carries an org tag; new code must not reach for
+ * this outside those legacy funnels.
+ */
+export const LEGACY_ORG_ID = "018f6f2a-4c1e-4b8e-9d3a-7c5b2e8a1f10"
+
+/**
  * Pure active-org resolution, shared by getActiveOrgId and callers that
  * already hold the membership list (the app layout): the stored selection
  * wins when it names one of the caller's memberships, otherwise the earliest
