@@ -6,22 +6,17 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { createCrmClient } from "@/lib/supabase/crm"
 import { requireStaff } from "@/lib/auth"
+import { CAW_FIXED, CAW_METER_SIZES } from "@/lib/utilities/caw/config"
 import {
-  CAW_BUILDER,
-  CAW_FIXED,
-  CAW_METER_SIZES,
-  CAW_SUBMISSION_EMAIL,
-  CAW_PAYMENT_URL,
+  getUtilityConfig,
   isCawConfigured,
-  resolveCawZip,
-} from "@/lib/utilities/caw/config"
-import {
-  LUMBER_ONE_CUSTOMER_NAME,
-  LUMBER_ONE_SUBMISSION_EMAIL,
-  defaultDeliveryDirections,
   isLumberOneConfigured,
+  resolveCawZip,
   resolveCounty,
-} from "@/lib/utilities/lumber-one/config"
+  defaultDeliveryDirections,
+  type UtilityOrgConfig,
+} from "@/lib/utilities/org-config"
+import { getActiveOrgId } from "@/lib/org"
 import { fillCawForms, type CawRenderData } from "@/lib/utilities/caw/pdf"
 import {
   fillLumberOneForms,
@@ -144,11 +139,14 @@ function firstIssue(error: z.ZodError): string {
   return `Invalid form data at ${f.path.join(".") || "(root)"}: ${f.message}`
 }
 
-/** Merge the per-job answers with the constant customer identity. */
-function toLumberRenderData(form: LumberFormT): LumberOneRenderData {
+/** Merge the per-job answers with the org's customer identity. */
+function toLumberRenderData(
+  form: LumberFormT,
+  cfg: UtilityOrgConfig
+): LumberOneRenderData {
   return {
     date: form.date,
-    customerName: LUMBER_ONE_CUSTOMER_NAME,
+    customerName: cfg.builder.companyName,
     jobName: form.jobName,
     lot: form.lot,
     subdivision: form.subdivision,
@@ -162,8 +160,8 @@ function toLumberRenderData(form: LumberFormT): LumberOneRenderData {
   }
 }
 
-/** Merge the per-job answers with the constant builder identity + fixed values. */
-function toRenderData(form: CawFormT): CawRenderData {
+/** Merge the per-job answers with the org's builder identity + fixed values. */
+function toRenderData(form: CawFormT, cfg: UtilityOrgConfig): CawRenderData {
   return {
     date: form.date,
     serviceAddress: form.serviceAddress,
@@ -186,14 +184,14 @@ function toRenderData(form: CawFormT): CawRenderData {
     septicTank: form.septicTank,
     publicSewer: form.publicSewer,
     remarks: form.remarks,
-    applicantName: CAW_BUILDER.companyName,
-    tin: CAW_BUILDER.tin,
-    phone: CAW_BUILDER.businessPhone,
-    altPhone: CAW_BUILDER.altPhone,
-    email: CAW_BUILDER.email,
+    applicantName: cfg.builder.companyName,
+    tin: cfg.builder.tin,
+    phone: cfg.builder.businessPhone,
+    altPhone: cfg.builder.altPhone,
+    email: cfg.builder.email,
     fax: "",
-    mailingAddress: CAW_BUILDER.mailingAddress,
-    preparerName: CAW_BUILDER.preparerName,
+    mailingAddress: cfg.builder.mailingAddress,
+    preparerName: cfg.builder.preparerName,
     includeStandpipe: form.includeStandpipe,
   }
 }
@@ -391,16 +389,34 @@ async function storageClient() {
 /** Fill the provider's form set from a request's saved answers. */
 function fillFormsFor(
   provider: UtilityProvider,
-  formData: unknown
+  formData: unknown,
+  cfg: UtilityOrgConfig
 ): Promise<FilledPdf[]> {
   if (provider === "lumber_one") {
     const form = LumberForm.safeParse(formData)
     if (!form.success) throw new Error(firstIssue(form.error))
-    return fillLumberOneForms(toLumberRenderData(form.data))
+    return fillLumberOneForms(toLumberRenderData(form.data, cfg))
   }
   const form = CawForm.safeParse(formData)
   if (!form.success) throw new Error(firstIssue(form.error))
-  return fillCawForms(toRenderData(form.data))
+  return fillCawForms(toRenderData(form.data, cfg))
+}
+
+/**
+ * The acting staffer's org utility config, or a typed refusal when the org
+ * doesn't have the Utilities module (no settings.utilities block).
+ */
+async function requireUtilityConfig(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>
+): Promise<UtilityOrgConfig> {
+  const cfg = await getUtilityConfig(
+    supabase,
+    await getActiveOrgId(supabase).catch(() => null)
+  )
+  if (!cfg) {
+    throw new Error("Utilities aren't configured for your organization.")
+  }
+  return cfg
 }
 
 /** Storage subdirectory per provider (under {root}/utilities/). */
@@ -436,8 +452,9 @@ export async function generateUtilityPdfs({
   if (req.status !== "draft") {
     throw new Error("Only draft requests can generate PDFs.")
   }
+  const cfg = await requireUtilityConfig(supabase)
 
-  const filled = await fillFormsFor(req.provider, req.form_data)
+  const filled = await fillFormsFor(req.provider, req.form_data, cfg)
 
   const store = await storageClient()
   const priorPaths = req.generated_file_paths ?? []
@@ -501,25 +518,26 @@ export async function generateUtilityPdfs({
 /** Per-provider recipient, subject, and body for a submission email. */
 function providerEmail(
   provider: UtilityProvider,
-  formData: unknown
+  formData: unknown,
+  cfg: UtilityOrgConfig
 ): { to: string; subject: string; lines: string[] } {
   if (provider === "lumber_one") {
     const form = LumberForm.safeParse(formData)
     if (!form.success) throw new Error(firstIssue(form.error))
     const addr = form.data.streetAddress
     return {
-      to: LUMBER_ONE_SUBMISSION_EMAIL,
+      to: cfg.lumberOne.submissionEmail,
       subject: `New Job Set-Up Request - ${addr}`,
       lines: [
-        "Please find attached the New Job Set-Up Request form for a new Hines Homes job.",
+        `Please find attached the New Job Set-Up Request form for a new ${cfg.builder.companyName} job.`,
         "",
         `Job address: ${addr}${form.data.city ? `, ${form.data.city}` : ""}${form.data.zip ? ` ${form.data.zip}` : ""}`,
-        `Customer: ${LUMBER_ONE_CUSTOMER_NAME}`,
+        `Customer: ${cfg.builder.companyName}`,
         "",
         "Salesperson initials/number, account number, and estimated sales are left blank on the form - please fill those in on your end.",
         "",
         "Thank you,",
-        LUMBER_ONE_CUSTOMER_NAME,
+        cfg.builder.companyName,
       ],
     }
   }
@@ -529,13 +547,13 @@ function providerEmail(
   // Spread-conditionals rather than filter(l => l !== "") — filtering would
   // also strip the deliberate blank-line separators between paragraphs.
   return {
-    to: CAW_SUBMISSION_EMAIL,
+    to: cfg.caw.submissionEmail,
     subject: `New Water Service Request - ${addr}`,
     lines: [
       "Please find attached the New Service application for a new construction water service request.",
       "",
       `Service address: ${addr}${form.data.city ? `, ${form.data.city}` : ""}${form.data.zip ? ` ${form.data.zip}` : ""}`,
-      `Applicant: ${CAW_BUILDER.companyName}`,
+      `Applicant: ${cfg.builder.companyName}`,
       ...(form.data.includeStandpipe
         ? ["A temporary construction standpipe is requested (see attached agreement)."]
         : []),
@@ -548,19 +566,22 @@ function providerEmail(
         : []),
       "",
       "Thank you,",
-      CAW_BUILDER.companyName,
+      cfg.builder.companyName,
     ],
   }
 }
 
-/** Whether the provider's constant details are complete enough to send. */
-function providerConfiguredReason(provider: UtilityProvider): string | null {
+/** Whether the provider's org details are complete enough to send. */
+function providerConfiguredReason(
+  provider: UtilityProvider,
+  cfg: UtilityOrgConfig
+): string | null {
   if (provider === "lumber_one") {
-    return isLumberOneConfigured()
+    return isLumberOneConfigured(cfg)
       ? null
       : "Lumber One details aren't configured yet. Fill them in before sending."
   }
-  return isCawConfigured()
+  return isCawConfigured(cfg)
     ? null
     : "CAW builder details aren't configured yet (company name, phone, email, mailing address). Fill them in before sending."
 }
@@ -581,7 +602,26 @@ export async function sendUtilityForms({
     .maybeSingle()
   if (error) throw new Error(error.message)
   if (!req) throw new Error("Request not found or not visible.")
-  const notConfigured = providerConfiguredReason(req.provider)
+  // Typed refusals, not throws — production redacts thrown action messages.
+  let cfg: UtilityOrgConfig | null
+  try {
+    cfg = await getUtilityConfig(
+      supabase,
+      await getActiveOrgId(supabase).catch(() => null)
+    )
+  } catch (e) {
+    return {
+      sent: false,
+      reason: e instanceof Error ? e.message : "Could not load utility settings.",
+    }
+  }
+  if (!cfg) {
+    return {
+      sent: false,
+      reason: "Utilities aren't configured for your organization.",
+    }
+  }
+  const notConfigured = providerConfiguredReason(req.provider, cfg)
   if (notConfigured) {
     return { sent: false, reason: notConfigured }
   }
@@ -617,7 +657,7 @@ export async function sendUtilityForms({
       throw new Error("Generate the forms before sending.")
     }
     // Recipient + wording depend on the provider; validates form_data too.
-    const email = providerEmail(req.provider, claimed.form_data)
+    const email = providerEmail(req.provider, claimed.form_data, cfg)
 
     // Download the stored PDFs and base64-encode for Resend.
     const store = await storageClient()
@@ -646,7 +686,7 @@ export async function sendUtilityForms({
       // reaches a real mailbox instead of the send-only Resend From address.
       // Prefer the sender; fall back to the builder inbox if their profile
       // somehow has no email, so the header is never the undeliverable From.
-      replyTo: sender.email ?? CAW_BUILDER.email,
+      replyTo: sender.email ?? cfg.builder.email,
       subject: email.subject,
       text: email.lines.join("\n"),
       attachments,
@@ -715,7 +755,28 @@ export async function updateUtilityStatus(
   }
 
   const patch: TablesUpdate<"utility_requests"> = { status }
-  if (status === "awaiting_payment") patch.payment_url = CAW_PAYMENT_URL
+  if (status === "awaiting_payment") {
+    // Typed errors, not throws — production redacts thrown action messages.
+    let cfg: UtilityOrgConfig | null
+    try {
+      cfg = await getUtilityConfig(
+        supabase,
+        await getActiveOrgId(supabase).catch(() => null)
+      )
+    } catch (e) {
+      return {
+        ok: false,
+        error: e instanceof Error ? e.message : "Could not load utility settings.",
+      }
+    }
+    if (!cfg) {
+      return {
+        ok: false,
+        error: "Utilities aren't configured for your organization.",
+      }
+    }
+    patch.payment_url = cfg.caw.paymentUrl
+  }
   if (status === "paid") patch.paid_at = new Date().toISOString()
 
   // Bind to the expected prior state so a concurrent transition can't double-apply.
@@ -819,16 +880,23 @@ type CrmPrefillRow = {
  * owns the lot, so their name goes on the form. Placeholder client names
  * ("Spec", blank) yield undefined and leave the field for the user.
  */
-function resolvePropertyOwner(row: CrmPrefillRow): string | undefined {
+function resolvePropertyOwner(
+  row: CrmPrefillRow,
+  cfg: UtilityOrgConfig
+): string | undefined {
   const landPrice = Number(row.land_price ?? 0)
-  if (Number.isFinite(landPrice) && landPrice > 0) return LUMBER_ONE_CUSTOMER_NAME
+  if (Number.isFinite(landPrice) && landPrice > 0) return cfg.builder.companyName
   const client = (row.client_name ?? "").trim()
   if (!client || client.toLowerCase() === "spec") return undefined
   return client
 }
 
 /** Map a CRM dashboard row to the utility prefill fields. */
-function prefillFromCrmRow(row: CrmPrefillRow, fallbackAddress?: string): UtilityPrefill {
+function prefillFromCrmRow(
+  row: CrmPrefillRow,
+  cfg: UtilityOrgConfig,
+  fallbackAddress?: string
+): UtilityPrefill {
   // lot_block is stored as "{lot}-{block}" (e.g. "15-1").
   let lot = ""
   let block = ""
@@ -845,7 +913,7 @@ function prefillFromCrmRow(row: CrmPrefillRow, fallbackAddress?: string): Utilit
     [row.zip, row.zip_code, row.postal_code, row.zipcode]
       .map(coerceZip)
       .find((value): value is string => Boolean(value)) ??
-    resolveCawZip({ subdivision: row.subdivision_name, city: row.city })
+    resolveCawZip(cfg, { subdivision: row.subdivision_name, city: row.city })
   const serviceAddress = row.street_address ?? fallbackAddress ?? undefined
   return {
     serviceAddress,
@@ -858,10 +926,11 @@ function prefillFromCrmRow(row: CrmPrefillRow, fallbackAddress?: string): Utilit
     multiStory: floors != null ? floors > 1 : undefined,
     floors: floors != null && floors > 1 ? String(floors) : undefined,
     // Lumber One extras. Job Name is the street address by convention.
-    county: resolveCounty(row.city),
+    county: resolveCounty(cfg, row.city),
     jobName: serviceAddress,
-    propertyOwner: resolvePropertyOwner(row),
-    deliveryDirections: defaultDeliveryDirections(row.subdivision_name) || undefined,
+    propertyOwner: resolvePropertyOwner(row, cfg),
+    deliveryDirections:
+      defaultDeliveryDirections(cfg, row.subdivision_name) || undefined,
     source: "crm",
   }
 }
@@ -884,6 +953,8 @@ export async function getUtilityPrefill({
 }): Promise<UtilityPrefill> {
   await requireStaff()
   const crm = createCrmClient()
+  const supabase = await createSupabaseServerClient()
+  const cfg = await requireUtilityConfig(supabase)
 
   if (crmId) {
     if (!crm) return { source: "none" }
@@ -896,11 +967,10 @@ export async function getUtilityPrefill({
       .eq("id", crmId)
       .maybeSingle()
     if (error || !data) return { source: "none" }
-    return prefillFromCrmRow(data as CrmPrefillRow)
+    return prefillFromCrmRow(data as CrmPrefillRow, cfg)
   }
 
   if (!projectId) return { source: "none" }
-  const supabase = await createSupabaseServerClient()
   const { data: project } = await supabase
     .from("projects")
     .select("project_number, address")
@@ -922,7 +992,7 @@ export async function getUtilityPrefill({
     .maybeSingle()
   if (error || !data) return fallback
 
-  return prefillFromCrmRow(data as CrmPrefillRow, project.address ?? undefined)
+  return prefillFromCrmRow(data as CrmPrefillRow, cfg, project.address ?? undefined)
 }
 
 /** Sign storage paths for preview/download (1hr). */
