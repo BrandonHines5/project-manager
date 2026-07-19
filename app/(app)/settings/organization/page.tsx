@@ -1,12 +1,15 @@
 import { requireStaff } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
-import { getActiveOrgId } from "@/lib/org"
+import { createSupabaseAdminClient } from "@/lib/supabase/admin"
+import { getActiveOrgId, LEGACY_ORG_ID } from "@/lib/org"
+import { getOrgIntegration } from "@/lib/integrations/org"
 import { parseBrandConfig } from "@/lib/brand"
 import { OrganizationSettingsClient } from "./organization-settings-client"
 import {
   OrganizationMembersClient,
   type OrgMemberRow,
 } from "./organization-members-client"
+import { OrganizationIntegrationsClient } from "./organization-integrations-client"
 
 export const metadata = { title: "Organization — BuildFox" }
 export const dynamic = "force-dynamic"
@@ -58,6 +61,28 @@ export default async function OrganizationSettingsPage() {
   // The editor shows the EFFECTIVE brands (parse fallbacks included) so the
   // preview matches what users see; saveOrgSettings keeps untouched slots
   // from the raw stored config, so displaying fallbacks never bakes them in.
+  // Quo integration status — read admin-side (org_integrations is
+  // service-role-only) but only AFTER the owner/admin gate above. The API
+  // key never reaches the client: we pass a boolean + the non-secret number.
+  // A decrypt failure surfaces as an error banner, never a crash.
+  let quoConnected = false
+  let quoSharedFrom = ""
+  let quoError = false
+  const admin = createSupabaseAdminClient()
+  if (admin) {
+    try {
+      const integ = await getOrgIntegration(admin, orgId, "quo")
+      quoConnected = Boolean(integ?.enabled && integ.secrets?.apiKey)
+      const sf = integ?.config?.sharedFromNumber
+      quoSharedFrom = typeof sf === "string" ? sf : ""
+    } catch {
+      quoError = true
+    }
+  }
+  // The legacy (Hines) org keeps working off env QUO_API_KEY even with no
+  // row — surface that so the editor doesn't imply it's disconnected.
+  const quoEnvFallback = orgId === LEGACY_ORG_ID && !!process.env.QUO_API_KEY
+
   const config = parseBrandConfig(org.settings, org.name)
   const members: OrgMemberRow[] = (memberRows ?? []).map((m) => ({
     profile_id: m.profile_id,
@@ -89,12 +114,19 @@ export default async function OrganizationSettingsPage() {
             : null
         }
       />
-      <div className="max-w-2xl mx-auto px-4 md:px-6 pb-6">
+      <div className="max-w-2xl mx-auto px-4 md:px-6 pb-6 space-y-4">
         <OrganizationMembersClient
           orgId={org.id}
           callerId={profile.id}
           callerRole={membership.member_role as OrgMemberRow["member_role"]}
           members={members}
+        />
+        <OrganizationIntegrationsClient
+          orgId={org.id}
+          quoConnected={quoConnected}
+          quoSharedFrom={quoSharedFrom}
+          quoError={quoError}
+          quoEnvFallback={quoEnvFallback}
         />
       </div>
     </>

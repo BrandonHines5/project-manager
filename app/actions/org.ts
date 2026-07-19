@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { requireSession } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { createSupabaseAdminClient } from "@/lib/supabase/admin"
+import { upsertOrgIntegration } from "@/lib/integrations/org"
 import type { Json } from "@/lib/db/types"
 
 /**
@@ -257,5 +259,88 @@ export async function removeOrgMember(input: {
   })
   if (error) return { ok: false, error: error.message }
   revalidatePath("/", "layout")
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// Org integrations editor (B4 part 5)
+//
+// org_integrations is service-role-only (RLS enabled, no policies), so these
+// actions gate authorization at the APP layer: the caller must be an
+// owner/admin member of the target org — the same trust tier as the other
+// admin-client writes in this codebase. Secrets are WRITE-ONLY: the API key
+// is sealed by upsertOrgIntegration's envelope and never round-trips back to
+// the client (the page passes only a boolean "connected" + the non-secret
+// shared number).
+
+const QuoIntegrationSchema = z.object({
+  orgId: z.string().uuid(),
+  // Blank/omitted keeps the stored key (so a shared-number-only edit doesn't
+  // require re-typing the secret); a non-empty value seals + replaces it.
+  apiKey: z.string().trim().max(300).optional(),
+  // Empty string clears the shared number; config replaces wholesale.
+  sharedFromNumber: z.string().trim().max(40).optional(),
+  // Turns the integration off and clears the stored key.
+  disconnect: z.boolean().optional(),
+})
+
+async function requireOrgAdmin(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  orgId: string,
+  profileId: string
+): Promise<boolean> {
+  const { data } = await supabase
+    .from("organization_members")
+    .select("member_role")
+    .eq("org_id", orgId)
+    .eq("profile_id", profileId)
+    .maybeSingle()
+  return data?.member_role === "owner" || data?.member_role === "admin"
+}
+
+/**
+ * Save (or disconnect) the org's Quo/OpenPhone credentials. Owner/admin only
+ * (app-layer gate; org_integrations has no RLS). The API key is sealed and
+ * never returned to the browser.
+ */
+export async function saveQuoIntegration(
+  input: z.infer<typeof QuoIntegrationSchema>
+): Promise<{ ok: boolean; error?: string }> {
+  const profile = await requireSession()
+  const parsed = QuoIntegrationSchema.safeParse(input)
+  if (!parsed.success) return { ok: false, error: "Invalid integration input." }
+  const { orgId, apiKey, sharedFromNumber, disconnect } = parsed.data
+
+  const supabase = await createSupabaseServerClient()
+  if (!(await requireOrgAdmin(supabase, orgId, profile.id))) {
+    return {
+      ok: false,
+      error: "Only organization owners and admins can change integrations.",
+    }
+  }
+
+  const admin = createSupabaseAdminClient()
+  if (!admin) return { ok: false, error: "Server storage is not configured." }
+
+  try {
+    if (disconnect) {
+      await upsertOrgIntegration(admin, orgId, "quo", {
+        enabled: false,
+        secrets: null,
+        config: {},
+      })
+    } else {
+      await upsertOrgIntegration(admin, orgId, "quo", {
+        enabled: true,
+        config: { sharedFromNumber: sharedFromNumber || null },
+        // undefined = keep the stored key; a typed value seals + replaces.
+        secrets: apiKey ? { apiKey } : undefined,
+      })
+    }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Save failed." }
+  }
+
+  revalidatePath("/settings/organization")
   return { ok: true }
 }
