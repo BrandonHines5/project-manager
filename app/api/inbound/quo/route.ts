@@ -307,30 +307,36 @@ async function resolveInboundOrg(
   staffProfileId: string | null,
   match: { project_id: string | null; company_id: string | null }
 ): Promise<string | null> {
+  // Each lookup logs on error so an attribution miss caused by a query
+  // failure stays distinguishable from a genuine no-match (both return null),
+  // matching staffProfileForQuoNumber's convention.
   if (staffProfileId) {
-    const { data } = await admin
+    const { data, error } = await admin
       .from("organization_members")
       .select("org_id")
       .eq("profile_id", staffProfileId)
       .order("created_at", { ascending: true })
       .limit(1)
       .maybeSingle()
+    if (error) console.warn("[quo webhook] staff → org lookup failed:", error.message)
     if (data?.org_id) return data.org_id
   }
   if (match.project_id) {
-    const { data } = await admin
+    const { data, error } = await admin
       .from("projects")
       .select("org_id")
       .eq("id", match.project_id)
       .maybeSingle()
+    if (error) console.warn("[quo webhook] project → org lookup failed:", error.message)
     if (data?.org_id) return data.org_id
   }
   if (match.company_id) {
-    const { data } = await admin
+    const { data, error } = await admin
       .from("companies")
       .select("org_id")
       .eq("id", match.company_id)
       .maybeSingle()
+    if (error) console.warn("[quo webhook] company → org lookup failed:", error.message)
     if (data?.org_id) return data.org_id
   }
   return null

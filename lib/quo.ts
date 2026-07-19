@@ -63,15 +63,18 @@ export async function resolveQuoConfig(
 }
 
 /**
- * The org a staffer belongs to, resolved admin-side (the webhook / send
- * paths have no session). Earliest membership — one org per user today.
+ * The org a staffer belongs to, resolved admin-side (the send path has no
+ * session). Earliest membership — one org per user today. `failed`
+ * distinguishes a query ERROR (caller must fail closed — a transient hiccup
+ * must never borrow Hines' env key) from a genuine no-membership (`orgId`
+ * null, `failed` false — the single-tenant bridge).
  */
 async function resolveOrgForProfile(
   profileId: string | null | undefined
-): Promise<string | null> {
-  if (!profileId) return null
+): Promise<{ orgId: string | null; failed: boolean }> {
+  if (!profileId) return { orgId: null, failed: false }
   const admin = createSupabaseAdminClient()
-  if (!admin) return null
+  if (!admin) return { orgId: null, failed: false }
   const { data, error } = await admin
     .from("organization_members")
     .select("org_id")
@@ -81,9 +84,9 @@ async function resolveOrgForProfile(
     .maybeSingle()
   if (error) {
     console.warn("[quo] profile → org lookup failed:", error.message)
-    return null
+    return { orgId: null, failed: true }
   }
-  return data?.org_id ?? null
+  return { orgId: data?.org_id ?? null, failed: false }
 }
 
 /**
@@ -128,10 +131,21 @@ export async function sendQuoSms(opts: {
 }): Promise<{ sent: boolean; reason?: string; providerId?: string }> {
   // Resolve the sending org, then its Quo credentials.
   const senderId = opts.senderProfileId ?? opts.log?.sent_by ?? null
-  const orgId =
-    opts.orgId ??
-    opts.log?.org_id ??
-    (await resolveOrgForProfile(senderId))
+  let orgId = opts.orgId ?? opts.log?.org_id ?? null
+  if (!orgId && senderId) {
+    const resolved = await resolveOrgForProfile(senderId)
+    // A membership-lookup FAILURE must fail closed like the decrypt path — a
+    // transient error must never let a non-legacy staffer's text bill Hines'
+    // shared Quo account. A genuine no-membership stays the single-tenant
+    // bridge (null → legacy env fallback in resolveQuoConfig).
+    if (resolved.failed) {
+      return {
+        sent: false,
+        reason: "Couldn't resolve the sending organization",
+      }
+    }
+    orgId = resolved.orgId
+  }
   const cfg = await resolveQuoConfig(orgId)
   const key = cfg.apiKey
   if (!key) {
@@ -198,7 +212,11 @@ export async function sendQuoSms(opts: {
       await logCommunication({
         channel: "sms",
         direction: "outbound",
-        org_id: opts.log.org_id,
+        // Fall back to the org we resolved to pick the Quo account — a manual
+        // send to a raw number has no project/company for logCommunication to
+        // derive org from, so without this the row would hit the bridge
+        // default (Hines) even though it went out on another org's number.
+        org_id: opts.log.org_id ?? orgId ?? undefined,
         project_id: opts.log.project_id,
         company_id: opts.log.company_id,
         profile_id: opts.log.profile_id,
