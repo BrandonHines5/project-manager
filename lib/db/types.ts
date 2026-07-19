@@ -640,7 +640,7 @@ export type Database = {
           name: string
           notes?: string | null
           notifications_enabled?: boolean
-          org_id?: string
+          org_id: string
           phone?: string | null
           phone_secondary?: string | null
           postal_code?: string | null

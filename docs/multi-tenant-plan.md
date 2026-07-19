@@ -59,7 +59,13 @@ Order (blast radius, smallest first):
    org-scoped, bridge defaults dropped, inserts stamped via
    `lib/org.ts:getActiveOrgId` (feedback/roles/rentals/purchasing-templates
    actions; cost_codes has no insert path). Isolation test passed both ways.
-2. Companies (+ everything keyed by company: company_trades, insurance_*).
+2. **DONE (0101)** Companies (+ company_trades, insurance_documents,
+   insurance_policies). Entirely DB-side: save_company_with_trades stamps
+   org_id from the caller's membership and its update path is org-guarded;
+   child tables scope via parent company. companies default dropped;
+   **insurance_documents keeps its bridge default until B4** (admin-client
+   ingest channels become org-aware with per-org integrations). Gate passed
+   both ways including a write-path probe through the RPC.
 3. Projects + all project children (the big one — schedule, decisions, logs,
    files, payments, budget, purchasing, history/trash).
 4. app_settings (org-scoped settings reads/writes; drop legacy unique(key);
