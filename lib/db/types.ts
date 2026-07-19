@@ -3859,6 +3859,12 @@ export type Database = {
       }
       daily_log_in_my_org: { Args: { p_log: string }; Returns: boolean }
       decision_in_my_org: { Args: { p_decision: string }; Returns: boolean }
+      delete_organization: {
+        Args: { p_org: string }
+        Returns: {
+          deleted_member: string
+        }[]
+      }
       finalize_purged_deleted_items: {
         Args: { p_ids: string[]; p_project: string }
         Returns: undefined
