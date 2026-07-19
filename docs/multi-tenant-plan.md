@@ -232,8 +232,24 @@ PowerShell keygen one-liner is in the session log). Per-integration wiring:
   EXACTLY one connection per org (unique index; the save replaces the
   org's prior row on a company switch, and PO pushes derive their org from
   the OWNING project, not the caller's active org).
-- **Quo/OpenPhone**: per-org API key + numbers; inbound webhook resolves org
-  by phone-number id.
+- **Quo/OpenPhone**: **DONE (part 4)** — the API key + shared from-number
+  move from env singletons into `org_integrations` provider `quo`
+  (`secrets.apiKey` via the encrypted envelope — first real use of
+  `INTEGRATION_SECRETS_KEY`; `config.sharedFromNumber`). `lib/quo.ts`
+  `resolveQuoConfig(orgId)` reads them, with env `QUO_API_KEY` /
+  `QUO_FROM_NUMBER` as the fallback for the LEGACY org ONLY — a non-legacy
+  org with no row (or a decrypt failure) reads as "not connected", never
+  borrows Hines' key. `sendQuoSms` resolves org from `opts.orgId` →
+  `log.org_id` → the sender's membership (no call-site changes); the Team
+  picker (`listQuoPhoneNumbers(orgId)`) resolves the active org's key. The
+  inbound webhook stamps `communications.org_id` when it can (line owner's
+  org → matched project → matched company). Seeding a non-legacy org's Quo
+  creds is via `upsertOrgIntegration` until an integrations settings editor
+  lands. Two things stay env/shared and keep `communications`' bridge
+  default alive: `QUO_WEBHOOK_SECRET` (one endpoint, one OpenPhone
+  workspace today — per-org inbound needs per-org webhook secrets/endpoints)
+  and any fully-unattributed inbound row (shared line + unknown number has
+  no org signal).
 - **Resend inbound**: **DONE for insurance (part 2)** — the recipient
   plus-tag IS the org slug (`insurance+{org-slug}@domain`, zero per-org
   address config): the webhook resolves the org before ingest, untagged

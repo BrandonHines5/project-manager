@@ -66,10 +66,17 @@ export async function POST(req: NextRequest) {
           obj.phoneNumberId,
           inbound ? firstTo(obj.to) : (obj.from ?? null)
         )
+        const orgId = await resolveInboundOrg(admin, staffProfileId, match)
         const { error } = await admin.from("communications").upsert(
           {
             channel: "sms",
             direction: inbound ? "inbound" : "outbound",
+            // Stamp org when we can resolve it (the line owner's org, or the
+            // matched project/company); a fully unattributed text — shared
+            // line, unknown number — falls to the communications bridge
+            // default (Hines), which is why that default is the last one
+            // still standing.
+            ...(orgId ? { org_id: orgId } : {}),
             // Quo texts are never queued for manual placement — they always
             // land in the global Communications log, auto-filed to a job only
             // when the matcher is confident (project_id set below). A shared
@@ -123,6 +130,7 @@ export async function POST(req: NextRequest) {
           obj.phoneNumberId,
           inbound ? firstTo(obj.to) : (obj.from ?? null)
         )
+        const orgId = await resolveInboundOrg(admin, staffProfileId, match)
         const durationSeconds =
           obj.answeredAt && obj.completedAt
             ? Math.max(
@@ -138,6 +146,9 @@ export async function POST(req: NextRequest) {
           {
             channel: "call",
             direction: inbound ? "inbound" : "outbound",
+            // Org stamped when resolvable (see the message case); shared-line
+            // calls fall to the communications bridge default.
+            ...(orgId ? { org_id: orgId } : {}),
             // Same as texts: calls are never queued for manual placement. They
             // stay in the global log, auto-filed to a job only when confident.
             status: "logged",
@@ -280,6 +291,47 @@ async function staffProfileForQuoNumber(
       console.warn("[quo webhook] e164 → profile lookup failed:", error.message)
     }
     if (data?.id) return data.id
+  }
+  return null
+}
+
+/**
+ * The org an inbound Quo event belongs to, best-effort (B4): the line
+ * owner's org first (per-user Quo numbers make this the strongest signal),
+ * then the matched project's, then the matched company's. Null when nothing
+ * resolves — a shared-line text from an unknown number — and the row falls
+ * to the communications bridge default.
+ */
+async function resolveInboundOrg(
+  admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
+  staffProfileId: string | null,
+  match: { project_id: string | null; company_id: string | null }
+): Promise<string | null> {
+  if (staffProfileId) {
+    const { data } = await admin
+      .from("organization_members")
+      .select("org_id")
+      .eq("profile_id", staffProfileId)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle()
+    if (data?.org_id) return data.org_id
+  }
+  if (match.project_id) {
+    const { data } = await admin
+      .from("projects")
+      .select("org_id")
+      .eq("id", match.project_id)
+      .maybeSingle()
+    if (data?.org_id) return data.org_id
+  }
+  if (match.company_id) {
+    const { data } = await admin
+      .from("companies")
+      .select("org_id")
+      .eq("id", match.company_id)
+      .maybeSingle()
+    if (data?.org_id) return data.org_id
   }
   return null
 }
