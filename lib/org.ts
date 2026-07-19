@@ -2,6 +2,22 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import type { Database } from "@/lib/db/types"
 
 /**
+ * Pure active-org resolution, shared by getActiveOrgId and callers that
+ * already hold the membership list (the app layout): the stored selection
+ * wins when it names one of the caller's memberships, otherwise the earliest
+ * membership. A stale selection (membership revoked) silently falls back.
+ */
+export function resolveActiveOrgId(
+  selected: string | null | undefined,
+  memberships: { org_id: string }[]
+): string | null {
+  if (selected && memberships.some((m) => m.org_id === selected)) {
+    return selected
+  }
+  return memberships[0]?.org_id ?? null
+}
+
+/**
  * The acting user's organization id, read through their RLS session. Insert
  * paths for org-scoped tables must stamp org_id with this — the 0099 bridge
  * defaults are dropped module by module as inserts become org-aware
@@ -48,11 +64,7 @@ export async function getActiveOrgId(
   if (profErr) throw new Error(profErr.message)
   if (error) throw new Error(error.message)
 
-  const mine = memberships ?? []
-  const selected = prof?.active_org_id
-  if (selected && mine.some((m) => m.org_id === selected)) return selected
-
-  const orgId = mine[0]?.org_id
+  const orgId = resolveActiveOrgId(prof?.active_org_id, memberships ?? [])
   if (!orgId) {
     throw new Error("Your account isn't a member of any organization.")
   }
