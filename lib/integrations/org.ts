@@ -2,6 +2,7 @@ import "server-only"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { Database, Json } from "@/lib/db/types"
 import { decryptSecrets, encryptSecrets } from "@/lib/crypto/secrets"
+import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 
 // Per-org integration rows (B4, 0112). The table is service-role-only —
 // every caller here passes the ADMIN client and is responsible for its own
@@ -93,4 +94,32 @@ export async function upsertOrgIntegration(
     p_touch_secrets: touchSecrets,
   })
   if (error) throw new Error(error.message)
+}
+
+/**
+ * The org a staffer belongs to, resolved admin-side (send paths — SMS/email —
+ * have no session). Earliest membership; one org per user today. `failed`
+ * distinguishes a query ERROR (the caller must fail closed — a transient
+ * hiccup must never let one org borrow another's integration credentials)
+ * from a genuine no-membership (`orgId` null, `failed` false — the
+ * single-tenant bridge). Shared by the per-org Quo and Resend senders.
+ */
+export async function resolveOrgForProfile(
+  profileId: string | null | undefined
+): Promise<{ orgId: string | null; failed: boolean }> {
+  if (!profileId) return { orgId: null, failed: false }
+  const admin = createSupabaseAdminClient()
+  if (!admin) return { orgId: null, failed: false }
+  const { data, error } = await admin
+    .from("organization_members")
+    .select("org_id")
+    .eq("profile_id", profileId)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle()
+  if (error) {
+    console.warn("[integrations] profile → org lookup failed:", error.message)
+    return { orgId: null, failed: true }
+  }
+  return { orgId: data?.org_id ?? null, failed: false }
 }

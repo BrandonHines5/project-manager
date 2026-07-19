@@ -344,3 +344,77 @@ export async function saveQuoIntegration(
   revalidatePath("/settings/organization")
   return { ok: true }
 }
+
+// ---------------------------------------------------------------------------
+// Per-org email (Resend) integration — the email analogue of saveQuoIntegration.
+// Same app-layer owner/admin gate; the API key is WRITE-ONLY (the page passes a
+// boolean "connected" + the non-secret From address, never the key).
+
+const ResendIntegrationSchema = z.object({
+  orgId: z.string().uuid(),
+  // Blank/omitted keeps the stored key; a non-empty value seals + replaces it.
+  apiKey: z.string().trim().max(300).optional(),
+  // The verified From address the org sends from. Empty string clears it.
+  fromEmail: z
+    .union([z.literal(""), z.string().trim().email().max(200)])
+    .optional(),
+  // Optional default display name on the From line. Empty clears it.
+  fromName: z.string().trim().max(120).optional(),
+  // Turns the integration off and clears the stored key.
+  disconnect: z.boolean().optional(),
+})
+
+/**
+ * Save (or disconnect) the org's Resend email credentials. Owner/admin only
+ * (app-layer gate; org_integrations has no RLS). The API key is sealed and
+ * never returned to the browser. `fromEmail`/`fromName` are non-secret config.
+ */
+export async function saveResendIntegration(
+  input: z.infer<typeof ResendIntegrationSchema>
+): Promise<{ ok: boolean; error?: string }> {
+  const profile = await requireSession()
+  const parsed = ResendIntegrationSchema.safeParse(input)
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid integration input.",
+    }
+  }
+  const { orgId, apiKey, fromEmail, fromName, disconnect } = parsed.data
+
+  const supabase = await createSupabaseServerClient()
+  if (!(await requireOrgAdmin(supabase, orgId, profile.id))) {
+    return {
+      ok: false,
+      error: "Only organization owners and admins can change integrations.",
+    }
+  }
+
+  const admin = createSupabaseAdminClient()
+  if (!admin) return { ok: false, error: "Server storage is not configured." }
+
+  try {
+    if (disconnect) {
+      await upsertOrgIntegration(admin, orgId, "resend", {
+        enabled: false,
+        secrets: null,
+        config: {},
+      })
+    } else {
+      await upsertOrgIntegration(admin, orgId, "resend", {
+        enabled: true,
+        config: {
+          fromEmail: fromEmail || null,
+          fromName: fromName || null,
+        },
+        // undefined = keep the stored key; a typed value seals + replaces.
+        secrets: apiKey ? { apiKey } : undefined,
+      })
+    }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Save failed." }
+  }
+
+  revalidatePath("/settings/organization")
+  return { ok: true }
+}

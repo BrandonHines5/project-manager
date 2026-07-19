@@ -2,21 +2,141 @@ import { Resend } from "resend"
 import { logCommunication, type CommLogContext } from "@/lib/comms/log"
 import { graphConfigured, sendGraphMail } from "@/lib/comms/graph"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
+import { getOrgIntegration, resolveOrgForProfile } from "@/lib/integrations/org"
+import { LEGACY_ORG_ID } from "@/lib/org"
+
+/** org_integrations provider slug for the per-org Resend email identity. */
+const RESEND_PROVIDER = "resend"
+
+type ResendConfig = {
+  /** Resend API key for this org, or null when email isn't connected. */
+  apiKey: string | null
+  /** Verified From address (e.g. "hello@builder.com"), or null. */
+  from: string | null
+  /** Optional default display name for the From line, or null. */
+  fromName: string | null
+}
+
+/**
+ * Per-org Resend credentials (B4), the email analogue of resolveQuoConfig:
+ * `apiKey` from the org's `org_integrations` 'resend' secrets envelope,
+ * `from`/`fromName` from its config. Env `RESEND_API_KEY` / `RESEND_FROM_EMAIL`
+ * are the fallback for the LEGACY org ONLY (the pre-multi-tenant Hines
+ * identity) — every other org must carry its own row, so a missing config
+ * reads as "email not connected", never as "borrow Hines' From address". A
+ * null orgId (fully-unattributed bridge send) also falls back to legacy env.
+ *
+ * Fails closed for non-legacy orgs: getOrgIntegration THROWS on a decrypt
+ * failure (a misconfigured master key), which must never silently degrade to
+ * another tenant's env key.
+ */
+async function resolveResendConfig(
+  orgId: string | null | undefined
+): Promise<ResendConfig> {
+  let apiKey: string | null = null
+  let from: string | null = null
+  let fromName: string | null = null
+
+  const admin = createSupabaseAdminClient()
+  if (admin && orgId) {
+    try {
+      const integ = await getOrgIntegration(admin, orgId, RESEND_PROVIDER)
+      if (integ && integ.enabled) {
+        const k = integ.secrets?.apiKey
+        const f = integ.config?.fromEmail
+        const n = integ.config?.fromName
+        apiKey = typeof k === "string" && k ? k : null
+        from = typeof f === "string" && f ? f : null
+        fromName = typeof n === "string" && n ? n : null
+      }
+    } catch (e) {
+      console.error(
+        "[email] org integration read failed:",
+        e instanceof Error ? e.message : e
+      )
+      // A non-legacy org must NOT fall through to Hines' env credentials.
+      if (orgId !== LEGACY_ORG_ID) {
+        return { apiKey: null, from: null, fromName: null }
+      }
+    }
+  }
+
+  // Legacy (or unresolved single-tenant) org: env is the source of truth
+  // until its org_integrations row is populated.
+  if (!orgId || orgId === LEGACY_ORG_ID) {
+    apiKey = apiKey ?? process.env.RESEND_API_KEY ?? null
+    from = from ?? process.env.RESEND_FROM_EMAIL ?? null
+  }
+  return { apiKey, from, fromName }
+}
+
+/**
+ * Which org's email identity a send belongs to, resolved admin-side (send
+ * paths have no session). Priority mirrors sendQuoSms plus the project/company
+ * fallback logCommunication uses, so counterparty sends need zero call-site
+ * changes: explicit `orgId` → `log.org_id` → the acting staffer's membership →
+ * the attributed project's org → the attributed company's org. `failed` marks
+ * a query ERROR so the caller fails closed (a hiccup must never borrow Hines'
+ * env identity); a genuine miss is `orgId` null / `failed` false (the
+ * single-tenant bridge → legacy env).
+ */
+async function resolveEmailOrg(opts: {
+  orgId?: string | null
+  log?: CommLogContext
+}): Promise<{ orgId: string | null; failed: boolean }> {
+  if (opts.orgId) return { orgId: opts.orgId, failed: false }
+  const log = opts.log
+  if (log?.org_id) return { orgId: log.org_id, failed: false }
+
+  if (log?.sent_by) {
+    const r = await resolveOrgForProfile(log.sent_by)
+    if (r.failed) return { orgId: null, failed: true }
+    if (r.orgId) return { orgId: r.orgId, failed: false }
+  }
+
+  const admin = createSupabaseAdminClient()
+  if (!admin) return { orgId: null, failed: false }
+  if (log?.project_id) {
+    const { data, error } = await admin
+      .from("projects")
+      .select("org_id")
+      .eq("id", log.project_id)
+      .maybeSingle()
+    if (error) return { orgId: null, failed: true }
+    if (data?.org_id) return { orgId: data.org_id, failed: false }
+  }
+  if (log?.company_id) {
+    const { data, error } = await admin
+      .from("companies")
+      .select("org_id")
+      .eq("id", log.company_id)
+      .maybeSingle()
+    if (error) return { orgId: null, failed: true }
+    if (data?.org_id) return { orgId: data.org_id, failed: false }
+  }
+  return { orgId: null, failed: false }
+}
 
 /**
  * Sends a transactional email. Two transports, tried in order:
  *
- *  1. Microsoft Graph — when the MS_* env vars are set and a sender mailbox
- *     resolves (the acting staff user's own address via `log.sent_by`, or
- *     MS_SYSTEM_MAILBOX for cron/system mail). The email goes out from the
- *     user's REAL mailbox, lands in their Sent Items, and replies come back
- *     to their inbox — where the Outlook sync cron picks both up. Logged
- *     with the message's internetMessageId so the sync dedups onto the same
- *     row instead of double-posting the feed.
+ *  1. Microsoft Graph — Hines' Microsoft 365 tenant (a single-tenant app), so
+ *     it serves the LEGACY org only. When the MS_* env vars are set and a
+ *     sender mailbox resolves (the acting staff user's own address via
+ *     `log.sent_by`, or MS_SYSTEM_MAILBOX for legacy cron/system mail), the
+ *     email goes out from the user's REAL mailbox, lands in their Sent Items,
+ *     and replies come back to their inbox — where the Outlook sync cron picks
+ *     both up. Logged with the message's internetMessageId so the sync dedups
+ *     onto the same row instead of double-posting the feed. The shared system
+ *     mailbox is Hines' identity, so it's gated to the legacy/bridge org.
  *
- *  2. Resend — fallback when Graph is unset/unavailable or a send fails.
- *     Project-scoped Resend sends default their Reply-To to the comms
- *     plus-tag inbox so replies are still captured.
+ *  2. Resend — per-org (B4): the API key + verified From address come from the
+ *     org's `org_integrations` 'resend' row (env fallback for the legacy Hines
+ *     org). A non-legacy org that isn't connected does NOT send (fail closed)
+ *     rather than going out from Hines' address. The org is resolved from
+ *     `opts.orgId` → `log.org_id` → the staffer's membership → project/company.
+ *     Project-scoped sends default their Reply-To to the comms plus-tag inbox
+ *     so replies are still captured.
  *
  * Graceful no-op when neither transport is configured, so dev/preview
  * environments never break.
@@ -30,6 +150,10 @@ export async function sendEmail(opts: {
   subject: string
   text: string
   html?: string
+  // Which org's email identity sends this. Falls back to log.org_id, then the
+  // acting staffer's membership, then the attributed project/company — so most
+  // call sites need not pass it (mirrors sendQuoSms).
+  orgId?: string | null
   // Optional sender display name. When set, the Resend "from" keeps its
   // verified sending address but presents under this name (e.g. an MJV job's
   // PO email shows "MJV Building Group" instead of the default house brand).
@@ -57,9 +181,22 @@ export async function sendEmail(opts: {
       : [opts.replyTo]
     : undefined
 
+  // Resolve which org's identity this send belongs to. Hines' shared
+  // infrastructure — the MS Graph tenant's system mailbox and the env Resend
+  // credentials — may serve only the LEGACY org (or a fully-unattributed
+  // bridge send). A resolution ERROR fails closed: an unknown org never
+  // counts as legacy, so it can't borrow Hines' identity.
+  const orgResolution = await resolveEmailOrg(opts)
+  const orgId = orgResolution.orgId
+  const canUseSharedInfra =
+    !orgResolution.failed && (!orgId || orgId === LEGACY_ORG_ID)
+
   // ── Transport 1: the sender's real Microsoft mailbox ──────────────────
   if (graphConfigured()) {
-    const fromMailbox = await resolveSenderMailbox(opts.log?.sent_by)
+    const fromMailbox = await resolveSenderMailbox(
+      opts.log?.sent_by,
+      canUseSharedInfra
+    )
     if (fromMailbox) {
       const g = await sendGraphMail({
         fromMailbox,
@@ -81,7 +218,9 @@ export async function sendEmail(opts: {
           await logCommunication({
             channel: "email",
             direction: "outbound",
-            org_id: opts.log.org_id,
+            // Prefer the resolved org so a company-only/unattributed send still
+            // records the right org instead of leaning on the bridge default.
+            org_id: opts.log.org_id ?? orgId ?? undefined,
             project_id: opts.log.project_id,
             company_id: opts.log.company_id,
             profile_id: opts.log.profile_id,
@@ -107,19 +246,30 @@ export async function sendEmail(opts: {
     }
   }
 
-  // ── Transport 2: Resend ───────────────────────────────────────────────
-  const key = process.env.RESEND_API_KEY
-  const from = process.env.RESEND_FROM_EMAIL
+  // ── Transport 2: Resend (per-org) ─────────────────────────────────────
+  // A non-legacy org whose org couldn't be resolved (a query error) must
+  // never fall back to Hines' env credentials — fail closed like sendQuoSms.
+  if (orgResolution.failed) {
+    console.warn(
+      `[sendEmail] skipped "${opts.subject}" — couldn't resolve the sending org (fail-closed)`
+    )
+    return { sent: false, reason: "Couldn't resolve the sending organization" }
+  }
+  const cfg = await resolveResendConfig(orgId)
+  const key = cfg.apiKey
+  const from = cfg.from
   // One-line, non-sensitive breadcrumb so prod logs show whether email is
-  // even configured (we never print the key/recipients). Without this a
-  // missing env var is a silent no-op that's impossible to diagnose remotely.
+  // even configured (we never print the key/recipients). A non-legacy org
+  // with no 'resend' row lands here — email simply isn't connected for it yet.
   if (!key || !from) {
     console.warn(
-      `[sendEmail] skipped "${opts.subject}" — missing ${
-        !key ? "RESEND_API_KEY" : ""
-      }${!key && !from ? " + " : ""}${!from ? "RESEND_FROM_EMAIL" : ""}`
+      `[sendEmail] skipped "${opts.subject}" — email not connected for org ${
+        orgId ?? "(legacy)"
+      } (missing ${!key ? "API key" : ""}${!key && !from ? " + " : ""}${
+        !from ? "From address" : ""
+      })`
     )
-    return { sent: false, reason: "RESEND_API_KEY or RESEND_FROM_EMAIL not set" }
+    return { sent: false, reason: "Email is not connected for this organization" }
   }
 
   // Project-scoped sends default their Reply-To to the comms inbound
@@ -135,7 +285,10 @@ export async function sendEmail(opts: {
     }
   }
 
-  const fromLine = opts.fromName ? applyFromName(from, opts.fromName) : from
+  // Per-call fromName (e.g. an MJV job's PO email) wins; else the org's
+  // configured default display name; else the bare verified address.
+  const effectiveName = opts.fromName ?? cfg.fromName ?? null
+  const fromLine = effectiveName ? applyFromName(from, effectiveName) : from
 
   const resend = new Resend(key)
   try {
@@ -162,7 +315,7 @@ export async function sendEmail(opts: {
       await logCommunication({
         channel: "email",
         direction: "outbound",
-        org_id: opts.log.org_id,
+        org_id: opts.log.org_id ?? orgId ?? undefined,
         project_id: opts.log.project_id,
         company_id: opts.log.company_id,
         profile_id: opts.log.profile_id,
@@ -190,9 +343,15 @@ export async function sendEmail(opts: {
  * (via log.sent_by → profiles.email) so the thread lives in THEIR Outlook;
  * otherwise the shared system mailbox (crons, token-page notifications).
  * Null = no Graph identity → caller falls back to Resend.
+ *
+ * A staffer's own mailbox is their identity regardless of org, but the shared
+ * MS_SYSTEM_MAILBOX is Hines' — so it's offered only when `allowSystemMailbox`
+ * is set (the legacy/bridge org). A non-legacy org's system-level send skips
+ * Graph entirely and goes out through that org's own Resend identity.
  */
 async function resolveSenderMailbox(
-  sentBy?: string | null
+  sentBy: string | null | undefined,
+  allowSystemMailbox: boolean
 ): Promise<string | null> {
   if (sentBy) {
     try {
@@ -209,7 +368,7 @@ async function resolveSenderMailbox(
       // fall through to the system mailbox
     }
   }
-  return process.env.MS_SYSTEM_MAILBOX || null
+  return allowSystemMailbox ? process.env.MS_SYSTEM_MAILBOX || null : null
 }
 
 /**
