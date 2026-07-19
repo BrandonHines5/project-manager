@@ -3807,6 +3807,7 @@ export type Database = {
         Returns: number
       }
       set_schedule_baseline: { Args: { p_project: string }; Returns: undefined }
+      shares_org_with: { Args: { p_profile: string }; Returns: boolean }
       strip_template_tag: { Args: { p_tag: string }; Returns: number }
       template_tag_usage: {
         Args: never
