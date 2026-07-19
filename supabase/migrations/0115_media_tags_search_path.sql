@@ -49,8 +49,11 @@ end;
 $$;
 
 -- upsert_org_integration (0112) was created without a pinned search_path —
--- same finding, same fix. Re-stated verbatim + SET; grants are unchanged and
--- survive CREATE OR REPLACE.
+-- same finding, same fix. This one WRITES to the org_integrations relation,
+-- so it also schema-qualifies the target and lists pg_temp explicitly LAST:
+-- `SET search_path = public` alone would leave pg_temp implicitly FIRST, so a
+-- role could shadow the table with a temp object. Re-stated verbatim + SET;
+-- grants survive CREATE OR REPLACE.
 create or replace function public.upsert_org_integration(
   p_org uuid,
   p_provider text,
@@ -60,9 +63,9 @@ create or replace function public.upsert_org_integration(
   p_touch_secrets boolean default false
 ) returns void
 language sql
-set search_path to 'public'
+set search_path = public, pg_temp
 as $$
-  insert into org_integrations (org_id, provider, enabled, config, secrets)
+  insert into public.org_integrations (org_id, provider, enabled, config, secrets)
   values (
     p_org,
     p_provider,

@@ -343,14 +343,18 @@ PowerShell keygen one-liner is in the session log). Per-integration wiring:
 ## Stage B6 — Storage scoping + hardening
 
 - **DONE (0115, search_path)**: the definer/function `search_path` audit —
-  pinned `set search_path to 'public'` on the last three
-  `function_search_path_mutable` advisor WARNs (`validate_media_tags` +
-  `tags_before_write` from 0030, `upsert_org_integration` from 0112). Pure
-  hardening, zero behavior change (all already schema-qualify their
-  references); the media-tag validation was re-probed after. Security
-  advisors now show only the accepted classes (definer-executable WARNs,
-  `rls_enabled_no_policy` INFO on the service-role-only tables,
-  leaked-password protection).
+  pinned a fixed search_path on the last three
+  `function_search_path_mutable` advisor WARNs. The two media-tag functions
+  (`validate_media_tags`, `tags_before_write` from 0030) touch no relations,
+  so `set search_path to 'public'` is enough. `upsert_org_integration`
+  (0112) WRITES to a relation, so it gets the stricter form —
+  `set search_path = public, pg_temp` (pg_temp explicitly LAST, since a bare
+  `public` leaves it implicitly first and a role could shadow the table with
+  a temp object) plus a schema-qualified `public.org_integrations` target.
+  Zero behavior change; both the media-tag validation and the upsert were
+  re-probed after. Security advisors now show only the accepted classes
+  (definer-executable WARNs, `rls_enabled_no_policy` INFO on the
+  service-role-only tables, leaked-password protection).
 - Storage paths gain org prefixes for NEW objects; storage RLS policies get
   the org condition (existing Hines objects stay at legacy paths — policies
   accept both during transition).
