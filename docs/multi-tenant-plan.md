@@ -66,8 +66,25 @@ Order (blast radius, smallest first):
    **insurance_documents keeps its bridge default until B4** (admin-client
    ingest channels become org-aware with per-org integrations). Gate passed
    both ways including a write-path probe through the RPC.
-3. Projects + all project children (the big one — schedule, decisions, logs,
-   files, payments, budget, purchasing, history/trash).
+3. **DONE (0102)** Projects + all project children (the big one — schedule,
+   decisions, logs, files, payments, budget, purchasing, history/trash,
+   client_invites, qbo_invoices). projects gate on `is_org_member(org_id)`;
+   children resolve through the parent chain via SECURITY DEFINER helpers
+   (`project_in_my_org` + one per parent chain: schedule_item / decision /
+   daily_log / bid_package / bid_recipient / purchase_order / payment
+   `_in_my_org`) — inline EXISTS subqueries are NOT usable here because two
+   parent tables' trade policies read child tables back
+   (schedule_items↔schedule_assignments, bid_packages↔bid_recipients) and
+   Postgres rejects the policy recursion. projects bridge default dropped;
+   `createProject`/`duplicateProject`/warranty `addCrmProject` stamp org_id
+   (duplicate copies `source.org_id`). `utility_requests` turned out to be an
+   unparented root B1 missed (nullable project_id, all live rows global) — it
+   gained `org_id` + org-scoped policy here and KEEPS its bridge default until
+   utilities become org-aware in B3/B4. History/trash/qbo_invoices rows whose
+   bare-uuid project is deleted become invisible (orphans; accepted). Client
+   and trade policies untouched (already row-scoped). Gate passed both ways
+   plus write probes (own-org insert allowed, cross-org insert 42501,
+   cross-org update touches 0 rows).
 4. app_settings (org-scoped settings reads/writes; drop legacy unique(key);
    `getTemplateTagConfig`, budget_editors, disclaimer, notification recipients
    all become per-org).
