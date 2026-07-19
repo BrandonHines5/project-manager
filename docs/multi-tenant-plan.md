@@ -342,14 +342,42 @@ PowerShell keygen one-liner is in the session log). Per-integration wiring:
 
 ## Stage B6 — Storage scoping + hardening
 
+- **DONE (0115, search_path)**: the definer/function `search_path` audit —
+  pinned a fixed search_path on the last three
+  `function_search_path_mutable` advisor WARNs. The two media-tag functions
+  (`validate_media_tags`, `tags_before_write` from 0030) touch no relations,
+  so `set search_path to 'public'` is enough. `upsert_org_integration`
+  (0112) WRITES to a relation, so it gets the stricter form —
+  `set search_path = public, pg_temp` (pg_temp explicitly LAST, since a bare
+  `public` leaves it implicitly first and a role could shadow the table with
+  a temp object) plus a schema-qualified `public.org_integrations` target.
+  Zero behavior change; both the media-tag validation and the upsert were
+  re-probed after. Security advisors now show only the accepted classes
+  (definer-executable WARNs, `rls_enabled_no_policy` INFO on the
+  service-role-only tables, leaked-password protection).
 - Storage paths gain org prefixes for NEW objects; storage RLS policies get
   the org condition (existing Hines objects stay at legacy paths — policies
   accept both during transition).
 - Sweep: per-org advisory-lock keys for numbering RPCs are already per-project
-  (fine); `search_path`/definer-function audit; pen-test pass with two orgs;
-  load sanity on org-scoped indexes.
+  (fine); pen-test pass with two orgs; load sanity on org-scoped indexes.
 - Drop any remaining bridge defaults; add a CI check that fails if a stamped
-  table still has the Hines default.
+  table still has the Hines default. **Remaining default**: only
+  `communications`, held by the shared Quo webhook secret (one OpenPhone
+  workspace/endpoint today) + genuinely-unattributable inbound (shared line,
+  unknown number). Dropping it needs per-org OpenPhone workspaces
+  (per-org webhook secrets/endpoints) — infrastructure, not a code change.
+
+## Multi-tenant status (Path B)
+
+**Substantively complete.** Every root table is org-scoped with RLS
+enforcement (B2), branding + utilities are org-driven (B3), all live
+integrations — insurance ingest, QBO connections, Quo — are per-org with
+an org-admin integrations editor and app-layer AES-256-GCM secret storage
+(B4), and org management (active-org switcher, settings/brand editor,
+member-management RPCs, provisioning RPC) is shipped (B5). Three of four
+0099 bridge defaults are dropped; the last (`communications`) is blocked on
+per-org phone infrastructure, not code. The testing gate — a second
+throwaway org sees zero Hines rows — has passed at every stage.
 
 ## Out of scope (unchanged from product scope)
 
