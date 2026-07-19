@@ -438,22 +438,26 @@ existing/provisioned org is `active_subscriber` and never participates.
   `SandboxPaywall`. Inert until S2 mints the first sandbox org; verified the
   flip + `org_writable` end to end against a throwaway org, and every existing
   org stayed `active_subscriber`.
-- **S1b — mutation block: DONE (app-layer)**. `lib/sandbox.ts:assertActiveOrgWritable`
-  throws `TrialExpiredError` when the CALLER's active org is `sandbox_expired`;
-  it's dropped in right after the auth guard of the core create/save actions
-  (createProject/duplicateProject, saveDecision, saveScheduleItem,
-  saveDailyLog, saveBidPackage, savePurchaseOrder, saveCompany,
-  saveBudgetLine). Checking the *caller's own* org (not a target row's) means
-  one line gates every write that user could attempt, and it can NEVER freeze a
-  non-trial org (an `active_subscriber` always resolves writable). Chose the
-  app-layer guard over RLS because the org-scoped write policies are all
-  `FOR ALL` with a shared read/write predicate, so an RLS block that spares
-  reads is a ~50-policy sweep whose typo could freeze Hines' production writes;
-  the guard is safe and complete-per-user, with S1's inert-shell paywall as the
-  primary block. Coverage is the primary create/save surface; extending the
-  one-line guard to every remaining update/delete action (or an additive RLS
-  restrictive-policy pass) is a mechanical follow-up, and moot until a sandbox
-  org exists (S2).
+- **S1b — mutation block: PARTIAL (app-layer, core create/save surface)**.
+  `lib/sandbox.ts:assertActiveOrgWritable` throws `TrialExpiredError` when the
+  CALLER's active org is a lapsed sandbox (fail-CLOSED: it distinguishes a
+  genuine "no org" — `NoActiveOrgError`, allow — from an operational error,
+  which aborts the write, and reads status strictly rather than via the
+  fail-open `resolveOrgLifecycle`; it also computes effective expiry so a
+  just-lapsed trial is caught before the layout's lazy flip). Because it checks
+  the *caller's own* org (not a target row's), one line gates every write
+  **within a guarded action**, and it can NEVER freeze a non-trial org (an
+  `active_subscriber` always resolves writable). **Coverage is only the core
+  create/save actions so far** (createProject/duplicateProject, saveDecision,
+  saveScheduleItem, saveDailyLog, saveBidPackage, savePurchaseOrder,
+  saveCompany, saveBudgetLine) — the many other update/delete/comment actions
+  are NOT yet guarded and rely on S1's inert-shell paywall (the primary block).
+  Chose the app-layer guard over RLS because the org-scoped write policies are
+  all `FOR ALL` with a shared read/write predicate, so an RLS block that spares
+  reads is a ~50-policy sweep whose typo could freeze Hines' production writes.
+  Extending the one-line guard to the remaining mutations (or an additive RLS
+  restrictive-policy pass) is the follow-up — moot until a sandbox org can
+  actually expire (S2 + 7 days).
 - **S2 — self-serve trial signup**. A PUBLIC endpoint the (separate) sales
   site POSTs to; mints a sandbox org + owner (provisioning internals,
   `sandbox_active` + `now()+7d`). Public org creation is abuse-prone —

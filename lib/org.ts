@@ -10,6 +10,19 @@ import type { Database } from "@/lib/db/types"
 export const LEGACY_ORG_ID = "018f6f2a-4c1e-4b8e-9d3a-7c5b2e8a1f10"
 
 /**
+ * Thrown by getActiveOrgId ONLY for the genuine "this account belongs to no
+ * organization" case — never for operational failures (auth/query errors),
+ * which keep throwing plain Errors. Lets a caller (e.g. the sandbox write
+ * guard) distinguish "not a tenant, allow" from "couldn't verify, fail closed".
+ */
+export class NoActiveOrgError extends Error {
+  constructor() {
+    super("Your account isn't a member of any organization.")
+    this.name = "NoActiveOrgError"
+  }
+}
+
+/**
  * Pure active-org resolution, shared by getActiveOrgId and callers that
  * already hold the membership list (the app layout): the stored selection
  * wins when it names one of the caller's memberships, otherwise the earliest
@@ -54,7 +67,7 @@ export async function getActiveOrgId(
     uid = auth?.user?.id
   }
   if (!uid) {
-    throw new Error("Your account isn't a member of any organization.")
+    throw new NoActiveOrgError()
   }
 
   // org_members_member_read exposes every membership row of the caller's
@@ -77,7 +90,7 @@ export async function getActiveOrgId(
 
   const orgId = resolveActiveOrgId(prof?.active_org_id, memberships ?? [])
   if (!orgId) {
-    throw new Error("Your account isn't a member of any organization.")
+    throw new NoActiveOrgError()
   }
   return orgId
 }

@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import type { Database } from "@/lib/db/types"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
-import { getActiveOrgId } from "@/lib/org"
+import { getActiveOrgId, NoActiveOrgError } from "@/lib/org"
 
 // Sandbox / trial org lifecycle (S1). A self-serve trial (S2) mints orgs as
 // 'sandbox_active' with a 7-day sandbox_expires_at; once past that they're
@@ -92,13 +92,33 @@ export async function assertActiveOrgWritable(
   // drops in as a single line right after a mutating action's auth guard,
   // regardless of where that action builds its client.
   const client = supabase ?? (await createSupabaseServerClient())
-  let orgId: string | null
+  let orgId: string
   try {
     orgId = await getActiveOrgId(client, profileId)
-  } catch {
-    // No resolvable org → not a sandbox tenant, nothing to gate.
-    return
+  } catch (e) {
+    // A genuine "no organization" account isn't a sandbox tenant → allow. ANY
+    // other failure (auth / profile / membership query error) means we can't
+    // verify writability, so a mutation guard must FAIL CLOSED — abort the
+    // write rather than let a possibly-expired trial slip through on a hiccup.
+    if (e instanceof NoActiveOrgError) return
+    throw e
   }
-  const status = await resolveOrgLifecycle(client, orgId)
-  if (status === "sandbox_expired") throw new TrialExpiredError()
+  // Strict, fail-closed status read for the WRITE path — unlike the layout's
+  // fail-OPEN resolveOrgLifecycle (which must never paywall a paying customer
+  // over a transient read error). We also compute effective expiry, so a trial
+  // that lapsed since the last page load — still 'sandbox_active' in the row
+  // until the layout's lazy flip runs — is blocked here too.
+  const { data: org, error } = await client
+    .from("organizations")
+    .select("status, sandbox_expires_at")
+    .eq("id", orgId)
+    .maybeSingle()
+  if (error) throw error
+  if (!org) throw new Error("Couldn't verify the organization's status.")
+  const expired =
+    org.status === "sandbox_expired" ||
+    (org.status === "sandbox_active" &&
+      !!org.sandbox_expires_at &&
+      new Date(org.sandbox_expires_at).getTime() <= Date.now())
+  if (expired) throw new TrialExpiredError()
 }
