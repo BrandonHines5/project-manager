@@ -49,6 +49,12 @@ begin
   if not exists (select 1 from profiles where id = p_owner) then
     raise exception 'Owner profile not found.';
   end if;
+  -- A typo'd seed id must fail loudly, not provision an org with silently
+  -- empty catalogs. NULL stays the intentional no-seed path.
+  if p_seed_from is not null
+     and not exists (select 1 from organizations where id = p_seed_from) then
+    raise exception 'Seed organization not found.';
+  end if;
 
   insert into organizations (name, slug)
   values (trim(p_name), p_slug)
