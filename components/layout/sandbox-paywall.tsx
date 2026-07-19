@@ -75,7 +75,11 @@ export function SandboxPaywall() {
         >
           {loading ? "Starting checkout…" : "Subscribe now"}
         </button>
-        {error && <p className="text-xs text-danger">{error}</p>}
+        {error && (
+          <p role="alert" className="text-xs text-danger">
+            {error}
+          </p>
+        )}
         <form action="/auth/signout" method="post">
           <button
             type="submit"
