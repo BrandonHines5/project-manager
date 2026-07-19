@@ -67,7 +67,10 @@ export async function getActiveOrgId(
     uid = auth?.user?.id
   }
   if (!uid) {
-    throw new NoActiveOrgError()
+    // Unauthenticated — a DIFFERENT case from "authenticated but not in any
+    // org". Keep it a plain auth error so guards that treat NoActiveOrgError
+    // as an allow-path (assertActiveOrgWritable) fail CLOSED for anon callers.
+    throw new Error("Not authenticated.")
   }
 
   // org_members_member_read exposes every membership row of the caller's
