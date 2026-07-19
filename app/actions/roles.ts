@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
+import { getActiveOrgId } from "@/lib/org"
 import type { Tables } from "@/lib/db/types"
 
 // ---------------------------------------------------------------------------
@@ -55,7 +56,12 @@ export async function createRole(
 
   const { data, error } = await supabase
     .from("roles")
-    .insert({ name: parsed.data.name, kind: parsed.data.kind, position: nextPos })
+    .insert({
+      org_id: await getActiveOrgId(supabase),
+      name: parsed.data.name,
+      kind: parsed.data.kind,
+      position: nextPos,
+    })
     .select("*")
     .single()
   if (error) {

@@ -5,6 +5,7 @@ import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createCrmClient } from "@/lib/supabase/crm"
 import { requireStaff } from "@/lib/auth"
+import { getActiveOrgId } from "@/lib/org"
 import type { TablesUpdate } from "@/lib/db/types"
 
 const nullableDate = z
@@ -146,6 +147,8 @@ export async function syncRentalsFromCrm(): Promise<
     if (c.name) nameById.set(c.id, c.name)
   }
 
+  const supabase = await createSupabaseServerClient()
+  const orgId = await getActiveOrgId(supabase)
   const rows = ((rentals ?? []) as CrmRentalRow[])
     .filter((r) => r.property_address)
     .map((r) => {
@@ -154,6 +157,7 @@ export async function syncRentalsFromCrm(): Promise<
         .filter((n): n is string => !!n)
         .join(" & ")
       return {
+        org_id: orgId,
         crm_rental_id: r.id,
         address: r.property_address as string,
         tenant_name: tenant || null,
@@ -163,7 +167,6 @@ export async function syncRentalsFromCrm(): Promise<
       }
     })
 
-  const supabase = await createSupabaseServerClient()
   const { error } = await supabase
     .from("rental_properties")
     .upsert(rows, { onConflict: "crm_rental_id" })

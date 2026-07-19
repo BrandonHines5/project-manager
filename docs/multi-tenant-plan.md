@@ -54,8 +54,11 @@ default on its root tables, and update the module's server actions to stamp
 — sole-org users need no picker until someone belongs to two orgs).
 
 Order (blast radius, smallest first):
-1. Catalogs: roles, cost_codes, purchasing_templates, rental_properties,
-   feedback_requests.
+1. **DONE (0100)** Catalogs: roles, cost_codes, purchasing_templates,
+   rental_properties (+ rental_items via parent), feedback_requests. Policies
+   org-scoped, bridge defaults dropped, inserts stamped via
+   `lib/org.ts:getActiveOrgId` (feedback/roles/rentals/purchasing-templates
+   actions; cost_codes has no insert path). Isolation test passed both ways.
 2. Companies (+ everything keyed by company: company_trades, insurance_*).
 3. Projects + all project children (the big one — schedule, decisions, logs,
    files, payments, budget, purchasing, history/trash).
@@ -68,9 +71,22 @@ Order (blast radius, smallest first):
   profiles) become org-scoped via shared membership.
 
 **Testing gate for every B2 PR**: a second throwaway org + test user in the
-database; assert the test user sees zero Hines rows and vice versa (write a
-small SQL fixture script; run it after each module lands). This is the
-data-leak firewall and it is not optional.
+database; assert the test user sees zero Hines rows and vice versa. This is
+the data-leak firewall and it is not optional.
+
+The fixture exists (created alongside 0100): org `Isolation Test Org`
+(`99999999-0000-4000-8000-000000000099`, slug `isolation-test`) with staff
+user `isolation-test@buildfox.internal`
+(`99999999-0000-4000-8000-000000000001`, empty password hash — cannot log
+in, exists only for SQL impersonation). Run the gate after each module:
+
+```sql
+select set_config('request.jwt.claims',
+  '{"sub":"99999999-0000-4000-8000-000000000001","role":"authenticated"}', false);
+set role authenticated;
+select count(*) from <each newly scoped table>;  -- must all be 0
+-- then repeat impersonating a real Hines staff profile: counts must be full.
+```
 
 ## Stage B3 — Org-scoped settings & branding
 

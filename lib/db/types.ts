@@ -729,7 +729,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           name: string
-          org_id?: string
+          org_id: string
           position?: number
         }
         Update: {
@@ -1530,7 +1530,7 @@ export type Database = {
           created_at?: string
           description?: string | null
           id?: string
-          org_id?: string
+          org_id: string
           request_type?: string
           status?: string
           submitted_by: string
@@ -2831,7 +2831,7 @@ export type Database = {
           id?: string
           line_items?: Json
           name: string
-          org_id?: string
+          org_id: string
           scope?: string | null
           title: string
         }
@@ -3095,7 +3095,7 @@ export type Database = {
           crm_rental_id?: string | null
           id?: string
           lease_status?: string | null
-          org_id?: string
+          org_id: string
           property_owner?: string | null
           synced_at?: string
           tenant_name?: string | null
@@ -3137,7 +3137,7 @@ export type Database = {
           id?: string
           kind?: string
           name: string
-          org_id?: string
+          org_id: string
           position?: number
         }
         Update: {
