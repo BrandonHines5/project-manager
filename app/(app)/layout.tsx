@@ -7,6 +7,8 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { brandForProjectTypes } from "@/lib/brand"
 import { getBrandConfig } from "@/lib/org-brand"
 import { getOrgMemberships, resolveActiveOrgId, LEGACY_ORG_ID } from "@/lib/org"
+import { resolveOrgLifecycle } from "@/lib/sandbox"
+import { SandboxPaywall } from "@/components/layout/sandbox-paywall"
 
 // Every authenticated page depends on cookies and per-user data, so we opt out
 // of any caching here — otherwise Vercel's edge can serve one user's response
@@ -93,13 +95,23 @@ export default async function AppLayout({
         )
       : brandConfig.default
 
+  // Sandbox/trial lifecycle (S1): an org whose trial has lapsed is frozen
+  // behind the paywall. Lazy-flips sandbox_active→sandbox_expired on read and
+  // fails open, so the ~everyone case (active_subscriber) is untouched.
+  const orgLifecycle = await resolveOrgLifecycle(supabase, activeOrgId)
+
   // Buildertrend-style shell: dark menu bar on top, section tabs under it,
   // jobs list on the left, and the page content scrolling on its own inside
   // a viewport-height column (so the jobs list and its controls never
   // scroll out of view).
+  // When the trial paywall is up, the whole shell is inert (not clickable or
+  // tabbable) so the modal is a real block for keyboard + screen-reader users;
+  // the paywall itself renders OUTSIDE the inert subtree so it stays usable.
+  const shellInert = orgLifecycle === "sandbox_expired"
   return (
-    <div className="flex h-dvh flex-col">
-      {/* Skip-to-main: invisible until focused. Keyboard users hit Tab on
+    <>
+      <div className="flex h-dvh flex-col" inert={shellInert || undefined}>
+        {/* Skip-to-main: invisible until focused. Keyboard users hit Tab on
           load and get a way to bypass the topbar / jobs-list nav. */}
       <a
         href="#main-content"
@@ -142,6 +154,8 @@ export default async function AppLayout({
           {children}
         </main>
       </ProjectContextShell>
-    </div>
+      </div>
+      {shellInert && <SandboxPaywall />}
+    </>
   )
 }

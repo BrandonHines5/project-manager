@@ -423,6 +423,45 @@ member-management RPCs, provisioning RPC) is shipped (B5). Three of four
 per-org phone infrastructure, not code. The testing gate — a second
 throwaway org sees zero Hines rows — has passed at every stage.
 
+## Stage S — Self-serve trial + billing (SaaS go-to-market)
+
+Turns the operator-provisioned multi-tenant base into a self-serve product: a
+sales-site visitor signs up for a 7-day trial, hits a paywall when it lapses,
+and subscribes to keep their data. Sandbox orgs are a strict subset — every
+existing/provisioned org is `active_subscriber` and never participates.
+
+- **S1 — sandbox lifecycle foundation: DONE (0116)**. `organizations.status`
+  (`sandbox_active | sandbox_expired | active_subscriber`, default
+  `active_subscriber`) + `sandbox_expires_at`; `org_writable(uuid)` predicate;
+  `lib/sandbox.ts:resolveOrgLifecycle` lazy-flips an elapsed trial on read
+  (CAS, fails open) and the app layout renders the full-screen
+  `SandboxPaywall`. Inert until S2 mints the first sandbox org; verified the
+  flip + `org_writable` end to end against a throwaway org, and every existing
+  org stayed `active_subscriber`.
+- **S1b — mutation block**. Enforce `org_writable` for `sandbox_expired` orgs
+  so an expired trial can't write even if it bypasses the UI. The org-scoped
+  write policies are all `FOR ALL` with a shared read/write predicate, so a
+  clean RLS block that doesn't also break reads means either splitting ~50
+  policies or a WITH-CHECK-only pass (+ per-parent-chain writable helpers) —
+  deferred from S1 to build + test carefully (a policy typo could freeze
+  Hines' production writes), and it needn't ship until a sandbox org can
+  actually expire (S2 + 7 days). App-layer guard is the fallback if RLS proves
+  too sprawling.
+- **S2 — self-serve trial signup**. A PUBLIC endpoint the (separate) sales
+  site POSTs to; mints a sandbox org + owner (provisioning internals,
+  `sandbox_active` + `now()+7d`). Public org creation is abuse-prone —
+  mandatory email verification + rate limiting + CAPTCHA.
+- **S3 — Stripe billing**. Customer per org, Checkout wired to the paywall's
+  "Subscribe now", webhook flips `sandbox_expired → active_subscriber` (+
+  clears `sandbox_expires_at`); handle cancellation/downgrade. Its own
+  multi-PR slice (subscriptions, webhooks, customer portal, plan gating).
+- **S4 — grace hard-delete cron**. Daily `/api/cron/sandbox-cleanup`
+  (`CRON_SECRET`) hard-deletes sandbox orgs past `sandbox_expires_at + 30 days`
+  — a 30-day grace measured from the trial's end (`sandbox_expires_at` is
+  already 7 days past signup, so don't re-add the trial). Sandbox-only,
+  logged, kill-switched OFF until S1–S3 are proven — an irreversible tenant
+  wipe ships last.
+
 ## Out of scope (unchanged from product scope)
 
 Per-tenant subdomains (single app.buildfox.ai + org context is the model;
