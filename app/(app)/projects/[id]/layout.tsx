@@ -10,6 +10,7 @@ import { EditProjectButton } from "@/components/projects/edit-project-dialog"
 import { SyncDashboardButton } from "@/components/projects/sync-dashboard-button"
 import { BrandTile } from "@/components/layout/brand-tile"
 import { brandForProjectType } from "@/lib/brand"
+import { getBrandConfig } from "@/lib/org-brand"
 import { crmStatusTone } from "@/lib/crm-status"
 import type { Enums } from "@/lib/db/types"
 
@@ -52,12 +53,15 @@ export default async function ProjectDetailLayout({
   const { data: project } = await supabase
     .from("projects")
     .select(
-      "id, project_number, name, address, status, crm_status, project_type, dashboard_url, project_manager, client_name, client_email, client_phone, client_name_2, client_email_2, client_phone_2, contract_price, cost_plus, is_template, start_date, notes"
+      "id, org_id, project_number, name, address, status, crm_status, project_type, dashboard_url, project_manager, client_name, client_email, client_phone, client_name_2, client_email_2, client_phone_2, contract_price, cost_plus, is_template, start_date, notes"
     )
     .eq("id", id)
     .maybeSingle()
 
   if (!project) notFound()
+
+  // The job's org drives its client-facing branding (B3).
+  const brandConfig = await getBrandConfig(supabase, project.org_id)
 
   const isStaff = profile.role === "staff"
   let members: { profile_id: string; role_on_project: string | null }[] = []
@@ -97,9 +101,9 @@ export default async function ProjectDetailLayout({
             <ArrowLeft className="h-3 w-3" /> All projects
           </Link>
           {(() => {
-            // Client-facing brand for this job (residential → Hines Homes,
-            // commercial → MJV Building Group).
-            const brand = brandForProjectType(project.project_type)
+            // Client-facing brand for this job from its org's config
+            // (commercial jobs present under the commercial sub-brand).
+            const brand = brandForProjectType(project.project_type, brandConfig)
             return (
               <div className="flex items-center gap-2 mb-2">
                 <BrandTile brand={brand} className="h-7 w-7 rounded-md" imgClassName="h-5 w-5" />

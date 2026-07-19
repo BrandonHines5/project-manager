@@ -4,6 +4,7 @@ import { notFound } from "next/navigation"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { ACCESS_TOKEN_RE } from "@/lib/tokens"
 import { brandForProjectType, HINES_HOMES } from "@/lib/brand"
+import { getBrandConfig } from "@/lib/org-brand"
 import { appUrl } from "@/lib/email"
 import type { Enums } from "@/lib/db/types"
 import { Badge } from "@/components/ui/badge"
@@ -30,7 +31,7 @@ const loadPurchaseOrder = cache(async (token: string) => {
       `id, number, custom_number, title, scope, status, approval_deadline,
        flat_fee, flat_total, approved_at, approved_signature, declined_at,
        decline_reason, project_id,
-       projects:project_id(name, project_type),
+       projects:project_id(name, project_type, org_id),
        companies:company_id(name),
        po_line_items(id, description, quantity, unit, unit_cost, position,
          cost_codes:cost_code_id(code, name)),
@@ -54,13 +55,19 @@ export async function generateMetadata({
   const { token } = await params
   let brand = HINES_HOMES
   if (ACCESS_TOKEN_RE.test(token)) {
-    const { data } = await loadPurchaseOrder(token)
-    const projectType = (
+    const { admin, data } = await loadPurchaseOrder(token)
+    const project = (
       data as unknown as {
-        projects: { project_type: Enums<"project_type"> | null } | null
+        projects: {
+          project_type: Enums<"project_type"> | null
+          org_id: string
+        } | null
       } | null
-    )?.projects?.project_type
-    brand = brandForProjectType(projectType)
+    )?.projects
+    const config = admin
+      ? await getBrandConfig(admin, project?.org_id)
+      : undefined
+    brand = brandForProjectType(project?.project_type, config)
   }
   const title = `Purchase order — ${brand.name}`
   const image = appUrl(brand.icon)
@@ -93,7 +100,11 @@ type PageData = {
   declined_at: string | null
   decline_reason: string | null
   project_id: string
-  projects: { name: string; project_type: Enums<"project_type"> | null } | null
+  projects: {
+    name: string
+    project_type: Enums<"project_type"> | null
+    org_id: string
+  } | null
   companies: { name: string } | null
   po_line_items: {
     id: string
@@ -172,7 +183,10 @@ export default async function PoTokenPage({
   if (!data) notFound()
 
   const po = data as unknown as PageData
-  const brand = brandForProjectType(po.projects?.project_type)
+  const brand = brandForProjectType(
+    po.projects?.project_type,
+    await getBrandConfig(admin, po.projects?.org_id)
+  )
   const projectName = po.projects?.name ?? "our project"
   const poLabel = po.custom_number
     ? `PO-${po.number} (${po.custom_number})`

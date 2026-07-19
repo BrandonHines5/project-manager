@@ -2,6 +2,7 @@ import { notFound } from "next/navigation"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireSession } from "@/lib/auth"
 import { brandForProjectType } from "@/lib/brand"
+import { getBrandConfig } from "@/lib/org-brand"
 import { PricingClient } from "./pricing-client"
 import type { PricingData } from "./pricing-client"
 
@@ -18,12 +19,15 @@ export default async function PricingPage({
 
   const { data: project } = await supabase
     .from("projects")
-    .select("id, name, project_number, contract_price, project_type, address")
+    .select("id, org_id, name, project_number, contract_price, project_type, address")
     .eq("id", projectId)
     .maybeSingle()
   if (!project) notFound()
 
-  const brand = brandForProjectType(project.project_type)
+  const brand = brandForProjectType(
+    project.project_type,
+    await getBrandConfig(supabase, project.org_id)
+  )
 
   // Committed costs (approved-PO rollup) intentionally do NOT appear here —
   // money-out lives on the Budget tab's POs column (financial_access-gated).

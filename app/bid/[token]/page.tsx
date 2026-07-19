@@ -3,6 +3,7 @@ import { notFound } from "next/navigation"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { ACCESS_TOKEN_RE } from "@/lib/tokens"
 import { brandForProjectType } from "@/lib/brand"
+import { getBrandConfig } from "@/lib/org-brand"
 import type { Enums } from "@/lib/db/types"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card"
@@ -36,7 +37,11 @@ type PageData = {
     due_date: string | null
     status: "draft" | "sent" | "awarded" | "closed"
     flat_fee: boolean
-    projects: { name: string; project_type: Enums<"project_type"> | null } | null
+    projects: {
+      name: string
+      project_type: Enums<"project_type"> | null
+      org_id: string
+    } | null
     bid_package_line_items: {
       id: string
       description: string
@@ -116,7 +121,7 @@ export default async function BidTokenPage({
        companies:company_id(name),
        bid_packages:bid_package_id(
          id, project_id, number, title, scope, due_date, status, flat_fee,
-         projects:project_id(name, project_type),
+         projects:project_id(name, project_type, org_id),
          bid_package_line_items(id, description, quantity, unit, position,
            cost_codes:cost_code_id(code, name)),
          bid_package_attachments(id, file_name, storage_path, caption, position)
@@ -149,7 +154,10 @@ export default async function BidTokenPage({
     if (viewErr) console.warn("[bid page] viewed_at stamp failed:", viewErr.message)
   }
 
-  const brand = brandForProjectType(pkg.projects?.project_type)
+  const brand = brandForProjectType(
+    pkg.projects?.project_type,
+    await getBrandConfig(admin, pkg.projects?.org_id)
+  )
   const projectName = pkg.projects?.name ?? "our project"
   const packageClosed = pkg.status === "closed"
 

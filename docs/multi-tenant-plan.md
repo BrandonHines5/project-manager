@@ -156,13 +156,22 @@ select count(*) from <each newly scoped table>;  -- must all be 0
 
 ## Stage B3 — Org-scoped settings & branding
 
-- `lib/brand.ts` reads from `organizations.settings` (name, logo path, colors,
-  the residential/commercial sub-brand map) with the current Hines/MJV values
-  seeded as org #1's settings. Logo upload into a `brand/` storage prefix.
-- Workspace header (sidebar) shows the org's name; PDFs/emails/token pages
-  render org branding. The Hines-specific utilities/PDF configs (CAW, Lumber
-  One — TIN, addresses) move into org settings and hide for orgs that lack
-  them.
+- **DONE (0106, part 1 — brand read path)**: `organizations.settings.brands`
+  holds `{ default, commercial? }` Brand objects; `parseBrandConfig`
+  (lib/brand.ts) validates with a neutral app-branded fallback carrying the
+  org's NAME (never another org's logos), and `lib/org-brand.ts:
+  getBrandConfig(client, orgId)` resolves it server-side (session client in
+  layouts/pages, admin client on token pages). `brandForProjectType(s)` take
+  an optional config — without one they keep the historical static Hines/MJV
+  rule (login page, fallbacks). Converted: app shell layout (workspace brand
+  = org's default; client all-commercial rule per org), project layout
+  header, Pricing page/PDF, PO + bid token pages (incl. link-preview
+  metadata), PO release/comment emails. Org #1 seeded with the exact
+  historical values — zero visible change.
+- Remaining in B3: per-org logo upload into a `brand/` storage prefix (lands
+  with the org-settings editor); the Hines-specific utilities/PDF configs
+  (CAW, Lumber One — TIN, addresses, submission emails currently in env
+  vars) move into org settings and hide for orgs that lack them.
 
 ## Stage B4 — Per-org integrations
 
