@@ -1,11 +1,7 @@
 import "server-only"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { Database, Json } from "@/lib/db/types"
-import {
-  decryptSecrets,
-  encryptSecrets,
-  isSecretEnvelope,
-} from "@/lib/crypto/secrets"
+import { decryptSecrets, encryptSecrets } from "@/lib/crypto/secrets"
 
 // Per-org integration rows (B4, 0112). The table is service-role-only —
 // every caller here passes the ADMIN client and is responsible for its own
@@ -67,8 +63,11 @@ export async function getOrgIntegration(
 /**
  * Create/update an org's integration row. `secrets` semantics: undefined =
  * leave stored secrets untouched, null = clear them, object = seal and
- * replace. Config replaces wholesale when provided (callers read-modify-
- * write; these are small settings blobs).
+ * replace. Omitted `enabled`/`config` keep their stored values. The write
+ * is a single atomic statement (0112 `upsert_org_integration`) — untouched
+ * fields carry forward in the database itself, so concurrent writers can't
+ * lose each other's changes and a stored envelope this call isn't touching
+ * is never read, re-validated, or rewritten.
  */
 export async function upsertOrgIntegration(
   admin: SupabaseClient<Database>,
@@ -80,38 +79,18 @@ export async function upsertOrgIntegration(
     secrets?: Record<string, unknown> | null
   }
 ): Promise<void> {
-  const { data: existing, error: readErr } = await admin
-    .from("org_integrations")
-    .select("enabled, config, secrets")
-    .eq("org_id", orgId)
-    .eq("provider", provider)
-    .maybeSingle()
-  if (readErr) throw new Error(readErr.message)
-
-  // Guard against clobbering a real envelope with garbage: whatever we
-  // carry forward must still BE an envelope (or null).
-  const carriedSecrets =
-    existing?.secrets != null && isSecretEnvelope(existing.secrets)
-      ? existing.secrets
-      : null
-
-  const nextSecrets =
-    input.secrets === undefined
-      ? carriedSecrets
-      : input.secrets === null
-        ? null
-        : encryptSecrets(input.secrets, envelopeAad(orgId, provider))
-
-  const { error } = await admin.from("org_integrations").upsert(
-    {
-      org_id: orgId,
-      provider,
-      enabled: input.enabled ?? existing?.enabled ?? true,
-      config: (input.config ?? asObject(existing?.config)) as Json,
-      secrets: nextSecrets as Json,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "org_id,provider" }
-  )
+  const touchSecrets = input.secrets !== undefined
+  const envelope =
+    input.secrets == null
+      ? null
+      : encryptSecrets(input.secrets, envelopeAad(orgId, provider))
+  const { error } = await admin.rpc("upsert_org_integration", {
+    p_org: orgId,
+    p_provider: provider,
+    p_enabled: input.enabled ?? undefined,
+    p_config: (input.config as Json) ?? undefined,
+    p_secrets: (envelope as Json) ?? undefined,
+    p_touch_secrets: touchSecrets,
+  })
   if (error) throw new Error(error.message)
 }

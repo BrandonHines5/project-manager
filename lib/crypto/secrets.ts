@@ -39,11 +39,16 @@ export type SecretEnvelope = {
 function parseKey(name: string): Buffer | null {
   const raw = process.env[name]
   if (!raw) return null
-  let key: Buffer
-  try {
-    key = Buffer.from(raw, "base64")
-  } catch {
-    throw new Error(`${name} is not valid base64.`)
+  // Buffer.from(..., "base64") never throws — it silently skips characters
+  // it doesn't like — so validate strictly: canonical charset AND an exact
+  // round-trip, then the 32-byte length.
+  const key = Buffer.from(raw, "base64")
+  if (
+    !/^[A-Za-z0-9+/]+={0,2}$/.test(raw) ||
+    raw.length % 4 !== 0 ||
+    key.toString("base64") !== raw
+  ) {
+    throw new Error(`${name} is not canonical base64.`)
   }
   if (key.length !== 32) {
     throw new Error(
@@ -67,13 +72,20 @@ function activeKey(): { key: Buffer; kid: string } {
   return { key, kid: kidOf(key) }
 }
 
-/** Active key first, then the rotation predecessor when configured. */
-function decryptionKeys(): Map<string, Buffer> {
+/**
+ * Keys eligible to open an envelope sealed under `wantKid`. The rotation
+ * predecessor is parsed ONLY when the envelope actually needs a non-active
+ * key — a typo in INTEGRATION_SECRETS_KEY_PREVIOUS must not take down
+ * decryption of envelopes sealed under the healthy active key.
+ */
+function decryptionKeys(wantKid: string): Map<string, Buffer> {
   const keys = new Map<string, Buffer>()
   const active = activeKey()
   keys.set(active.kid, active.key)
-  const previous = parseKey("INTEGRATION_SECRETS_KEY_PREVIOUS")
-  if (previous) keys.set(kidOf(previous), previous)
+  if (wantKid !== active.kid) {
+    const previous = parseKey("INTEGRATION_SECRETS_KEY_PREVIOUS")
+    if (previous) keys.set(kidOf(previous), previous)
+  }
   return keys
 }
 
@@ -125,7 +137,7 @@ export function decryptSecrets(
   if (!isSecretEnvelope(envelope)) {
     throw new Error("Stored secrets are not a valid envelope.")
   }
-  const key = decryptionKeys().get(envelope.kid)
+  const key = decryptionKeys(envelope.kid).get(envelope.kid)
   if (!key) {
     throw new Error(
       `No master key matches kid ${envelope.kid} — was the key rotated without a re-encrypt sweep?`

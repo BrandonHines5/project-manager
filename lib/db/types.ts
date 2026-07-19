@@ -3899,6 +3899,17 @@ export type Database = {
         Args: { p_paths: string[] }
         Returns: string[]
       }
+      upsert_org_integration: {
+        Args: {
+          p_config?: Json
+          p_enabled?: boolean
+          p_org: string
+          p_provider: string
+          p_secrets?: Json
+          p_touch_secrets?: boolean
+        }
+        Returns: undefined
+      }
       validate_media_tags: { Args: { p_tags: string[] }; Returns: undefined }
     }
     Enums: {
