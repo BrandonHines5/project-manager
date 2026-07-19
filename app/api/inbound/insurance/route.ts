@@ -86,8 +86,8 @@ export async function POST(req: Request) {
   // when INSURANCE_INBOUND_EMAIL is unset or this webhook is scoped to a
   // single address in Resend.
   const insuranceInbox = process.env.INSURANCE_INBOUND_EMAIL?.toLowerCase()
-  if (insuranceInbox) {
-    const inboxBase = stripPlusTag(insuranceInbox)
+  const inboxBase = insuranceInbox ? stripPlusTag(insuranceInbox) : null
+  if (inboxBase) {
     const addressed = toList.some(
       (t) => stripPlusTag((parseEmailAddress(t) ?? t).toLowerCase()) === inboxBase
     )
@@ -101,15 +101,34 @@ export async function POST(req: Request) {
   // files to the legacy org, so the bridge default on insurance_documents
   // is gone and every ingest stamps an explicit org. An unknown tag also
   // falls back rather than dropping a sub's certificate on the floor.
+  // The slug comes ONLY from insurance-inbox recipients (when the inbox is
+  // configured) — a CC'd other+acme@… must not re-route the attachments.
   let orgId: string = LEGACY_ORG_ID
-  const slug = inboundOrgSlug(toList)
+  const slugRecipients = inboxBase
+    ? toList.filter(
+        (t) =>
+          stripPlusTag((parseEmailAddress(t) ?? t).toLowerCase()) === inboxBase
+      )
+    : toList
+  const slug = inboundOrgSlug(slugRecipients)
   const admin = slug ? createSupabaseAdminClient() : null
   if (slug && admin) {
-    const { data: org } = await admin
+    const { data: org, error: orgErr } = await admin
       .from("organizations")
       .select("id")
       .eq("slug", slug)
       .maybeSingle()
+    if (orgErr) {
+      // A transient lookup failure must not misfile another org's documents
+      // under the legacy tenant. Non-2xx makes Resend redeliver later, when
+      // the database is reachable again — this is NOT the poison-attachment
+      // case the always-200 rule exists for.
+      console.error(`[insurance-inbound] org lookup failed: ${orgErr.message}`)
+      return NextResponse.json(
+        { ok: false, error: "org lookup failed" },
+        { status: 503 }
+      )
+    }
     if (org) orgId = org.id
     else console.warn(`[insurance-inbound] unknown org slug in recipient: ${slug}`)
   }

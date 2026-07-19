@@ -185,14 +185,14 @@ select count(*) from <each newly scoped table>;  -- must all be 0
 
 ## Stage B4 — Per-org integrations
 
-**Groundwork landed**: insurance ingest is org-aware where the channel knows
-its org — the sub upload route stamps the token company's org, staff manual
-upload stamps the acting staffer's, and a company match adopts the company's
-org onto the document; `matchCompany` scopes all directory/history queries
-to that org. The shared inbound-email webhook still lands on the bridge
-default and matches directory-wide (single-org reality) — per-org inbound
-addresses are what drop `insurance_documents`' default. The reminders cron
-is inherently per-company (each email carries that company's own token), so
+**Groundwork landed**: insurance ingest is org-aware on every channel — the
+sub upload route stamps the token company's org, staff manual upload stamps
+the acting staffer's, a company match adopts the company's org onto the
+document, and `matchCompany` scopes all directory/history queries to that
+org. The inbound-email webhook resolves its org from the recipient plus-tag
+too (part 2, details in the Resend bullet below), which is what let
+`insurance_documents`' bridge default drop in 0113. The reminders cron is
+inherently per-company (each email carries that company's own token), so
 its only org coupling is the env-singleton kill switch + sender, handled
 with the rest below.
 

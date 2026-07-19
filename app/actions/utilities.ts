@@ -204,10 +204,16 @@ function toRenderData(form: CawFormT, cfg: UtilityOrgConfig): CawRenderData {
  * key: project_number) and snapshot a display label; for a local-only job the
  * label comes from the projects row.
  */
-async function resolveJob(input: {
-  project_id?: string | null
-  crm_project_id?: string | null
-}): Promise<{ projectId: string | null; crmProjectId: string | null; jobLabel: string }> {
+async function resolveJob(
+  input: {
+    project_id?: string | null
+    crm_project_id?: string | null
+  },
+  // Active-org boundary: a multi-org staffer must not pair a request with a
+  // project from an org they merely belong to — the row stamps the ACTIVE
+  // org, so the job has to live there too.
+  orgId: string
+): Promise<{ projectId: string | null; crmProjectId: string | null; jobLabel: string }> {
   const supabase = await createSupabaseServerClient()
 
   if (input.crm_project_id) {
@@ -231,13 +237,16 @@ async function resolveJob(input: {
       city: string | null
       client_name: string | null
     }
-    // Link the local project too when one shares the job's project_number.
+    // Link the local project too when one shares the job's project_number —
+    // only within the active org (the CRM itself is a legacy org-#1 system,
+    // but the local link must respect the boundary).
     let projectId: string | null = null
     if (row.project_number) {
       const { data: local } = await supabase
         .from("projects")
         .select("id")
         .eq("project_number", row.project_number)
+        .eq("org_id", orgId)
         .limit(1)
         .maybeSingle()
       projectId = local?.id ?? null
@@ -251,11 +260,13 @@ async function resolveJob(input: {
     }
   }
 
-  // Local-only job: confirm it's visible to this staff member (RLS-scoped).
+  // Local-only job: confirm it's visible to this staff member (RLS-scoped)
+  // AND belongs to their active org.
   const { data: project } = await supabase
     .from("projects")
     .select("id, project_number, name")
     .eq("id", input.project_id!)
+    .eq("org_id", orgId)
     .maybeSingle()
   if (!project) throw new Error("Project not found or not visible.")
   return {
@@ -284,11 +295,12 @@ export async function saveUtilityDrafts(
   if (!parsed.success) throw new Error(firstIssue(parsed.error))
   const supabase = await createSupabaseServerClient()
 
-  const job = await resolveJob(parsed.data)
   // New drafts stamp the acting staffer's org (0113 dropped the bridge
   // default). Resolved once — every entry in the call belongs to the same
-  // user, so the same org.
+  // user, so the same org — and BEFORE resolveJob so the job is validated
+  // against the same boundary the row will be stamped with.
   const orgId = await getActiveOrgId(supabase, profile.id)
+  const job = await resolveJob(parsed.data, orgId)
 
   const ids: Partial<Record<UtilityProvider, string>> = {}
   const errors: Partial<Record<UtilityProvider, string>> = {}
@@ -320,11 +332,15 @@ async function saveOneDraft(
     // from storage after the row is updated.
     const { data: existing } = await supabase
       .from("utility_requests")
-      .select("project_id, crm_project_id, provider, generated_file_paths")
+      .select("org_id, project_id, crm_project_id, provider, generated_file_paths")
       .eq("id", id)
       .eq("status", "draft")
       .maybeSingle()
     if (!existing) throw new Error("Draft not found or not editable.")
+    if (existing.org_id !== orgId) {
+      // A multi-org staffer can't edit another org's draft from this one.
+      throw new Error("Draft not found or not editable.")
+    }
     if (existing.provider !== provider) {
       throw new Error("Draft not found, not editable, or provider mismatch.")
     }
@@ -348,6 +364,7 @@ async function saveOneDraft(
       })
       .eq("id", id)
       .eq("status", "draft") // only drafts are editable
+      .eq("org_id", orgId)
       .select("id")
       .maybeSingle()
     if (error) throw new Error(error.message)

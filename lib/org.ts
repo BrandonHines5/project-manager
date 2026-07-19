@@ -47,7 +47,10 @@ export async function getActiveOrgId(
 ): Promise<string> {
   let uid = profileId
   if (!uid) {
-    const { data: auth } = await supabase.auth.getUser()
+    const { data: auth, error: authErr } = await supabase.auth.getUser()
+    // Propagate real auth failures — an outage must not masquerade as
+    // "you're not in any organization".
+    if (authErr) throw new Error(authErr.message)
     uid = auth?.user?.id
   }
   if (!uid) {
