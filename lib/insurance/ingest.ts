@@ -44,12 +44,12 @@ export type IngestInput = {
   // Known company (tokenized sub upload, or staff picked one).
   companyId?: string
   /**
-   * Owning org, when the caller knows it (B4 groundwork): the sub upload
-   * route passes the token company's org, staff manual upload the acting
-   * staffer's. Stamped on the document row AND used to scope company
-   * matching. Absent (the shared inbound-email webhook) the row lands on
-   * the bridge default and matching stays directory-wide — that channel
-   * becomes per-org in B4 proper, which is when the default drops.
+   * Owning org. Every ingest path resolves one (B4): the sub upload route
+   * passes the token company's org, staff manual upload the acting staffer's,
+   * and the inbound-email webhook the recipient plus-tag's org (falling back
+   * to the legacy org for untagged mail). Stamped on the document row AND used
+   * to scope company matching. Since 0113 dropped the bridge default, a row
+   * with no org can't be inserted — the pipeline fails closed if it's missing.
    */
   orgId?: string
   // Explicit staff-chosen document kind. When ABSENT, the Claude extraction
@@ -106,6 +106,16 @@ export async function ingestInsuranceDocument(
     }
     orgId = co.org_id
   }
+  if (!orgId) {
+    // Post-0113 every caller resolves an org (the inbound webhook falls back to
+    // the legacy org for untagged mail), so a missing one shouldn't happen — but
+    // insurance_documents.org_id is NOT NULL with no default now, so fail closed
+    // rather than crash on the insert below.
+    return {
+      ok: false,
+      error: "Could not determine the owning organization for this document.",
+    }
+  }
 
   // 1. Make sure the file is in Storage and we have its bytes.
   let storagePath = input.storagePath
@@ -145,7 +155,7 @@ export async function ingestInsuranceDocument(
   const { data: doc, error: docErr } = await admin
     .from("insurance_documents")
     .insert({
-      ...(orgId ? { org_id: orgId } : {}),
+      org_id: orgId,
       company_id: input.companyId ?? null,
       storage_bucket: INSURANCE_BUCKET,
       storage_path: storagePath,

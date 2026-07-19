@@ -1604,7 +1604,7 @@ export type Database = {
           file_size?: number | null
           file_type?: string | null
           id?: string
-          org_id?: string
+          org_id: string
           received_at?: string
           source: string
           status?: string
@@ -2938,7 +2938,7 @@ export type Database = {
           connected_by?: string | null
           created_at?: string
           environment?: string
-          org_id?: string
+          org_id: string
           realm_id: string
           refresh_token: string
           refresh_token_expires_at: string
@@ -3666,6 +3666,27 @@ export type Database = {
           },
         ]
       }
+      trial_signup_attempts: {
+        Row: {
+          created_at: string
+          email: string
+          id: number
+          ip: string | null
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          id?: never
+          ip?: string | null
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          id?: never
+          ip?: string | null
+        }
+        Relationships: []
+      }
       utility_requests: {
         Row: {
           created_at: string
@@ -3692,7 +3713,7 @@ export type Database = {
           generated_file_paths?: string[]
           id?: string
           job_label?: string | null
-          org_id?: string
+          org_id: string
           paid_at?: string | null
           payment_url?: string | null
           project_id?: string | null
@@ -3809,6 +3830,18 @@ export type Database = {
         }
         Returns: string
       }
+      create_sandbox_organization: {
+        Args: {
+          p_name: string
+          p_owner: string
+          p_slug: string
+          p_trial_days?: number
+        }
+        Returns: {
+          expires_at: string
+          org_id: string
+        }[]
+      }
       current_company_id: { Args: never; Returns: string }
       current_org_ids: { Args: never; Returns: string[] }
       current_role_name: {
@@ -3853,6 +3886,10 @@ export type Database = {
       payment_in_my_org: { Args: { p_payment: string }; Returns: boolean }
       project_in_my_org: { Args: { p_project: string }; Returns: boolean }
       purchase_order_in_my_org: { Args: { p_po: string }; Returns: boolean }
+      record_trial_signup_attempt: {
+        Args: { p_email: string; p_ip: string }
+        Returns: boolean
+      }
       remove_org_member: {
         Args: { p_org: string; p_profile: string }
         Returns: undefined

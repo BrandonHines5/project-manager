@@ -458,10 +458,24 @@ existing/provisioned org is `active_subscriber` and never participates.
   Extending the one-line guard to the remaining mutations (or an additive RLS
   restrictive-policy pass) is the follow-up — moot until a sandbox org can
   actually expire (S2 + 7 days).
-- **S2 — self-serve trial signup**. A PUBLIC endpoint the (separate) sales
-  site POSTs to; mints a sandbox org + owner (provisioning internals,
-  `sandbox_active` + `now()+7d`). Public org creation is abuse-prone —
-  mandatory email verification + rate limiting + CAPTCHA.
+- **S2 — self-serve trial signup: DONE (0117)**. Public `POST /api/trial/signup`
+  the (separate) sales site calls server-to-server; mints a sandbox org + owner
+  and returns a one-time temp password to the secret-authenticated caller.
+  Reuses the provisioning sequence via the extracted `lib/provisioning/core.ts:
+  provisionOrgCore` (createUser → promote → create org → land owner, rollback on
+  failure) — `provisionOrganization` now calls it with lifecycle
+  `active_subscriber`, the route with `sandbox_active` (`now()+7d`). The trial
+  stamp is atomic in a new SECURITY DEFINER RPC `create_sandbox_organization`
+  (wraps `create_organization` + the status/expiry UPDATE in one txn, so a
+  created sandbox org always carries its status — no half-provisioned
+  free-forever leak). Abuse protection, in order: **TRIAL_SIGNUP_SECRET** shared
+  header (primary gate; unset → endpoint closed 503), optional **Turnstile**
+  (env-gated on `TURNSTILE_SECRET_KEY`), and a serverless-safe DB rate limit
+  (`trial_signup_attempts` + `record_trial_signup_attempt`: 5/IP/hour,
+  3/email/day). Isolation is inherited from `create_organization` (seed-from-Hines,
+  same RLS visibility — the sandbox variant only adds a status stamp).
+  End-to-end go-live check (create a real sandbox org, confirm zero Hines rows +
+  paywall on expiry) runs once **TRIAL_SIGNUP_SECRET** is set in Vercel.
 - **S3 — Stripe billing**. Customer per org, Checkout wired to the paywall's
   "Subscribe now", webhook flips `sandbox_expired → active_subscriber` (+
   clears `sandbox_expires_at`); handle cancellation/downgrade. Its own
@@ -471,7 +485,14 @@ existing/provisioned org is `active_subscriber` and never participates.
   — a 30-day grace measured from the trial's end (`sandbox_expires_at` is
   already 7 days past signup, so don't re-add the trial). Sandbox-only,
   logged, kill-switched OFF until S1–S3 are proven — an irreversible tenant
-  wipe ships last.
+  wipe ships last. **NOTE for S4**: the ROOT `org_id` FKs (projects, companies,
+  cost_codes, roles, app_settings, … from 0099/0102) are plain
+  `references organizations(id)` with NO `ON DELETE CASCADE` (only
+  `organization_members` and `org_integrations` cascade). So the cron can't just
+  `DELETE FROM organizations` — it must delete child data first (in dependency
+  order) OR the FKs need an `ON DELETE CASCADE` migration. Building the deletion
+  as a single SECURITY DEFINER RPC (`delete_organization`) that tears down in
+  order is the likely shape; also delete the owner's auth users.
 
 ## Out of scope (unchanged from product scope)
 
