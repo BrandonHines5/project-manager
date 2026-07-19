@@ -20,6 +20,11 @@
 - Regenerate types: `supabase gen types typescript --project-id <ref> > lib/db/types.ts`.
 - After any DDL, run `get_advisors` (security + performance) and fix WARNs.
 
+## Multi-tenancy (Path B — in progress)
+
+- **Stage B1 landed (0099)**: `organizations` + `organization_members` exist; Hines Homes is org #1 (`018f6f2a-4c1e-4b8e-9d3a-7c5b2e8a1f10`, all profiles are members, Brandon is owner). Eleven ROOT tables carry `org_id NOT NULL DEFAULT <hines>` (projects, companies, roles, cost_codes, purchasing_templates, app_settings, rental_properties, qbo_connection, insurance_documents, feedback_requests, communications) — the default is a **bridge** so existing insert paths keep working; child tables resolve org through their parent and must NOT be stamped. Helpers `is_org_member(uuid)` / `current_org_ids()` (security definer, authenticated-only) are the building blocks for org-scoped RLS.
+- **Existing RLS is NOT org-scoped yet** — do not assume it is. The staged rollout (per-module RLS scoping → org settings/branding → per-org integrations → onboarding/billing → storage) lives in `docs/multi-tenant-plan.md`; follow it and its testing gate (a second throwaway org must see zero Hines rows) for any org-related change. When a stage makes a module's inserts org-aware, drop that module's bridge defaults.
+
 ## Projects & templates — model
 
 - **New project dates**: `projects.start_date` = the CRM's "Projected Start Date" (pulled through the dashboard; `normalizeDashboardProject` accepts `start_date`/`projected_start_date`/`projected_start`). On the template-copy path (`duplicateProject`), the schedule is anchored on the **Job Start milestone** so it lands exactly on `start_date` (falls back to the earliest dated item if the template has no dated Job Start); every item shifts by the same delta. Blank projects stamp their Job Start milestone with `start_date` too. There is **no** `target_completion_date` — the column was dropped (0081); a job's projected finish is the Substantial Completion milestone + health banner, not a project field.
