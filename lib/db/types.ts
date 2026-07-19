@@ -1797,6 +1797,44 @@ export type Database = {
           },
         ]
       }
+      org_integrations: {
+        Row: {
+          config: Json
+          created_at: string
+          enabled: boolean
+          org_id: string
+          provider: string
+          secrets: Json | null
+          updated_at: string
+        }
+        Insert: {
+          config?: Json
+          created_at?: string
+          enabled?: boolean
+          org_id: string
+          provider: string
+          secrets?: Json | null
+          updated_at?: string
+        }
+        Update: {
+          config?: Json
+          created_at?: string
+          enabled?: boolean
+          org_id?: string
+          provider?: string
+          secrets?: Json | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "org_integrations_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organization_members: {
         Row: {
           created_at: string
