@@ -149,6 +149,7 @@ export async function saveTemplateTagConfig(input: {
     { onConflict: "org_id,key" }
   )
   if (error) return { ok: false, error: error.message }
+  revalidatePath("/settings/template-tags")
   return { ok: true, stripped }
 }
 
