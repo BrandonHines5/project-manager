@@ -82,16 +82,18 @@ export async function provisionOrgCore(
   if (!ownerId) return { ok: false, error: "createUser returned no user id." }
 
   // Roll the auth user back (cascades its profile + any org membership) so a
-  // failure leaves nothing half-provisioned. Surfaces a compound error if the
-  // rollback itself fails, so an orphaned auth user is never silent.
+  // failure leaves nothing half-provisioned. If the rollback ITSELF fails, log
+  // the orphaned auth-user id + raw error server-side (this core now backs the
+  // PUBLIC /api/trial/signup route, so that detail must reach the team's logs,
+  // not the external caller's response) and return only the caller-safe message.
   const rollback = async (message: string): Promise<ProvisionOrgCoreResult> => {
     const { error: delErr } = await admin.auth.admin.deleteUser(ownerId)
-    return {
-      ok: false,
-      error: delErr
-        ? `${message} (Cleanup also failed — orphaned auth user ${ownerId}: ${delErr.message})`
-        : message,
+    if (delErr) {
+      console.error(
+        `[provision] orphaned auth user ${ownerId} — rollback cleanup failed: ${delErr.message}`
+      )
     }
+    return { ok: false, error: message }
   }
 
   // 2. Promote to staff.

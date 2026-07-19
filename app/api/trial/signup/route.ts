@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { timingSafeEqual } from "node:crypto"
 import { z } from "zod"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { provisionOrgCore } from "@/lib/provisioning/core"
@@ -44,10 +45,23 @@ const Body = z.object({
   turnstileToken: z.string().optional(),
 })
 
+/** Best-effort client IP from the proxy headers (Vercel sets x-forwarded-for). */
 function clientIp(req: Request): string | null {
   const xff = req.headers.get("x-forwarded-for")
   if (xff) return xff.split(",")[0]?.trim() || null
   return req.headers.get("x-real-ip")?.trim() || null
+}
+
+/**
+ * Constant-time secret comparison — the standard hardening for comparing a
+ * caller-supplied credential against the expected one. timingSafeEqual throws
+ * on length mismatch, so guard that first (a length difference is already a
+ * non-match and safe to short-circuit).
+ */
+function secretsMatch(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided)
+  const b = Buffer.from(expected)
+  return a.length === b.length && timingSafeEqual(a, b)
 }
 
 /** True unless Turnstile is configured AND the token fails to verify. */
@@ -65,7 +79,10 @@ async function verifyTurnstile(
   try {
     const resp = await fetch(
       "https://challenges.cloudflare.com/turnstile/v0/siteverify",
-      { method: "POST", body: form }
+      // Bound the call so a slow/unresponsive Cloudflare doesn't hold the
+      // serverless function open until the platform timeout — a timeout aborts
+      // into the catch below and counts as a failed verification.
+      { method: "POST", body: form, signal: AbortSignal.timeout(5000) }
     )
     const data = (await resp.json()) as { success?: boolean }
     return data.success === true
@@ -74,6 +91,11 @@ async function verifyTurnstile(
   }
 }
 
+/**
+ * Mint a sandbox trial org + owner for the sales site. Runs the abuse-protection
+ * gates (shared secret → optional Turnstile → rate limit) before provisioning,
+ * and returns the new org id + a one-time temp password to the trusted caller.
+ */
 export async function POST(req: Request) {
   // 1. Shared-secret gate — the primary protection. Fail closed if unset.
   const secret = process.env.TRIAL_SIGNUP_SECRET
@@ -85,7 +107,9 @@ export async function POST(req: Request) {
   }
   const bearer = req.headers.get("authorization") ?? ""
   const headerSecret = req.headers.get("x-trial-signup-secret") ?? ""
-  if (bearer !== `Bearer ${secret}` && headerSecret !== secret) {
+  const authorized =
+    secretsMatch(bearer, `Bearer ${secret}`) || secretsMatch(headerSecret, secret)
+  if (!authorized) {
     return NextResponse.json({ ok: false, error: "forbidden" }, { status: 401 })
   }
 
