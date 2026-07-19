@@ -185,14 +185,14 @@ select count(*) from <each newly scoped table>;  -- must all be 0
 
 ## Stage B4 — Per-org integrations
 
-**Groundwork landed**: insurance ingest is org-aware where the channel knows
-its org — the sub upload route stamps the token company's org, staff manual
-upload stamps the acting staffer's, and a company match adopts the company's
-org onto the document; `matchCompany` scopes all directory/history queries
-to that org. The shared inbound-email webhook still lands on the bridge
-default and matches directory-wide (single-org reality) — per-org inbound
-addresses are what drop `insurance_documents`' default. The reminders cron
-is inherently per-company (each email carries that company's own token), so
+**Groundwork landed**: insurance ingest is org-aware on every channel — the
+sub upload route stamps the token company's org, staff manual upload stamps
+the acting staffer's, a company match adopts the company's org onto the
+document, and `matchCompany` scopes all directory/history queries to that
+org. The inbound-email webhook resolves its org from the recipient plus-tag
+too (part 2, details in the Resend bullet below), which is what let
+`insurance_documents`' bridge default drop in 0113. The reminders cron is
+inherently per-company (each email carries that company's own token), so
 its only org coupling is the env-singleton kill switch + sender, handled
 with the rest below.
 
@@ -223,9 +223,17 @@ PowerShell keygen one-liner is in the session log). Per-integration wiring:
   keys state by org; webhook resolves org via realmId lookup.
 - **Quo/OpenPhone**: per-org API key + numbers; inbound webhook resolves org
   by phone-number id.
-- **Resend inbound**: per-org inbound addresses (`insurance+<org>@…`,
-  `comms+<org>@…`) or per-org subdomains; ingest resolves org before
-  matching companies.
+- **Resend inbound**: **DONE for insurance (part 2)** — the recipient
+  plus-tag IS the org slug (`insurance+{org-slug}@domain`, zero per-org
+  address config): the webhook resolves the org before ingest, untagged
+  legacy mail files to org #1 via `lib/org.ts:LEGACY_ORG_ID`, an unknown
+  tag warns + falls back rather than dropping a certificate, and the
+  inbox-match check strips plus-tags on both sides. With all three ingest
+  paths stamping explicitly, 0113 dropped the `insurance_documents` bridge
+  default (and `utility_requests`' too — saveUtilityDrafts stamps the
+  acting staffer's org). Probes: org-less inserts now fail (23502 / 42501
+  via the RLS null-org check) and stamped inserts work. Comms inbound
+  email gets the same treatment when comms goes per-org.
 - **Microsoft Graph**: per-org tenant credentials (optional; Resend fallback
   covers orgs without M365).
 - **CRM / SpecMagician / dashboard**: Hines-only; become org #1 settings and

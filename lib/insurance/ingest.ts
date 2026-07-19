@@ -585,6 +585,40 @@ export function parseEmailAddress(from?: string): string | null {
     : null
 }
 
+/**
+ * "insurance+acme-builders@updates.example.com" → "insurance@updates.example.com".
+ * Inbox-match comparisons must ignore the org plus-tag or every tagged
+ * delivery would look mis-addressed.
+ */
+export function stripPlusTag(address: string): string {
+  const at = address.indexOf("@")
+  if (at < 0) return address
+  const local = address.slice(0, at)
+  const plus = local.indexOf("+")
+  return plus < 0 ? address : local.slice(0, plus) + address.slice(at)
+}
+
+/**
+ * The org plus-tag on an inbound recipient list (B4): per-org inbound
+ * addresses are `insurance+{org-slug}@domain`, so the tag IS the org slug —
+ * no per-org address config needed. Returns the first non-empty tag in
+ * recipient order; untagged mail returns null and the caller falls back to
+ * the legacy org.
+ */
+export function inboundOrgSlug(recipients: string[]): string | null {
+  for (const r of recipients) {
+    const address = parseEmailAddress(r) ?? r
+    const at = address.indexOf("@")
+    if (at < 0) continue
+    const plus = address.indexOf("+")
+    if (plus > 0 && plus < at) {
+      const tag = address.slice(plus + 1, at).trim().toLowerCase()
+      if (tag) return tag
+    }
+  }
+  return null
+}
+
 function escapeLike(s: string): string {
   return s.replace(/[%_\\]/g, (m) => `\\${m}`)
 }
