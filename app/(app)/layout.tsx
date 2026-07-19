@@ -65,6 +65,12 @@ export default async function AppLayout({
     ? resolveActiveOrgId(profile.active_org_id, orgs)
     : (profile.active_org_id ?? null)
 
+  // Owner/admin members of the ACTIVE org get the Organization settings link.
+  const activeMembership = orgs.find((o) => o.org_id === activeOrgId)
+  const orgAdmin =
+    activeMembership?.member_role === "owner" ||
+    activeMembership?.member_role === "admin"
+
   // Org-driven branding (B3): the workspace presents the caller's org. A
   // client whose projects are all commercial sees the org's commercial
   // sub-brand across the app; everyone else (staff/trade, or a client with
@@ -103,6 +109,7 @@ export default async function AppLayout({
         brand={brand}
         orgs={orgs}
         activeOrgId={activeOrgId}
+        orgAdmin={orgAdmin}
         // The jobs-list sidebar is desktop-only; the topbar hands the same
         // list to the mobile drawer so phones can switch jobs too.
         projects={projects ?? []}

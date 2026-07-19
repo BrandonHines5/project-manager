@@ -71,22 +71,31 @@ export async function getActiveOrgId(
   return orgId
 }
 
+export type OrgMembership = {
+  org_id: string
+  name: string
+  /** 'owner' | 'admin' | 'member' — owner/admin unlock /settings/organization. */
+  member_role: string
+}
+
 /**
  * All of the acting user's org memberships, earliest first — powers the org
- * switcher (which only renders when there's more than one).
+ * switcher (which only renders when there's more than one) and the org-admin
+ * gate on the Organization settings link.
  */
 export async function getOrgMemberships(
   supabase: SupabaseClient<Database>,
   profileId: string
-): Promise<{ org_id: string; name: string }[]> {
+): Promise<OrgMembership[]> {
   const { data, error } = await supabase
     .from("organization_members")
-    .select("org_id, created_at, organizations:org_id(name)")
+    .select("org_id, member_role, created_at, organizations:org_id(name)")
     .eq("profile_id", profileId)
     .order("created_at", { ascending: true })
   if (error) throw new Error(error.message)
   return (data ?? []).map((m) => ({
     org_id: m.org_id,
+    member_role: m.member_role,
     name:
       (m.organizations as unknown as { name: string } | null)?.name ??
       "Organization",

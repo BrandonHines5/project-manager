@@ -92,6 +92,7 @@ export function Topbar({
   projects = [],
   orgs = [],
   activeOrgId = null,
+  orgAdmin = false,
 }: {
   fullName: string
   email: string
@@ -102,6 +103,8 @@ export function Topbar({
   /** The user's org memberships — the switcher renders only for 2+. */
   orgs?: { org_id: string; name: string }[]
   activeOrgId?: string | null
+  /** Owner/admin of the active org — unlocks the Organization settings link. */
+  orgAdmin?: boolean
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [switching, setSwitching] = useState(false)
@@ -212,6 +215,16 @@ export function Topbar({
                       </button>
                     ))}
                   </div>
+                )}
+                {role === "staff" && orgAdmin && (
+                  <Link
+                    href="/settings/organization"
+                    onClick={() => setMenuOpen(false)}
+                    className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-background cursor-pointer"
+                  >
+                    <Building2 className="h-4 w-4 text-muted" />
+                    Organization
+                  </Link>
                 )}
                 <Link
                   href="/settings/notifications"
