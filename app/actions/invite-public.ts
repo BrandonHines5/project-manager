@@ -148,22 +148,31 @@ export async function acceptClientInvite(input: {
   // Enroll them in the project's org (idempotent). Without this a post-0099
   // client fails every is_org_member gate — e.g. reading the decision
   // disclaimer (0103). Membership writes are service-role-only until B5, so
-  // this rides the admin client; best-effort like the notification fan-outs
-  // (a failure here must not eat an otherwise-accepted invite — the 0099-era
-  // backfill pattern can repair it).
-  const { data: inviteProject } = await admin
+  // this rides the admin client. Enrollment failure is FATAL and must happen
+  // BEFORE the invite is claimed below: a claimed invite with no membership
+  // would strand the client org-less with no retry path, whereas bailing here
+  // leaves the invite unclaimed so trying again re-runs the whole (idempotent)
+  // acceptance.
+  const { data: inviteProject, error: projErr } = await admin
     .from("projects")
     .select("org_id")
     .eq("id", invite.project_id)
     .maybeSingle()
-  if (inviteProject?.org_id) {
-    const { error: orgErr } = await admin.from("organization_members").insert({
-      org_id: inviteProject.org_id,
-      profile_id: profileId,
-      member_role: "member",
-    })
-    if (orgErr && (orgErr as { code?: string }).code !== "23505") {
-      console.warn("[acceptInvite] org enrollment failed:", orgErr.message)
+  if (projErr || !inviteProject?.org_id) {
+    return {
+      ok: false,
+      error: "Could not finish setting up your account. Please try again.",
+    }
+  }
+  const { error: orgErr } = await admin.from("organization_members").insert({
+    org_id: inviteProject.org_id,
+    profile_id: profileId,
+    member_role: "member",
+  })
+  if (orgErr && (orgErr as { code?: string }).code !== "23505") {
+    return {
+      ok: false,
+      error: "Could not finish setting up your account. Please try again.",
     }
   }
 

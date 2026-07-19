@@ -26,19 +26,22 @@ export default async function AppLayout({
   // member of. We fetch the project list here (not in each page) so the
   // sidebar stays consistent across navigations and benefits from React's
   // server-component dedupe.
-  const [{ count: unreadCount }, { data: projects }] = await Promise.all([
-    supabase
-      .from("notifications")
-      .select("id", { count: "exact", head: true })
-      .eq("recipient_id", profile.id)
-      .is("read_at", null),
-    supabase
-      .from("projects")
-      .select(
-        "id, name, project_number, address, status, crm_status, project_type, labels"
-      )
-      .order("project_number", { ascending: false }),
-  ])
+  const [{ count: unreadCount }, { data: projects }, activeOrgId] =
+    await Promise.all([
+      supabase
+        .from("notifications")
+        .select("id", { count: "exact", head: true })
+        .eq("recipient_id", profile.id)
+        .is("read_at", null),
+      supabase
+        .from("projects")
+        .select(
+          "id, name, project_number, address, status, crm_status, project_type, labels"
+        )
+        .order("project_number", { ascending: false }),
+      // Org membership is independent of the other two — ride the same batch.
+      getActiveOrgId(supabase).catch(() => null),
+    ])
 
   // Org-driven branding (B3): the workspace presents the caller's org. A
   // client whose projects are all commercial sees the org's commercial
@@ -47,10 +50,7 @@ export default async function AppLayout({
   // only for a user with no org membership, which requireSession-passing
   // users always have (0105 enrolls at birth) — but don't let a data hiccup
   // blank the shell: fall back to the static default config.
-  const brandConfig = await getBrandConfig(
-    supabase,
-    await getActiveOrgId(supabase).catch(() => null)
-  )
+  const brandConfig = await getBrandConfig(supabase, activeOrgId)
   const brand =
     profile.role === "client"
       ? brandForProjectTypes(

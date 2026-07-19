@@ -145,6 +145,12 @@ export async function inviteTeamMember(input: InviteTeamMemberInputT) {
     )
   }
 
+  // Resolve the acting staffer's org BEFORE creating the auth user — if this
+  // throws (no membership), we bail with nothing to clean up instead of
+  // stranding an auth user the flow can't retry.
+  const supabase = await createSupabaseServerClient()
+  const orgId = await getActiveOrgId(supabase)
+
   // 1. Create the auth user. The handle_new_user trigger inserts the
   // profiles row with role='client' (least privilege).
   const { data, error } = await admin.auth.admin.createUser({
@@ -163,9 +169,8 @@ export async function inviteTeamMember(input: InviteTeamMemberInputT) {
   // Membership writes are service-role-only until B5, hence the admin client;
   // a delete of the auth user cascades the membership away, so the rollback
   // path needs no extra cleanup.
-  const supabase = await createSupabaseServerClient()
   const { error: memberErr } = await admin.from("organization_members").insert({
-    org_id: await getActiveOrgId(supabase),
+    org_id: orgId,
     profile_id: newId,
     member_role: "member",
   })
