@@ -58,7 +58,10 @@ function qboStore() {
   return cachedStore
 }
 
-/** One org's connection (an org connects one QBO company), or null. */
+/**
+ * One org's connection, or null. Exactly-one-per-org is a database
+ * invariant (0114 unique index) — no latest-row tie-breaking needed.
+ */
 export async function getQboConnection(
   orgId: string
 ): Promise<QboConnection | null> {
@@ -68,8 +71,6 @@ export async function getQboConnection(
     .from("qbo_connection")
     .select("*")
     .eq("org_id", orgId)
-    .order("updated_at", { ascending: false })
-    .limit(1)
     .maybeSingle()
   if (error) {
     console.error("[qbo] getQboConnection failed:", error.message)
@@ -120,22 +121,27 @@ export type SaveQboConnectionResult =
   | { ok: false; reason: "unavailable" | "realm_other_org" | "db" }
 
 /**
- * Upsert the connection row (keyed by realm_id), stamped with the connecting
- * org. A realm already connected to a DIFFERENT org is refused — re-running
- * OAuth from the wrong tenant must never quietly re-home another org's
- * QuickBooks connection.
+ * Save the org's connection (orgId first, stamped internally). A realm
+ * already connected to a DIFFERENT org is refused — re-running OAuth from
+ * the wrong tenant must never quietly re-home another org's QuickBooks
+ * connection. Connecting the same org to a NEW company replaces its prior
+ * connection (one per org, 0114 unique index); if a concurrent connect
+ * races the replace, the index makes the loser fail loudly rather than
+ * leaving two rows.
  */
-export async function saveQboConnection(row: {
-  org_id: string
-  realm_id: string
-  environment: QboEnvironment
-  access_token: string
-  refresh_token: string
-  access_token_expires_at: string
-  refresh_token_expires_at: string
-  company_name?: string | null
-  connected_by?: string | null
-}): Promise<SaveQboConnectionResult> {
+export async function saveQboConnection(
+  orgId: string,
+  row: {
+    realm_id: string
+    environment: QboEnvironment
+    access_token: string
+    refresh_token: string
+    access_token_expires_at: string
+    refresh_token_expires_at: string
+    company_name?: string | null
+    connected_by?: string | null
+  }
+): Promise<SaveQboConnectionResult> {
   const store = qboStore()
   if (!store) return { ok: false, reason: "unavailable" }
   const { data: existing, error: readErr } = await store
@@ -147,12 +153,23 @@ export async function saveQboConnection(row: {
     console.error("[qbo] saveQboConnection read failed:", readErr.message)
     return { ok: false, reason: "db" }
   }
-  if (existing && (existing as { org_id: string }).org_id !== row.org_id) {
+  if (existing && (existing as { org_id: string }).org_id !== orgId) {
     return { ok: false, reason: "realm_other_org" }
+  }
+  // Company switch: drop this org's previous connection (different realm)
+  // so the org_id unique index doesn't reject the new row.
+  const { error: replaceErr } = await store
+    .from("qbo_connection")
+    .delete()
+    .eq("org_id", orgId)
+    .neq("realm_id", row.realm_id)
+  if (replaceErr) {
+    console.error("[qbo] saveQboConnection replace failed:", replaceErr.message)
+    return { ok: false, reason: "db" }
   }
   const { error } = await store
     .from("qbo_connection")
-    .upsert(row, { onConflict: "realm_id" })
+    .upsert({ ...row, org_id: orgId }, { onConflict: "realm_id" })
   if (error) {
     console.error("[qbo] saveQboConnection failed:", error.message)
     return { ok: false, reason: "db" }

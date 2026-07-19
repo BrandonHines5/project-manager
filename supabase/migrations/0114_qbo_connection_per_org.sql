@@ -13,3 +13,19 @@
 -- silently filing under Hines.
 
 alter table qbo_connection alter column org_id drop default;
+
+-- Exactly ONE connection per org, enforced by the database. Pre-existing
+-- duplicates (an org's old test-company connection alongside its current
+-- one) keep only the newest row per org — which is exactly the row the old
+-- latest-first read already resolved, so behavior doesn't change; the older
+-- rows were unreachable. saveQboConnection replaces an org's prior
+-- connection on a company switch, and this index makes any race between
+-- two connects fail loudly instead of leaving two rows.
+delete from qbo_connection
+where realm_id not in (
+  select distinct on (org_id) realm_id
+  from qbo_connection
+  order by org_id, updated_at desc
+);
+create unique index if not exists qbo_connection_org_key
+  on qbo_connection (org_id);

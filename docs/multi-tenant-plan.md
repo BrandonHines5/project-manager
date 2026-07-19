@@ -228,7 +228,10 @@ PowerShell keygen one-liner is in the session log). Per-integration wiring:
   a different org (`realm_other_org`), and the webhook groups events by
   realm → connection row → org (invoice project lookups scope to that org
   since customer ids are only unique within a realm). 0114 dropped the
-  qbo_connection bridge default; org-less inserts now 23502.
+  qbo_connection bridge default (org-less inserts now 23502) and enforces
+  EXACTLY one connection per org (unique index; the save replaces the
+  org's prior row on a company switch, and PO pushes derive their org from
+  the OWNING project, not the caller's active org).
 - **Quo/OpenPhone**: per-org API key + numbers; inbound webhook resolves org
   by phone-number id.
 - **Resend inbound**: **DONE for insurance (part 2)** — the recipient

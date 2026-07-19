@@ -182,9 +182,19 @@ export async function pushPurchaseOrderToQbo(input: {
   id: string
   project_id: string
 }): Promise<PushPoResult> {
-  const profile = await requireStaff()
+  await requireStaff()
+  // The PO pushes through the connection of the org that OWNS it — the
+  // project's org, never the caller's active org (a multi-org staffer could
+  // have another org selected). The session-RLS read also proves the caller
+  // can see the project at all.
   const orgSupabase = await createSupabaseServerClient()
-  const orgId = await getActiveOrgId(orgSupabase, profile.id)
+  const { data: project, error: projErr } = await orgSupabase
+    .from("projects")
+    .select("org_id")
+    .eq("id", input.project_id)
+    .maybeSingle()
+  if (projErr || !project) return { ok: false, error: "Project not found." }
+  const orgId = project.org_id
   const conn = await getQboConnection(orgId)
   if (!conn) return { ok: false, error: "QuickBooks is not connected." }
 
@@ -208,11 +218,14 @@ export async function pushPurchaseOrderToQbo(input: {
   const { data: po, error: poErr } = await supabase
     .from("purchase_orders")
     .select(
-      "id, number, custom_number, company_id, status, flat_fee, flat_total, title, scope, created_at"
+      "id, project_id, number, custom_number, company_id, status, flat_fee, flat_total, title, scope, created_at"
     )
     .eq("id", input.id)
     .maybeSingle()
   if (poErr || !po) return { ok: false, error: "Purchase order not found." }
+  if (po.project_id !== input.project_id) {
+    return { ok: false, error: "Purchase order does not belong to that project." }
+  }
   if (po.status !== "approved") {
     return { ok: false, error: "Only an approved purchase order can be pushed." }
   }

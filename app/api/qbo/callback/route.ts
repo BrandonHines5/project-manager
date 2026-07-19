@@ -62,8 +62,7 @@ export async function GET(req: Request) {
   if (!tokens) return fail("token_exchange_failed")
 
   const environment = qboEnvironment()
-  const saved = await saveQboConnection({
-    org_id: orgId,
+  const saved = await saveQboConnection(orgId, {
     realm_id: realmId,
     environment,
     access_token: tokens.access_token,
@@ -83,8 +82,7 @@ export async function GET(req: Request) {
     const company = await getCompanyInfo(orgId)
     const name = company?.CompanyName ?? company?.LegalName ?? null
     if (name) {
-      await saveQboConnection({
-        org_id: orgId,
+      await saveQboConnection(orgId, {
         realm_id: realmId,
         environment,
         access_token: tokens.access_token,
