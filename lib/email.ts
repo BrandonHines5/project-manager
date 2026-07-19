@@ -81,6 +81,7 @@ export async function sendEmail(opts: {
           await logCommunication({
             channel: "email",
             direction: "outbound",
+            org_id: opts.log.org_id,
             project_id: opts.log.project_id,
             company_id: opts.log.company_id,
             profile_id: opts.log.profile_id,
@@ -161,6 +162,7 @@ export async function sendEmail(opts: {
       await logCommunication({
         channel: "email",
         direction: "outbound",
+        org_id: opts.log.org_id,
         project_id: opts.log.project_id,
         company_id: opts.log.company_id,
         profile_id: opts.log.profile_id,
