@@ -1,0 +1,37 @@
+name: Bridge-default guard
+
+# Multi-tenancy safety net (Stage B6). Fails the build if a ROOT table still
+# carries the Hines `org_id` bridge default without being on the intentional
+# allowlist in scripts/check-bridge-defaults.mjs — i.e. a new stamped table
+# shipped without dropping its bridge, which would silently file another org's
+# rows under Hines. Pure static analysis of the migration SQL; needs no
+# database or secrets. See the script header for the full rationale.
+
+on:
+  pull_request:
+    paths:
+      - "supabase/migrations/**"
+      - "scripts/check-bridge-defaults.mjs"
+      - ".github/workflows/bridge-default-guard.yml"
+  push:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**"
+      - "scripts/check-bridge-defaults.mjs"
+      - ".github/workflows/bridge-default-guard.yml"
+
+jobs:
+  bridge-default-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Check org_id bridge defaults
+        run: node scripts/check-bridge-defaults.mjs
