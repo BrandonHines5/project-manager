@@ -74,8 +74,8 @@ export async function getActiveOrgId(
 export type OrgMembership = {
   org_id: string
   name: string
-  /** 'owner' | 'admin' | 'member' — owner/admin unlock /settings/organization. */
-  member_role: string
+  /** Owner/admin unlock /settings/organization. */
+  member_role: "owner" | "admin" | "member"
 }
 
 /**
@@ -95,7 +95,8 @@ export async function getOrgMemberships(
   if (error) throw new Error(error.message)
   return (data ?? []).map((m) => ({
     org_id: m.org_id,
-    member_role: m.member_role,
+    // The column is text; values are service-role-written from this set.
+    member_role: m.member_role as OrgMembership["member_role"],
     name:
       (m.organizations as unknown as { name: string } | null)?.name ??
       "Organization",

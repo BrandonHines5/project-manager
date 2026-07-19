@@ -15,10 +15,11 @@ import { saveOrgSettings, type BrandInput } from "@/app/actions/org"
 const FALLBACK_LOGO = "/brand/buildfox-mark.svg"
 const FALLBACK_ICON = "/icon-512.png"
 
+// No SVG on purpose: the bucket is public and a raw SVG opened as a top-level
+// document executes embedded script (self-XSS). Raster covers logo needs.
 const LOGO_TYPES: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
-  "image/svg+xml": "svg",
   "image/webp": "webp",
 }
 const ICON_TYPES: Record<string, string> = { "image/png": "png" }
@@ -71,6 +72,13 @@ export function OrganizationSettingsClient({
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
+  // Count of in-flight image uploads across every slot — Save is disabled
+  // while any are running so a save can't capture a stale draft (the picked
+  // image would silently miss the save while the toast still says success).
+  const [uploadingCount, setUploadingCount] = useState(0)
+  const trackUploading = (busy: boolean) =>
+    setUploadingCount((n) => Math.max(0, n + (busy ? 1 : -1)))
+  const busy = pending || uploadingCount > 0
   const [name, setName] = useState(initialName)
   const [def, setDef] = useState<BrandDraft>(() => draftFrom(initialDefault))
   const [commercialEnabled, setCommercialEnabled] = useState(
@@ -83,6 +91,10 @@ export function OrganizationSettingsClient({
   )
 
   function handleSave() {
+    if (uploadingCount > 0) {
+      toast.error("Wait for the image upload to finish before saving.")
+      return
+    }
     if (!name.trim()) {
       toast.error("Organization name is required.")
       return
@@ -140,6 +152,7 @@ export function OrganizationSettingsClient({
         draft={def}
         onChange={setDef}
         disabled={pending}
+        onUploadingChange={trackUploading}
       />
 
       <section className="rounded-lg border border-border bg-surface p-5 space-y-3">
@@ -168,13 +181,18 @@ export function OrganizationSettingsClient({
             draft={commercial}
             onChange={setCommercial}
             disabled={pending}
+            onUploadingChange={trackUploading}
           />
         )}
       </section>
 
       <div>
-        <Button onClick={handleSave} disabled={pending}>
-          {pending ? "Saving…" : "Save settings"}
+        <Button onClick={handleSave} disabled={busy}>
+          {pending
+            ? "Saving…"
+            : uploadingCount > 0
+              ? "Uploading image…"
+              : "Save settings"}
         </Button>
       </div>
     </div>
@@ -189,6 +207,7 @@ function BrandEditor(props: {
   draft: BrandDraft
   onChange: (d: BrandDraft) => void
   disabled: boolean
+  onUploadingChange: (busy: boolean) => void
 }) {
   return (
     <section className="rounded-lg border border-border bg-surface p-5 space-y-3">
@@ -207,12 +226,14 @@ function BrandFields({
   draft,
   onChange,
   disabled,
+  onUploadingChange,
 }: {
   orgId: string
   slotPrefix: string
   draft: BrandDraft
   onChange: (d: BrandDraft) => void
   disabled: boolean
+  onUploadingChange: (busy: boolean) => void
 }) {
   return (
     <div className="space-y-4">
@@ -235,6 +256,7 @@ function BrandFields({
         fallbackUrl={FALLBACK_LOGO}
         isCustom={draft.logoPath != null || (!draft.clearLogo && draft.logoUrl !== FALLBACK_LOGO)}
         disabled={disabled}
+        onUploadingChange={onUploadingChange}
         onUploaded={(path, url) =>
           onChange({ ...draft, logoPath: path, logoUrl: url, clearLogo: false })
         }
@@ -257,6 +279,7 @@ function BrandFields({
         fallbackUrl={FALLBACK_ICON}
         isCustom={draft.iconPath != null || (!draft.clearIcon && draft.iconUrl !== FALLBACK_ICON)}
         disabled={disabled}
+        onUploadingChange={onUploadingChange}
         onUploaded={(path, url) =>
           onChange({ ...draft, iconPath: path, iconUrl: url, clearIcon: false })
         }
@@ -283,6 +306,7 @@ function ImageSlot({
   fallbackUrl,
   isCustom,
   disabled,
+  onUploadingChange,
   onUploaded,
   onClear,
 }: {
@@ -295,6 +319,8 @@ function ImageSlot({
   fallbackUrl: string
   isCustom: boolean
   disabled: boolean
+  /** Mirrors the local uploading state up so Save can wait for every slot. */
+  onUploadingChange: (busy: boolean) => void
   onUploaded: (path: string, url: string) => void
   onClear: () => void
 }) {
@@ -316,6 +342,7 @@ function ImageSlot({
       return
     }
     setUploading(true)
+    onUploadingChange(true)
     try {
       const supabase = createSupabaseBrowserClient()
       // Random path per upload — old assets stay behind (cheap, and anything
@@ -336,8 +363,13 @@ function ImageSlot({
       const url = supabase.storage.from("brand-assets").getPublicUrl(path)
         .data.publicUrl
       onUploaded(path, url)
+    } catch (e) {
+      // uploadToStorage returns errors rather than throwing, so this is the
+      // truly unexpected path — still surface it instead of a silent reset.
+      toast.error(e instanceof Error ? e.message : "Upload failed — try again.")
     } finally {
       setUploading(false)
+      onUploadingChange(false)
     }
   }
 
