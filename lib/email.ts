@@ -18,17 +18,81 @@ type ResendConfig = {
 }
 
 /**
- * Per-org Resend credentials (B4), the email analogue of resolveQuoConfig:
- * `apiKey` from the org's `org_integrations` 'resend' secrets envelope,
- * `from`/`fromName` from its config. Env `RESEND_API_KEY` / `RESEND_FROM_EMAIL`
- * are the fallback for the LEGACY org ONLY (the pre-multi-tenant Hines
- * identity) — every other org must carry its own row, so a missing config
- * reads as "email not connected", never as "borrow Hines' From address". A
- * null orgId (fully-unattributed bridge send) also falls back to legacy env.
+ * Whether the PLATFORM Resend account is wired up — one master key
+ * (`RESEND_PLATFORM_API_KEY`) plus a shared verified sending domain
+ * (`PLATFORM_EMAIL_DOMAIN`, e.g. "mail.buildfox.ai"). When set, every builder
+ * org gets keyless email out of the box (no API key, no DNS): it sends from a
+ * per-org address on that domain.
+ */
+export function platformEmailConfigured(): boolean {
+  return Boolean(
+    process.env.RESEND_PLATFORM_API_KEY && process.env.PLATFORM_EMAIL_DOMAIN
+  )
+}
+
+/** Sanitize an org slug into a safe email localpart, or null if empty. */
+function sanitizeLocalpart(slug: string): string | null {
+  const lp = slug
+    .toLowerCase()
+    .replace(/[^a-z0-9.-]/g, "")
+    .replace(/^[.-]+|[.-]+$/g, "")
+  return lp || null
+}
+
+/**
+ * The per-org platform sending address (`{slug}@{PLATFORM_EMAIL_DOMAIN}`), or
+ * null when the platform domain isn't set or the slug yields no usable
+ * localpart. Deterministic from the slug — there's no provisioning step, so a
+ * builder's email works the moment their org exists.
+ */
+export function platformSenderAddress(
+  slug: string | null | undefined
+): string | null {
+  const domain = process.env.PLATFORM_EMAIL_DOMAIN
+  if (!domain || !slug) return null
+  const lp = sanitizeLocalpart(slug)
+  return lp ? `${lp}@${domain}` : null
+}
+
+/**
+ * Platform-managed Resend identity for a non-legacy org: the platform master
+ * key + the org's per-org address on the shared domain, presenting under the
+ * org's name. Null when the platform isn't configured or the org has no usable
+ * slug.
+ */
+async function resolvePlatformResendConfig(
+  admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
+  orgId: string
+): Promise<ResendConfig | null> {
+  const key = process.env.RESEND_PLATFORM_API_KEY
+  if (!key) return null
+  const { data: org, error } = await admin
+    .from("organizations")
+    .select("slug, name")
+    .eq("id", orgId)
+    .maybeSingle()
+  if (error || !org) return null
+  const from = platformSenderAddress(org.slug)
+  if (!from) return null
+  return { apiKey: key, from, fromName: org.name ?? null }
+}
+
+/**
+ * Per-org Resend credentials (B4), the email analogue of resolveQuoConfig.
+ * Resolution order:
+ *  1. LEGACY org (or unresolved bridge send) → env `RESEND_API_KEY` /
+ *     `RESEND_FROM_EMAIL` (the pre-multi-tenant Hines identity).
+ *  2. A non-legacy org's OWN Resend key (`org_integrations` 'resend', a
+ *     bring-your-own advanced override) → used verbatim when complete.
+ *  3. Otherwise PLATFORM-MANAGED (the default, keyless): the platform Resend
+ *     account sends from `{slug}@{PLATFORM_EMAIL_DOMAIN}` — a builder org has
+ *     working email with zero setup and never enters a key.
+ *  4. None of the above → "email not connected" (fail closed — never borrows
+ *     Hines' From address).
  *
  * Fails closed for non-legacy orgs: getOrgIntegration THROWS on a decrypt
  * failure (a misconfigured master key), which must never silently degrade to
- * another tenant's env key.
+ * another tenant's key.
  */
 async function resolveResendConfig(
   orgId: string | null | undefined
@@ -61,13 +125,24 @@ async function resolveResendConfig(
     }
   }
 
-  // Legacy (or unresolved single-tenant) org: env is the source of truth
-  // until its org_integrations row is populated.
+  // 1. Legacy (or unresolved single-tenant) org: env is the source of truth.
   if (!orgId || orgId === LEGACY_ORG_ID) {
     apiKey = apiKey ?? process.env.RESEND_API_KEY ?? null
     from = from ?? process.env.RESEND_FROM_EMAIL ?? null
+    return { apiKey, from, fromName }
   }
-  return { apiKey, from, fromName }
+
+  // 2. Non-legacy org with its OWN complete Resend identity (advanced override).
+  if (apiKey && from) return { apiKey, from, fromName }
+
+  // 3. Default keyless path: platform-managed email.
+  if (admin && platformEmailConfigured()) {
+    const platform = await resolvePlatformResendConfig(admin, orgId)
+    if (platform) return platform
+  }
+
+  // 4. Nothing usable — email isn't connected for this org.
+  return { apiKey: null, from: null, fromName: null }
 }
 
 /**
@@ -130,13 +205,15 @@ async function resolveEmailOrg(opts: {
  *     onto the same row instead of double-posting the feed. The shared system
  *     mailbox is Hines' identity, so it's gated to the legacy/bridge org.
  *
- *  2. Resend — per-org (B4): the API key + verified From address come from the
- *     org's `org_integrations` 'resend' row (env fallback for the legacy Hines
- *     org). A non-legacy org that isn't connected does NOT send (fail closed)
- *     rather than going out from Hines' address. The org is resolved from
- *     `opts.orgId` → `log.org_id` → the staffer's membership → project/company.
- *     Project-scoped sends default their Reply-To to the comms plus-tag inbox
- *     so replies are still captured.
+ *  2. Resend — per-org: the From identity comes from resolveResendConfig —
+ *     the legacy env identity for Hines, a builder's own key if it set one,
+ *     else PLATFORM-MANAGED (the platform Resend account sending from the
+ *     org's `{slug}@{PLATFORM_EMAIL_DOMAIN}` address — keyless, zero setup). An
+ *     org with no usable identity does NOT send (fail closed) rather than going
+ *     out from Hines' address. The org is resolved from `opts.orgId` →
+ *     `log.org_id` → the staffer's membership → project/company. Project-scoped
+ *     sends default their Reply-To to the comms plus-tag inbox so replies are
+ *     still captured.
  *
  * Graceful no-op when neither transport is configured, so dev/preview
  * environments never break.
