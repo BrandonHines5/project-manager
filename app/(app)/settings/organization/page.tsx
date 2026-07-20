@@ -118,9 +118,10 @@ export default async function OrganizationSettingsPage() {
     ? null
     : (await resolveTwilioConfig(orgId))?.phoneNumber ?? null
 
-  // Platform-managed email for non-legacy (builder) orgs — keyless: the
-  // sending address is derived from the org slug, no provisioning step. Legacy
-  // keeps its env/Graph identity + the bring-your-own Resend card.
+  // Platform-managed email for non-legacy (builder) orgs — keyless: one shared
+  // platform address (info@{PLATFORM_EMAIL_DOMAIN}) serves every builder org,
+  // personalized by the From display name; no provisioning step. Legacy keeps
+  // its env/Graph identity + the bring-your-own Resend card.
   //
   // The card must show the EFFECTIVE sender, matching resolveResendConfig's
   // precedence: a non-legacy org's own complete Resend identity (an advanced

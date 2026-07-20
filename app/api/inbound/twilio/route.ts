@@ -170,6 +170,18 @@ async function scopeMatchToOrg(
       .maybeSingle()
     if (!data || data.org_id !== orgId) return unlinked
   }
+  if (match.profile_id) {
+    // A profile belongs to an org through organization_members — a standalone
+    // profile match can otherwise carry a same-number person from another
+    // tenant. Drop attribution unless they're a member here.
+    const { data } = await admin
+      .from("organization_members")
+      .select("profile_id")
+      .eq("org_id", orgId)
+      .eq("profile_id", match.profile_id)
+      .maybeSingle()
+    if (!data) return unlinked
+  }
   return match
 }
 
