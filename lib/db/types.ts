@@ -3923,6 +3923,10 @@ export type Database = {
         Returns: string
       }
       schedule_item_in_my_org: { Args: { p_item: string }; Returns: boolean }
+      seed_demo_project: {
+        Args: { p_org: string; p_owner: string }
+        Returns: string
+      }
       set_org_member_role: {
         Args: { p_org: string; p_profile: string; p_role: string }
         Returns: undefined
