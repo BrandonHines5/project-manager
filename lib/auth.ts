@@ -1,6 +1,7 @@
 import { cache } from "react"
 import { redirect } from "next/navigation"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { isLegacyOrgMember } from "@/lib/org"
 import type { Tables, Enums } from "@/lib/db/types"
 
 export type SessionProfile = Tables<"profiles">
@@ -41,17 +42,24 @@ export const getSessionProfile = cache(async (): Promise<SessionProfile | null> 
     .eq("id", user.id)
     .maybeSingle()
   if (existing) {
-    // Staff must authenticate via Microsoft so the directory governs their
-    // access — is_active/role are enforced on the OAuth callback
-    // (app/auth/callback/route.ts), and the login form bounces staff
+    // HINES staff must authenticate via Microsoft so the directory governs
+    // their access — is_active/role are enforced on the OAuth callback
+    // (app/auth/callback/route.ts), and the login form bounces their
     // password sign-ins client-side. But a staff account that has a
     // password (invite/reset via /team) can hit the Supabase auth endpoint
     // directly with signInWithPassword and skip both gates — including
     // after being deactivated in the directory. Kill such sessions here:
-    // a staff profile on a password session is never valid while SSO is
-    // configured.
+    // a Hines-staff profile on a password session is never valid while SSO
+    // is configured.
     //
-    // The check must use the session's `amr` claim, NOT
+    // This must be scoped to LEGACY-org (Hines) staff, exactly like the login
+    // form's bounce: a staff OWNER of another org (a self-serve trial builder)
+    // has no Microsoft account and MUST use the password form, so signing every
+    // staff password session out here bounced trial owners straight back to
+    // /login after a successful sign-in ("nothing happened"). Only Hines staff
+    // are forced onto SSO.
+    //
+    // The auth-method check must use the session's `amr` claim, NOT
     // user.app_metadata.provider: `provider` records how the ACCOUNT was
     // created (plus linked identities), not how THIS session authenticated.
     // A staff account originally provisioned by email invite keeps
@@ -59,7 +67,10 @@ export const getSessionProfile = cache(async (): Promise<SessionProfile | null> 
     // after a successful Microsoft sign-in.
     if (SSO_ENABLED && existing.role === "staff") {
       const methods = await sessionAuthMethods(supabase)
-      if (methods.includes("password")) {
+      if (
+        methods.includes("password") &&
+        (await isLegacyOrgMember(supabase, user.id))
+      ) {
         await supabase.auth.signOut()
         return null
       }

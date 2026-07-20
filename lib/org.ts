@@ -119,6 +119,44 @@ export async function isLegacyOrgOwner(
 }
 
 /**
+ * Whether the given user is a MEMBER (any role) of the legacy (Hines) org.
+ *
+ * This is the gate that decides who is forced onto Microsoft SSO. Hines staff
+ * must authenticate through Entra so the directory governs their access — but a
+ * staff OWNER of another org (a self-serve trial builder) has no Microsoft
+ * account and MUST use the email/password form. Both the login form's
+ * client-side bounce (app/login/login-form.tsx) and getSessionProfile's
+ * server-side password-session kill (lib/auth.ts) share this single check so
+ * they can't drift apart — an earlier drift (only the login form was scoped to
+ * legacy staff) left trial owners unable to log in at all.
+ *
+ * Read through the caller's own RLS session: org_members_member_read only
+ * exposes rows of orgs the caller belongs to, so a legacy member sees their own
+ * legacy row (→ true) while a non-legacy user sees nothing (→ false). A read
+ * error resolves to false (fail open, matching the login form) so a transient
+ * glitch never locks a legitimate non-Hines password user out; the login form
+ * and the OAuth callback's directory check remain the primary gates.
+ */
+export async function isLegacyOrgMember(
+  supabase: SupabaseClient<Database>,
+  profileId: string
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("organization_members")
+    .select("org_id")
+    .eq("org_id", LEGACY_ORG_ID)
+    .eq("profile_id", profileId)
+    .maybeSingle()
+  // Fail open (see doc comment) but never silently: a read failure here means
+  // a Hines-staff password session that should be forced onto SSO slips
+  // through, so log it for observability. The access decision is unchanged.
+  if (error) {
+    console.warn("[org] isLegacyOrgMember read failed, failing open:", error.message)
+  }
+  return data != null
+}
+
+/**
  * Whether the caller's ACTIVE org is the legacy (Hines) org. This is the gate
  * for Hines-only integrations that are wired to global env creds pointing at
  * Hines' OWN external systems — the CRM ("the dashboard" status source), the
