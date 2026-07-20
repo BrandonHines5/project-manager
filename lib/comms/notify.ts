@@ -105,12 +105,17 @@ export async function notifyStaffOfInbound(opts: {
       .select("id")
       .eq("role", "staff")
     let recipientIds = (staff ?? []).map((p) => p.id)
-    // Multi-tenant scoping: restrict to the org's members when we know it.
-    if (opts.orgId) {
+    // Multi-tenant scoping: restrict to the org's members when an org is given.
+    // Distinguish "not provided" (undefined/null → legacy channels notify all
+    // staff) from an explicit empty/blank string (a caller bug) — the latter
+    // fails CLOSED to nobody rather than silently notifying every tenant.
+    if (opts.orgId !== undefined && opts.orgId !== null) {
+      const orgId = opts.orgId.trim()
+      if (!orgId) return
       const { data: members } = await admin
         .from("organization_members")
         .select("profile_id")
-        .eq("org_id", opts.orgId)
+        .eq("org_id", orgId)
       const memberIds = new Set((members ?? []).map((m) => m.profile_id))
       recipientIds = recipientIds.filter((id) => memberIds.has(id))
     }
