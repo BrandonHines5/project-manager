@@ -89,6 +89,12 @@ export async function notifyStaffOfInbound(opts: {
   preview: string
   projectId: string | null
   projectName?: string | null
+  /**
+   * When set, only staff who are members of this org are notified — so a
+   * builder's inbound text never lights up another tenant's bell. Omit (or
+   * null) for the legacy single-tenant channels, which notify all staff.
+   */
+  orgId?: string | null
 }): Promise<void> {
   try {
     const admin = createSupabaseAdminClient()
@@ -98,7 +104,21 @@ export async function notifyStaffOfInbound(opts: {
       .from("profiles")
       .select("id")
       .eq("role", "staff")
-    const recipientIds = (staff ?? []).map((p) => p.id)
+    let recipientIds = (staff ?? []).map((p) => p.id)
+    // Multi-tenant scoping: restrict to the org's members when an org is given.
+    // Distinguish "not provided" (undefined/null → legacy channels notify all
+    // staff) from an explicit empty/blank string (a caller bug) — the latter
+    // fails CLOSED to nobody rather than silently notifying every tenant.
+    if (opts.orgId !== undefined && opts.orgId !== null) {
+      const orgId = opts.orgId.trim()
+      if (!orgId) return
+      const { data: members } = await admin
+        .from("organization_members")
+        .select("profile_id")
+        .eq("org_id", orgId)
+      const memberIds = new Set((members ?? []).map((m) => m.profile_id))
+      recipientIds = recipientIds.filter((id) => memberIds.has(id))
+    }
     if (!recipientIds.length) return
 
     const kindLabel =

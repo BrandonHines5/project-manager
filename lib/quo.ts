@@ -2,6 +2,7 @@ import "server-only"
 import { logCommunication, type CommLogContext } from "@/lib/comms/log"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { getOrgIntegration, resolveOrgForProfile } from "@/lib/integrations/org"
+import { resolveTwilioConfig, sendTwilioSms } from "@/lib/twilio"
 import { LEGACY_ORG_ID } from "@/lib/org"
 
 /** org_integrations provider slug for Quo/OpenPhone. */
@@ -102,15 +103,15 @@ export async function sendQuoSms(opts: {
   // Communications feed. Omitted → not logged.
   log?: CommLogContext
 }): Promise<{ sent: boolean; reason?: string; providerId?: string }> {
-  // Resolve the sending org, then its Quo credentials.
+  // Resolve the sending org, then dispatch to its SMS provider.
   const senderId = opts.senderProfileId ?? opts.log?.sent_by ?? null
   let orgId = opts.orgId ?? opts.log?.org_id ?? null
   if (!orgId && senderId) {
     const resolved = await resolveOrgForProfile(senderId)
-    // A membership-lookup FAILURE must fail closed like the decrypt path — a
-    // transient error must never let a non-legacy staffer's text bill Hines'
-    // shared Quo account. A genuine no-membership stays the single-tenant
-    // bridge (null → legacy env fallback in resolveQuoConfig).
+    // A membership-lookup FAILURE must fail closed — a transient error must
+    // never let a non-legacy staffer's text bill Hines' shared account. A
+    // genuine no-membership stays the single-tenant bridge (null → legacy env
+    // fallback in resolveQuoConfig; Twilio has no such fallback).
     if (resolved.failed) {
       return {
         sent: false,
@@ -119,10 +120,57 @@ export async function sendQuoSms(opts: {
     }
     orgId = resolved.orgId
   }
+
+  const to = normalizeE164(opts.to)
+  if (!to) {
+    return { sent: false, reason: `Invalid recipient phone number: ${opts.to}` }
+  }
+  const content = opts.content.trim()
+  if (!content) {
+    return { sent: false, reason: "Empty message content" }
+  }
+  if (content.length > 1600) {
+    return { sent: false, reason: "Message exceeds 1600-character limit" }
+  }
+
+  // Provider dispatch: a platform-managed Twilio number (builder orgs) wins
+  // when present; otherwise the org's own OpenPhone/Quo account — the legacy
+  // Hines path, unchanged (per-user numbers, shared number, env fallback).
+  const twilio = await resolveTwilioConfig(orgId)
+  if (twilio) {
+    // Honor an explicit `from` override (the documented contract) with the
+    // org's provisioned number as the fallback sender.
+    const twilioFrom = opts.from ?? twilio.phoneNumber
+    const result = await sendTwilioSms({ to, from: twilioFrom, content })
+    if (result.sent && opts.log) {
+      await logCommunication({
+        channel: "sms",
+        direction: "outbound",
+        // Fall back to the org we resolved (a raw-number send has no
+        // project/company to derive org from), so the row lands on the right
+        // tenant instead of the communications bridge default.
+        org_id: opts.log.org_id ?? orgId ?? undefined,
+        project_id: opts.log.project_id,
+        company_id: opts.log.company_id,
+        profile_id: opts.log.profile_id,
+        sent_by: opts.log.sent_by,
+        from_address: twilioFrom,
+        to_address: to,
+        counterparty_name: opts.log.counterparty_name,
+        body: content,
+        source: "twilio",
+        source_kind: opts.log.kind,
+        provider_id: result.providerId ?? null,
+      })
+    }
+    return result
+  }
+
+  // --- OpenPhone / Quo path (legacy Hines + any bring-your-own-key org) -----
   const cfg = await resolveQuoConfig(orgId)
   const key = cfg.apiKey
   if (!key) {
-    return { sent: false, reason: "Quo is not connected for this organization" }
+    return { sent: false, reason: "SMS is not connected for this organization" }
   }
 
   // Resolve the sending number: explicit override → the acting staffer's own
@@ -138,18 +186,6 @@ export async function sendQuoSms(opts: {
       reason:
         "No sending number — the org has no shared Quo number and the sender has none assigned",
     }
-  }
-
-  const to = normalizeE164(opts.to)
-  if (!to) {
-    return { sent: false, reason: `Invalid recipient phone number: ${opts.to}` }
-  }
-  const content = opts.content.trim()
-  if (!content) {
-    return { sent: false, reason: "Empty message content" }
-  }
-  if (content.length > 1600) {
-    return { sent: false, reason: "Message exceeds 1600-character limit" }
   }
 
   try {

@@ -42,12 +42,14 @@ export type CommLogRow = {
   subject?: string | null
   body?: string | null
   /**
-   * Provider-id namespace: 'quo' for SMS/calls (OpenPhone ids — used by both
+   * Provider-id namespace: 'quo' for OpenPhone SMS/calls (ids used by both
    * send-time logging and the webhook so the unique (source, provider_id)
-   * index dedups the two), 'app' for app-sent email (Resend outbound ids),
-   * 'resend_inbound' for inbound email, 'outlook' for Graph messages.
+   * index dedups the two), 'twilio' for platform-managed SMS (Twilio Message
+   * SIDs, same dedup story with its own webhook), 'app' for app-sent email
+   * (Resend outbound ids), 'resend_inbound' for inbound email, 'outlook' for
+   * Graph messages.
    */
-  source: "app" | "quo" | "resend_inbound" | "outlook"
+  source: "app" | "quo" | "twilio" | "resend_inbound" | "outlook"
   source_kind?: string | null
   provider_id?: string | null
   call_duration_seconds?: number | null

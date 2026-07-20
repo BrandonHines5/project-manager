@@ -3,6 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { getActiveOrgId, LEGACY_ORG_ID } from "@/lib/org"
 import { getOrgIntegration } from "@/lib/integrations/org"
+import { twilioConfigured, resolveTwilioConfig } from "@/lib/twilio"
 import { parseBrandConfig } from "@/lib/brand"
 import { OrganizationSettingsClient } from "./organization-settings-client"
 import {
@@ -107,6 +108,15 @@ export default async function OrganizationSettingsPage() {
     !!process.env.RESEND_API_KEY &&
     !!process.env.RESEND_FROM_EMAIL
 
+  // Platform-managed Twilio texting for non-legacy (builder) orgs — Hines
+  // keeps the OpenPhone/Quo card above. resolveTwilioConfig returns null when
+  // the platform account isn't configured or the org has no number yet.
+  const isLegacy = orgId === LEGACY_ORG_ID
+  const twilioIsConfigured = twilioConfigured()
+  const twilioNumber = isLegacy
+    ? null
+    : (await resolveTwilioConfig(orgId))?.phoneNumber ?? null
+
   const config = parseBrandConfig(org.settings, org.name)
   const members: OrgMemberRow[] = (memberRows ?? []).map((m) => ({
     profile_id: m.profile_id,
@@ -147,6 +157,9 @@ export default async function OrganizationSettingsPage() {
         />
         <OrganizationIntegrationsClient
           orgId={org.id}
+          isLegacy={isLegacy}
+          twilioConfigured={twilioIsConfigured}
+          twilioNumber={twilioNumber}
           quoConnected={quoConnected}
           quoSharedFrom={quoSharedFrom}
           quoError={quoError}

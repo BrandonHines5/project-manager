@@ -3,10 +3,11 @@
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { Plug } from "lucide-react"
+import { Plug, MessageSquare } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { saveQuoIntegration, saveResendIntegration } from "@/app/actions/org"
+import { provisionTwilioNumber, releaseTwilioNumber } from "@/app/actions/twilio"
 
 /**
  * Org integrations editor (B4). Manages Quo/OpenPhone (texts & calls) and
@@ -17,6 +18,9 @@ import { saveQuoIntegration, saveResendIntegration } from "@/app/actions/org"
  */
 export function OrganizationIntegrationsClient({
   orgId,
+  isLegacy,
+  twilioConfigured,
+  twilioNumber,
   quoConnected,
   quoSharedFrom,
   quoError,
@@ -28,6 +32,15 @@ export function OrganizationIntegrationsClient({
   resendEnvFallback,
 }: {
   orgId: string
+  /**
+   * The legacy (Hines) org keeps the bring-your-own OpenPhone/Quo card; every
+   * other org gets platform-managed Twilio texting (no keys) instead.
+   */
+  isLegacy: boolean
+  /** Whether the platform Twilio account is wired up (env creds present). */
+  twilioConfigured: boolean
+  /** The org's provisioned Twilio number, or null when it has none yet. */
+  twilioNumber: string | null
   quoConnected: boolean
   quoSharedFrom: string
   quoError: boolean
@@ -47,19 +60,27 @@ export function OrganizationIntegrationsClient({
         <div>
           <div className="text-sm font-medium">Integrations</div>
           <div className="text-xs text-muted">
-            Connect this organization&rsquo;s own accounts. Keys are stored
+            Connect this organization&rsquo;s accounts. Keys are stored
             encrypted and never shown again after saving.
           </div>
         </div>
       </div>
 
-      <QuoIntegrationCard
-        orgId={orgId}
-        connected={quoConnected}
-        sharedFrom={quoSharedFrom}
-        error={quoError}
-        envFallback={quoEnvFallback}
-      />
+      {isLegacy ? (
+        <QuoIntegrationCard
+          orgId={orgId}
+          connected={quoConnected}
+          sharedFrom={quoSharedFrom}
+          error={quoError}
+          envFallback={quoEnvFallback}
+        />
+      ) : (
+        <TwilioSmsCard
+          orgId={orgId}
+          configured={twilioConfigured}
+          number={twilioNumber}
+        />
+      )}
       <ResendIntegrationCard
         orgId={orgId}
         connected={resendConnected}
@@ -69,6 +90,110 @@ export function OrganizationIntegrationsClient({
         envFallback={resendEnvFallback}
       />
     </section>
+  )
+}
+
+/**
+ * Platform-managed text messaging (Twilio) for builder orgs — no API key. The
+ * org provisions a dedicated number in one click; releasing it stops billing.
+ */
+function TwilioSmsCard({
+  orgId,
+  configured,
+  number,
+}: {
+  orgId: string
+  configured: boolean
+  number: string | null
+}) {
+  const router = useRouter()
+  const [pending, startTransition] = useTransition()
+  const [areaCode, setAreaCode] = useState("")
+
+  function provision() {
+    startTransition(async () => {
+      const result = await provisionTwilioNumber({ orgId, areaCode: areaCode.trim() })
+      if (result.ok) {
+        toast.success(`Your texting number is ${result.phoneNumber}`)
+        router.refresh()
+      } else {
+        toast.error(result.error ?? "Couldn't set up text messaging.")
+      }
+    })
+  }
+
+  function release() {
+    startTransition(async () => {
+      const result = await releaseTwilioNumber({ orgId })
+      if (result.ok) {
+        toast.success("Texting number released")
+        router.refresh()
+      } else {
+        toast.error(result.error ?? "Couldn't release the number.")
+      }
+    })
+  }
+
+  return (
+    <div className="rounded-md border border-border p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <MessageSquare className="h-4 w-4 text-muted" />
+          Text messaging
+        </div>
+        <span
+          className={
+            number ? "text-xs text-brand-600" : "text-xs text-muted"
+          }
+        >
+          {number ? "Active" : "Not set up"}
+        </span>
+      </div>
+
+      {!configured ? (
+        <p className="text-xs text-muted">
+          Text messaging isn&rsquo;t available yet. It&rsquo;ll appear here once
+          it&rsquo;s switched on for your account.
+        </p>
+      ) : number ? (
+        <div className="space-y-3">
+          <p className="text-sm">
+            Your texting number is{" "}
+            <span className="font-medium">{number}</span>. Texts you send to
+            subs and clients go out from here, and replies land in your
+            Communications feed.
+          </p>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={release}
+            disabled={pending}
+          >
+            {pending ? "Releasing…" : "Release number"}
+          </Button>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <p className="text-xs text-muted">
+            Get a dedicated phone number for texting subs and clients. No setup
+            or accounts to create — we handle it. Optionally pick an area code.
+          </p>
+          <div className="flex items-center gap-2">
+            <Input
+              value={areaCode}
+              onChange={(e) => setAreaCode(e.target.value.replace(/\D/g, "").slice(0, 3))}
+              placeholder="Area code (optional)"
+              inputMode="numeric"
+              maxLength={3}
+              className="max-w-[180px]"
+            />
+            <Button size="sm" onClick={provision} disabled={pending}>
+              {pending ? "Setting up…" : "Get a texting number"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
