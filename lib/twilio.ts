@@ -45,7 +45,8 @@ type TwilioResult = {
  */
 async function twilioRequest(
   path: string,
-  params?: Record<string, string>
+  params?: Record<string, string>,
+  timeoutMs = 15_000
 ): Promise<TwilioResult> {
   const auth = twilioAuthHeader()
   const sid = process.env.TWILIO_ACCOUNT_SID
@@ -60,9 +61,9 @@ async function twilioRequest(
         ...(params ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
       },
       body: params ? new URLSearchParams(params).toString() : undefined,
-      // Number provisioning can be slower than a send; keep a generous but
-      // bounded timeout so a stuck upstream can't hold a request open.
-      signal: AbortSignal.timeout(15_000),
+      // Sends use a tight 5s cap (a slow send shouldn't hold an action open,
+      // matching the Quo path); provisioning passes a longer bound.
+      signal: AbortSignal.timeout(timeoutMs),
     })
     let json: Record<string, unknown> | null = null
     try {
@@ -105,11 +106,11 @@ export async function sendTwilioSms(opts: {
   from: string
   content: string
 }): Promise<{ sent: boolean; reason?: string; providerId?: string }> {
-  const result = await twilioRequest("Messages.json", {
-    To: opts.to,
-    From: opts.from,
-    Body: opts.content,
-  })
+  const result = await twilioRequest(
+    "Messages.json",
+    { To: opts.to, From: opts.from, Body: opts.content },
+    5_000
+  )
   if (!result.ok) {
     console.error("[twilio] send failed:", result.error)
     return { sent: false, reason: result.error ?? "Twilio send failed" }
@@ -173,7 +174,15 @@ export async function buyTwilioNumber(opts: {
     typeof result.json.phone_number === "string"
       ? result.json.phone_number
       : opts.phoneNumber
-  if (!sid) return { ok: false, error: "Twilio didn't return a number id" }
+  if (!sid) {
+    // Defensive: Twilio always returns a sid on a successful buy, but if it
+    // ever doesn't we've bought a number we can't release programmatically —
+    // surface the number so it can be cleaned up manually before it bills.
+    console.error(
+      `[twilio] bought ${number} but response had no sid — release it manually to stop billing`
+    )
+    return { ok: false, error: "Twilio didn't return a number id" }
+  }
   return { ok: true, phoneNumber: number, sid }
 }
 

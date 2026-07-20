@@ -138,7 +138,10 @@ export async function sendQuoSms(opts: {
   // Hines path, unchanged (per-user numbers, shared number, env fallback).
   const twilio = await resolveTwilioConfig(orgId)
   if (twilio) {
-    const result = await sendTwilioSms({ to, from: twilio.phoneNumber, content })
+    // Honor an explicit `from` override (the documented contract) with the
+    // org's provisioned number as the fallback sender.
+    const twilioFrom = opts.from ?? twilio.phoneNumber
+    const result = await sendTwilioSms({ to, from: twilioFrom, content })
     if (result.sent && opts.log) {
       await logCommunication({
         channel: "sms",
@@ -151,7 +154,7 @@ export async function sendQuoSms(opts: {
         company_id: opts.log.company_id,
         profile_id: opts.log.profile_id,
         sent_by: opts.log.sent_by,
-        from_address: twilio.phoneNumber,
+        from_address: twilioFrom,
         to_address: to,
         counterparty_name: opts.log.counterparty_name,
         body: content,

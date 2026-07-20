@@ -3,7 +3,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { appUrl } from "@/lib/email"
 import { verifyTwilioSignature } from "@/lib/comms/twilio-verify"
 import { orgForTwilioNumber } from "@/lib/twilio"
-import { matchCounterparty } from "@/lib/comms/match"
+import { matchCounterparty, type MatchResult } from "@/lib/comms/match"
 import { notifyStaffOfInbound } from "@/lib/comms/notify"
 
 export const runtime = "nodejs"
@@ -69,7 +69,23 @@ export async function POST(req: NextRequest) {
 
   try {
     const orgId = await orgForTwilioNumber(admin, to)
-    const match = await matchCounterparty(admin, { phone: from })
+    // Fail closed: a provisioned Twilio number is always claimed by exactly one
+    // org. If we can't resolve it, DROP the message rather than writing it under
+    // the communications bridge default (which would leak into Hines' feed).
+    if (!orgId) {
+      console.warn(`[twilio webhook] no org owns ${to}; dropping message`)
+      return twiml()
+    }
+
+    // matchCounterparty is global (a sub's phone can appear in several orgs'
+    // directories), so scope the result to THIS number's org — cross-org
+    // project/company/profile links are dropped, keeping the message logged
+    // under the right tenant, just unattributed.
+    const match = await scopeMatchToOrg(
+      admin,
+      await matchCounterparty(admin, { phone: from }),
+      orgId
+    )
     const numMedia = parseInt(params.NumMedia || "0", 10) || 0
     const body = params.Body?.trim() || (numMedia > 0 ? "[media]" : "")
 
@@ -77,9 +93,7 @@ export async function POST(req: NextRequest) {
       {
         channel: "sms",
         direction: "inbound",
-        // Stamp the org that owns this Twilio number; a number is always
-        // claimed by exactly one org, so this normally resolves.
-        ...(orgId ? { org_id: orgId } : {}),
+        org_id: orgId,
         // Like the Quo path: never queued for manual placement — auto-filed to
         // a job only when the matcher is confident, otherwise global + searchable.
         status: "logged",
@@ -109,6 +123,7 @@ export async function POST(req: NextRequest) {
       preview: body,
       projectId: match.project_id,
       projectName: await projectName(admin, match.project_id),
+      orgId,
     })
     return twiml()
   } catch (e) {
@@ -119,6 +134,43 @@ export async function POST(req: NextRequest) {
     )
     return twiml()
   }
+}
+
+/**
+ * Discards attribution that resolved into a different org than the one that
+ * owns this Twilio number. Verifies the matched project and company are
+ * in-org; if either isn't, drops project/company/profile (keeping the display
+ * name) so a cross-tenant contact can never file a message onto another org's
+ * job. No-op when the match had no project/company to begin with.
+ */
+async function scopeMatchToOrg(
+  admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
+  match: MatchResult,
+  orgId: string
+): Promise<MatchResult> {
+  const unlinked: MatchResult = {
+    ...match,
+    project_id: null,
+    company_id: null,
+    profile_id: null,
+  }
+  if (match.project_id) {
+    const { data } = await admin
+      .from("projects")
+      .select("org_id")
+      .eq("id", match.project_id)
+      .maybeSingle()
+    if (!data || data.org_id !== orgId) return unlinked
+  }
+  if (match.company_id) {
+    const { data } = await admin
+      .from("companies")
+      .select("org_id")
+      .eq("id", match.company_id)
+      .maybeSingle()
+    if (!data || data.org_id !== orgId) return unlinked
+  }
+  return match
 }
 
 async function projectName(

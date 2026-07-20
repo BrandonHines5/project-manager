@@ -6,6 +6,7 @@ import { requireSession } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { appUrl } from "@/lib/email"
+import { assertActiveOrgWritable } from "@/lib/sandbox"
 import { upsertOrgIntegration } from "@/lib/integrations/org"
 import {
   twilioConfigured,
@@ -79,6 +80,22 @@ export async function provisionTwilioNumber(
     }
   }
 
+  // Block a lapsed-sandbox org from buying a (billable) number — provisioning
+  // is a cost-incurring mutation, and only billing checkout is exempt from the
+  // write guard. Checks the caller's active org (which is the org being set up
+  // here — the settings page always operates on the active org).
+  try {
+    await assertActiveOrgWritable(supabase, profile.id)
+  } catch (e) {
+    return {
+      ok: false,
+      error:
+        e instanceof Error
+          ? e.message
+          : "This organization can't make changes right now.",
+    }
+  }
+
   const admin = createSupabaseAdminClient()
   if (!admin) return { ok: false, error: "Server storage is not configured." }
 
@@ -101,6 +118,17 @@ export async function provisionTwilioNumber(
     smsUrl: appUrl("/api/inbound/twilio"),
   })
   if (!bought.ok) return { ok: false, error: bought.error }
+
+  // TOCTOU guard: a concurrent provision (double-submit, two admins) may have
+  // stored a number while we were buying. Don't keep a second — release ours
+  // and return the one that landed, so no paid number is left unlinked. (The
+  // strict simultaneous case would need a DB advisory lock; this closes the
+  // realistic double-submit / retry window without a migration.)
+  const raced = await resolveTwilioConfig(orgId)
+  if (raced) {
+    await releaseTwilioNumberResource(bought.sid)
+    return { ok: true, phoneNumber: raced.phoneNumber }
+  }
 
   try {
     await upsertOrgIntegration(admin, orgId, TWILIO_PROVIDER, {
@@ -149,7 +177,18 @@ export async function releaseTwilioNumber(
 
   const current = await resolveTwilioConfig(orgId)
   if (current?.phoneNumberSid) {
-    await releaseTwilioNumberResource(current.phoneNumberSid)
+    const released = await releaseTwilioNumberResource(current.phoneNumberSid)
+    if (!released.ok) {
+      // The number is still active and billing — keep the config so it keeps
+      // routing and the admin can retry, rather than clearing the row and
+      // orphaning a live number we can no longer see.
+      return {
+        ok: false,
+        error:
+          released.error ??
+          "Couldn't release the number right now. Please try again.",
+      }
+    }
   }
 
   try {
