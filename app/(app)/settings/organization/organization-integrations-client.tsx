@@ -21,8 +21,10 @@ export function OrganizationIntegrationsClient({
   isLegacy,
   twilioConfigured,
   twilioNumber,
-  platformEmailConfigured,
+  platformEmailActive,
   platformEmailAddress,
+  platformEmailIsCustom,
+  platformEmailError,
   quoConnected,
   quoSharedFrom,
   quoError,
@@ -43,10 +45,14 @@ export function OrganizationIntegrationsClient({
   twilioConfigured: boolean
   /** The org's provisioned Twilio number, or null when it has none yet. */
   twilioNumber: string | null
-  /** Whether the platform email account (Resend + shared domain) is wired up. */
-  platformEmailConfigured: boolean
-  /** The org's keyless platform sending address, or null (legacy / unconfigured). */
+  /** Whether outbound email is actually working for this org (effective identity). */
+  platformEmailActive: boolean
+  /** The EFFECTIVE sending address — a custom Resend override wins over the platform one. */
   platformEmailAddress: string | null
+  /** True when the address is the org's own verified domain (a stored Resend override). */
+  platformEmailIsCustom: boolean
+  /** A stored Resend key that couldn't be decrypted — email is off (fail closed). */
+  platformEmailError: boolean
   quoConnected: boolean
   quoSharedFrom: string
   quoError: boolean
@@ -98,8 +104,10 @@ export function OrganizationIntegrationsClient({
         />
       ) : (
         <PlatformEmailCard
-          configured={platformEmailConfigured}
+          active={platformEmailActive}
           address={platformEmailAddress}
+          isCustom={platformEmailIsCustom}
+          error={platformEmailError}
         />
       )}
     </section>
@@ -109,14 +117,21 @@ export function OrganizationIntegrationsClient({
 /**
  * Platform-managed email for builder orgs — no API key, no DNS. The sending
  * address is derived from the org slug on the shared verified domain, so email
- * works out of the box; this card is purely informational.
+ * works out of the box; this card is informational. It shows the EFFECTIVE
+ * sender: a stored custom Resend identity (an advanced override) is surfaced
+ * distinctly from the platform-managed address so the card never claims a
+ * different address than outbound mail actually uses.
  */
 function PlatformEmailCard({
-  configured,
+  active,
   address,
+  isCustom,
+  error,
 }: {
-  configured: boolean
+  active: boolean
   address: string | null
+  isCustom: boolean
+  error: boolean
 }) {
   return (
     <div className="rounded-md border border-border p-4 space-y-3">
@@ -127,21 +142,30 @@ function PlatformEmailCard({
         </div>
         <span
           className={
-            configured && address
-              ? "text-xs text-brand-600"
-              : "text-xs text-muted"
+            error
+              ? "text-xs text-danger"
+              : active
+                ? "text-xs text-brand-600"
+                : "text-xs text-muted"
           }
         >
-          {configured && address ? "Active" : "Not set up"}
+          {error ? "Connection error" : active ? "Active" : "Not set up"}
         </span>
       </div>
 
-      {configured && address ? (
+      {error ? (
+        <p className="text-xs text-danger">
+          Your stored email key couldn&rsquo;t be read, so email is paused.
+          Contact support to reset it.
+        </p>
+      ) : active && address ? (
         <p className="text-sm">
-          Your emails send from{" "}
-          <span className="font-medium">{address}</span>. Bid, PO, insurance,
-          and client emails go out from here, and replies land in your
-          Communications feed — nothing to set up.
+          Your emails send from <span className="font-medium">{address}</span>.
+          Bid, PO, insurance, and client emails go out from here, and replies
+          land in your Communications feed
+          {isCustom
+            ? " — sending from your own verified domain."
+            : " — nothing to set up."}
         </p>
       ) : (
         <p className="text-xs text-muted">
