@@ -149,7 +149,7 @@ export async function POST(req: Request) {
       },
       { onConflict: "source,provider_id", ignoreDuplicates: true }
     )
-    if (error) throw new Error(error.message)
+    if (error) throw new RetryableDbError(error.message)
 
     await notifyStaffOfInbound({
       kind: "email",
@@ -171,12 +171,12 @@ export async function POST(req: Request) {
     )
     return NextResponse.json({ ok: true })
   } catch (e) {
-    // A transient scope-lookup failure is retryable — return 503 so Resend
-    // redelivers (the upsert dedups on (source, provider_id), so a retry is
-    // idempotent) rather than dropping/mis-attributing the reply.
-    if (e instanceof ScopeLookupError) {
-      console.error("[email-replies] scope lookup failed; requesting retry:", e.message)
-      return NextResponse.json({ ok: false, error: "scope lookup failed" }, { status: 503 })
+    // A transient DB failure (scope lookup or the write) is retryable — return
+    // 503 so Resend redelivers (the upsert dedups on (source, provider_id), so
+    // a retry is idempotent) rather than dropping/losing the reply.
+    if (e instanceof RetryableDbError) {
+      console.error("[email-replies] transient DB failure; requesting retry:", e.message)
+      return NextResponse.json({ ok: false, error: "database unavailable" }, { status: 503 })
     }
     console.error(
       "[email-replies] processing failed:",
@@ -255,9 +255,10 @@ async function resolveReplyOrg(
  * several orgs), so a mismatched project/company/profile is discarded, keeping
  * the reply logged under the right tenant but unlinked.
  */
-/** A transient scope-lookup DB failure — the route returns a retryable status
- *  for these rather than dropping attribution and 200-ing (no retry). */
-class ScopeLookupError extends Error {}
+/** A transient DB failure (scope lookup OR the communications write) — the
+ *  route returns a retryable 503 for these rather than dropping/losing the
+ *  reply and 200-ing (no retry). Genuine no-match / poison rows still 200. */
+class RetryableDbError extends Error {}
 
 async function scopeMatchToOrg(
   admin: AdminClient,
@@ -276,7 +277,7 @@ async function scopeMatchToOrg(
       .select("org_id")
       .eq("id", match.project_id)
       .maybeSingle()
-    if (error) throw new ScopeLookupError(error.message)
+    if (error) throw new RetryableDbError(error.message)
     if (!data || data.org_id !== orgId) return unlinked
   }
   if (match.company_id) {
@@ -285,7 +286,7 @@ async function scopeMatchToOrg(
       .select("org_id")
       .eq("id", match.company_id)
       .maybeSingle()
-    if (error) throw new ScopeLookupError(error.message)
+    if (error) throw new RetryableDbError(error.message)
     if (!data || data.org_id !== orgId) return unlinked
   }
   if (match.profile_id) {
@@ -299,7 +300,7 @@ async function scopeMatchToOrg(
       .eq("org_id", orgId)
       .eq("profile_id", match.profile_id)
       .maybeSingle()
-    if (error) throw new ScopeLookupError(error.message)
+    if (error) throw new RetryableDbError(error.message)
     if (!data) return unlinked
   }
   return match
