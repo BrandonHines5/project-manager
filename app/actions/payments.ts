@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
+import { assertActiveOrgWritable } from "@/lib/sandbox"
 import { sendDashboardWebhook } from "@/lib/dashboard"
 
 // Audit-log writes are no longer done here. Migration 0031 installed an
@@ -35,6 +36,10 @@ export type PaymentInputT = z.infer<typeof PaymentInput>
 export async function savePayment(input: PaymentInputT) {
   const profile = await requireStaff()
   const supabase = await createSupabaseServerClient()
+  // Block writes from a lapsed-sandbox org (payments aren't legacy-gated, so a
+  // frozen trial org's staff could otherwise still record one). No-op for
+  // Hines / any active subscriber.
+  await assertActiveOrgWritable(supabase, profile.id)
   const result = PaymentInput.safeParse(input)
   if (!result.success) {
     const first = result.error.issues[0]
@@ -92,7 +97,16 @@ export async function savePayment(input: PaymentInputT) {
       .single()
     if (error) throw new Error(error.message)
     if (row) {
-      await sendDashboardWebhook("payment.recorded", row)
+      // Gate the dashboard webhook on the PROJECT's org, not the actor's
+      // active org — a multi-org staffer could be recording a payment on a
+      // project outside their selected org, and this best-effort lookup must
+      // never fail the already-saved payment.
+      const { data: proj } = await supabase
+        .from("projects")
+        .select("org_id")
+        .eq("id", parsed.project_id)
+        .maybeSingle()
+      await sendDashboardWebhook("payment.recorded", row, proj?.org_id ?? null)
     }
   }
   revalidatePath(`/projects/${parsed.project_id}/pricing`)

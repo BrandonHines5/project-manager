@@ -10,6 +10,7 @@ import {
   type OrgMemberRow,
 } from "./organization-members-client"
 import { OrganizationIntegrationsClient } from "./organization-integrations-client"
+import { OrganizationBillingClient } from "./organization-billing-client"
 
 export const metadata = { title: "Organization — BuildFox" }
 export const dynamic = "force-dynamic"
@@ -32,7 +33,7 @@ export default async function OrganizationSettingsPage() {
         .maybeSingle(),
       supabase
         .from("organizations")
-        .select("id, name, settings")
+        .select("id, name, settings, stripe_customer_id, stripe_subscription_status")
         .eq("id", orgId)
         .maybeSingle(),
       // Whole-org roster (org_members_member_read); profile details ride the
@@ -156,6 +157,11 @@ export default async function OrganizationSettingsPage() {
           resendError={resendError}
           resendEnvFallback={resendEnvFallback}
         />
+        {org.stripe_customer_id && (
+          <OrganizationBillingClient
+            subscriptionStatus={org.stripe_subscription_status}
+          />
+        )}
       </div>
     </>
   )

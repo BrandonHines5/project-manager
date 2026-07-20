@@ -5,7 +5,7 @@ import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createCrmClient } from "@/lib/supabase/crm"
 import { requireStaff } from "@/lib/auth"
-import { getActiveOrgId } from "@/lib/org"
+import { getActiveOrgId, isLegacyActiveOrg } from "@/lib/org"
 import { sendDashboardWebhook } from "@/lib/dashboard"
 import type { TablesUpdate } from "@/lib/db/types"
 
@@ -205,7 +205,11 @@ function crmOwner(name: string | null, name2: string | null): string | null {
 export async function listCrmWarrantyProjects(): Promise<
   { ok: true; projects: CrmWarrantyProject[] } | { ok: false; error: string }
 > {
-  await requireStaff()
+  const me = await requireStaff()
+  const supabase = await createSupabaseServerClient()
+  if (!(await isLegacyActiveOrg(supabase, me.id))) {
+    return { ok: false, error: "Warranty CRM projects are only available for Hines Homes." }
+  }
   const crm = createCrmClient()
   if (!crm) {
     return {
@@ -225,8 +229,8 @@ export async function listCrmWarrantyProjects(): Promise<
   if (crmErr) return { ok: false, error: crmErr.message }
 
   // Exclude anything already tracked here. project_number is the shared key
-  // between the two systems, so dedupe on it.
-  const supabase = await createSupabaseServerClient()
+  // between the two systems, so dedupe on it. (supabase is already created
+  // above for the legacy-org gate.)
   const { data: existing, error: exErr } = await supabase
     .from("projects")
     .select("project_number")
@@ -273,6 +277,14 @@ export async function addWarrantyProjectFromCrm(
   const parsed = AddCrmProjectInput.safeParse(input)
   if (!parsed.success) return { ok: false, error: "Invalid project." }
 
+  const supabase = await createSupabaseServerClient()
+  if (!(await isLegacyActiveOrg(supabase, profile.id))) {
+    return {
+      ok: false,
+      error: "Warranty CRM projects are only available for Hines Homes.",
+    }
+  }
+
   const crm = createCrmClient()
   if (!crm) {
     return {
@@ -301,11 +313,10 @@ export async function addWarrantyProjectFromCrm(
   const name =
     p.street_address?.trim() || p.client_name?.trim() || p.project_number
 
-  const supabase = await createSupabaseServerClient()
   const { data, error } = await supabase
     .from("projects")
     .insert({
-      org_id: await getActiveOrgId(supabase),
+      org_id: await getActiveOrgId(supabase, profile.id),
       project_number: p.project_number,
       name,
       address: crmAddress(p.street_address, p.city),
@@ -335,7 +346,7 @@ export async function addWarrantyProjectFromCrm(
 
   // Best-effort: tell the dashboard a new project exists so it can mark the
   // CRM row pm_attached. Never blocks the adoption.
-  await sendDashboardWebhook("project.created", data)
+  await sendDashboardWebhook("project.created", data, data.org_id)
 
   revalidatePath("/warranty")
   revalidatePath("/projects")

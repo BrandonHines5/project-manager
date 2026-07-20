@@ -40,6 +40,7 @@
  */
 
 import { createHmac, timingSafeEqual } from "crypto"
+import { LEGACY_ORG_ID } from "@/lib/org"
 
 export type DashboardEvent =
   | "project.created"
@@ -102,8 +103,13 @@ export function dashboardProjectUrl(projectNumber: string): string | null {
  */
 export async function sendDashboardWebhook<T>(
   event: DashboardEvent,
-  data: T
+  data: T,
+  orgId: string | null
 ): Promise<{ sent: boolean; reason?: string }> {
+  // The dashboard is Hines' own site (global env creds). Only fire for the
+  // legacy (Hines) org — never ship another tenant's data to Hines' dashboard.
+  if (orgId !== LEGACY_ORG_ID) return { sent: false, reason: "non-legacy org" }
+
   // Docs state the integration is a no-op when ANY of the three vars is
   // unset. Be strict so a partially-configured preview deploy doesn't fire
   // surprise webhooks at the production dashboard.
@@ -262,9 +268,11 @@ function dashboardApiHeaders(): Record<string, string> | null {
  * integration env is incomplete OR the dashboard is unreachable — the New
  * Project UI keeps its "create blank" path as a fallback either way.
  */
-export async function listAvailableDashboardProjects(): Promise<
-  DashboardProject[]
-> {
+export async function listAvailableDashboardProjects(
+  orgId: string | null
+): Promise<DashboardProject[]> {
+  // Hines' dashboard — only the legacy org pulls its project list.
+  if (orgId !== LEGACY_ORG_ID) return []
   const base = dashboardBaseUrl()
   const headers = dashboardApiHeaders()
   if (!base || !headers) return []
@@ -299,8 +307,11 @@ export async function listAvailableDashboardProjects(): Promise<
  * field error so staff knows the pull didn't work).
  */
 export async function getDashboardProject(
-  projectNumber: string
+  projectNumber: string,
+  orgId: string | null
 ): Promise<DashboardProject | null> {
+  // Hines' dashboard — only the legacy org reads from it.
+  if (orgId !== LEGACY_ORG_ID) return null
   const base = dashboardBaseUrl()
   const headers = dashboardApiHeaders()
   if (!base || !headers) return null

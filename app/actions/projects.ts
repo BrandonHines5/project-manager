@@ -138,6 +138,9 @@ export async function createProject(
   }
   const input = parsed.data
 
+  const supabase = await createSupabaseServerClient()
+  const orgId = await getActiveOrgId(supabase, profile.id)
+
   // Server-side verify the "this came from the dashboard" claim. The form
   // sends dashboard_pulled=1 when staff used the picker, but we can't trust
   // that flag — a crafted request could set it for any project_number. So
@@ -150,7 +153,7 @@ export async function createProject(
   let remote: Awaited<ReturnType<typeof getDashboardProject>> = null
   let dashboardPulledAt: string | null = null
   if (input.dashboard_pulled === "1") {
-    remote = await getDashboardProject(input.project_number)
+    remote = await getDashboardProject(input.project_number, orgId)
     if (remote) dashboardPulledAt = new Date().toISOString()
   }
 
@@ -242,14 +245,13 @@ export async function createProject(
   // CRM has it, adopt its status and store the verbatim word (what the badge
   // shows). Falls back to the form value when the CRM isn't configured or has
   // no matching row. Same mapping as syncProjectsFromCrm.
-  const crmStatus = await getCrmProjectStatus(input.project_number)
+  const crmStatus = await getCrmProjectStatus(input.project_number, orgId)
   const crmSyncedAt = crmStatus ? new Date().toISOString() : null
 
-  const supabase = await createSupabaseServerClient()
   const { data, error } = await supabase
     .from("projects")
     .insert({
-      org_id: await getActiveOrgId(supabase),
+      org_id: orgId,
       project_number: input.project_number,
       name: input.name,
       address: emptyToNull(input.address),
@@ -310,7 +312,7 @@ export async function createProject(
 
   // Best-effort: tell the dashboard a new project exists. Webhook failures
   // never block the redirect — the dashboard can backfill from /projects/[id].
-  await sendDashboardWebhook("project.created", data)
+  await sendDashboardWebhook("project.created", data, orgId)
 
   revalidatePath("/projects")
   redirect(`/projects/${data.id}/schedule`)
@@ -345,13 +347,13 @@ export async function syncProjectFromDashboard(input: {
 
   const { data: project, error } = await supabase
     .from("projects")
-    .select("id, project_number")
+    .select("id, project_number, org_id")
     .eq("id", parsed.data.project_id)
     .maybeSingle()
   if (error) return { ok: false, error: error.message }
   if (!project) return { ok: false, error: "Project not found." }
 
-  const remote = await getDashboardProject(project.project_number)
+  const remote = await getDashboardProject(project.project_number, project.org_id)
   if (!remote) {
     return {
       ok: false,
@@ -1041,7 +1043,7 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
   // of truth for status, so it wins over both the caller's override_status and
   // the template's own status; when the CRM has no row (plain duplicate, or CRM
   // unconfigured) we fall back to those, preserving prior behavior.
-  const crmStatus = await getCrmProjectStatus(parsed.new_project_number)
+  const crmStatus = await getCrmProjectStatus(parsed.new_project_number, source.org_id)
   const insertProject = {
     // A copy stays in the source project's org (RLS already guarantees the
     // caller is a member — they couldn't read the source otherwise).
@@ -1815,7 +1817,7 @@ export async function duplicateProject(input: DuplicateProjectInputT) {
   }
 
   // 6. Fire the dashboard webhook for the new project (mirrors createProject).
-  await sendDashboardWebhook("project.created", newProject)
+  await sendDashboardWebhook("project.created", newProject, source.org_id)
 
   revalidatePath("/projects")
   return {

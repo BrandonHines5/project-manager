@@ -118,6 +118,29 @@ export async function isLegacyOrgOwner(
   return data?.member_role === "owner"
 }
 
+/**
+ * Whether the caller's ACTIVE org is the legacy (Hines) org. This is the gate
+ * for Hines-only integrations that are wired to global env creds pointing at
+ * Hines' OWN external systems — the CRM ("the dashboard" status source), the
+ * outbound dashboard webhook, and the SpecMagician item catalog. For any other
+ * org those must NOT fire: reading them pulls Hines' data into another tenant,
+ * and firing the webhook ships another tenant's data to Hines' dashboard. So a
+ * Hines-only entry point guards on this first. Fails CLOSED — a missing or
+ * unresolvable active org resolves to false, so an uncertain context never
+ * reaches Hines' infra. (Hines itself always resolves true, so its behavior is
+ * unchanged.)
+ */
+export async function isLegacyActiveOrg(
+  supabase: SupabaseClient<Database>,
+  profileId?: string
+): Promise<boolean> {
+  try {
+    return (await getActiveOrgId(supabase, profileId)) === LEGACY_ORG_ID
+  } catch {
+    return false
+  }
+}
+
 export type OrgMembership = {
   org_id: string
   name: string
