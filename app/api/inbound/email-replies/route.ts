@@ -171,6 +171,13 @@ export async function POST(req: Request) {
     )
     return NextResponse.json({ ok: true })
   } catch (e) {
+    // A transient scope-lookup failure is retryable — return 503 so Resend
+    // redelivers (the upsert dedups on (source, provider_id), so a retry is
+    // idempotent) rather than dropping/mis-attributing the reply.
+    if (e instanceof ScopeLookupError) {
+      console.error("[email-replies] scope lookup failed; requesting retry:", e.message)
+      return NextResponse.json({ ok: false, error: "scope lookup failed" }, { status: 503 })
+    }
     console.error(
       "[email-replies] processing failed:",
       e instanceof Error ? e.message : e
@@ -248,6 +255,10 @@ async function resolveReplyOrg(
  * several orgs), so a mismatched project/company/profile is discarded, keeping
  * the reply logged under the right tenant but unlinked.
  */
+/** A transient scope-lookup DB failure — the route returns a retryable status
+ *  for these rather than dropping attribution and 200-ing (no retry). */
+class ScopeLookupError extends Error {}
+
 async function scopeMatchToOrg(
   admin: AdminClient,
   match: MatchResult,
@@ -260,31 +271,35 @@ async function scopeMatchToOrg(
     profile_id: null,
   }
   if (match.project_id) {
-    const { data } = await admin
+    const { data, error } = await admin
       .from("projects")
       .select("org_id")
       .eq("id", match.project_id)
       .maybeSingle()
+    if (error) throw new ScopeLookupError(error.message)
     if (!data || data.org_id !== orgId) return unlinked
   }
   if (match.company_id) {
-    const { data } = await admin
+    const { data, error } = await admin
       .from("companies")
       .select("org_id")
       .eq("id", match.company_id)
       .maybeSingle()
+    if (error) throw new ScopeLookupError(error.message)
     if (!data || data.org_id !== orgId) return unlinked
   }
   if (match.profile_id) {
     // A profile belongs to an org through organization_members — a standalone
     // profile match (client/trade) can otherwise carry a same-address person
-    // from another tenant. Drop attribution unless they're a member here.
-    const { data } = await admin
+    // from another tenant. Drop attribution unless they're a member here. A
+    // LOOKUP error is NOT a miss — throw so the webhook retries.
+    const { data, error } = await admin
       .from("organization_members")
       .select("profile_id")
       .eq("org_id", orgId)
       .eq("profile_id", match.profile_id)
       .maybeSingle()
+    if (error) throw new ScopeLookupError(error.message)
     if (!data) return unlinked
   }
   return match
