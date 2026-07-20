@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
       // Twilio can retry a delivery; dedup on (source, provider_id) like Quo.
       { onConflict: "source,provider_id", ignoreDuplicates: true }
     )
-    if (error) throw new Error(error.message)
+    if (error) throw new RetryableDbError(error.message)
 
     await notifyStaffOfInbound({
       kind: "sms",
@@ -127,7 +127,14 @@ export async function POST(req: NextRequest) {
     })
     return twiml()
   } catch (e) {
-    // Log and 200 — a bad row must not put Twilio into a retry loop.
+    // A transient DB failure (scope lookup or the write) is retryable — return
+    // 503 so Twilio redelivers (the upsert dedups on (source, provider_id), so
+    // a retry is idempotent) rather than dropping/losing the message.
+    if (e instanceof RetryableDbError) {
+      console.error("[twilio webhook] transient DB failure; requesting retry:", e.message)
+      return NextResponse.json({ error: "database unavailable" }, { status: 503 })
+    }
+    // Otherwise log and 200 — a poison row must not loop Twilio's retries.
     console.error(
       "[twilio webhook] processing failed:",
       e instanceof Error ? e.message : e
@@ -143,6 +150,11 @@ export async function POST(req: NextRequest) {
  * name) so a cross-tenant contact can never file a message onto another org's
  * job. No-op when the match had no project/company to begin with.
  */
+/** A transient DB failure (scope lookup OR the communications write) — the
+ *  route returns a retryable 503 for these rather than dropping/losing the
+ *  message and 200-ing (no retry). Genuine no-match / poison rows still 200. */
+class RetryableDbError extends Error {}
+
 async function scopeMatchToOrg(
   admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
   match: MatchResult,
@@ -155,20 +167,36 @@ async function scopeMatchToOrg(
     profile_id: null,
   }
   if (match.project_id) {
-    const { data } = await admin
+    const { data, error } = await admin
       .from("projects")
       .select("org_id")
       .eq("id", match.project_id)
       .maybeSingle()
+    if (error) throw new RetryableDbError(error.message)
     if (!data || data.org_id !== orgId) return unlinked
   }
   if (match.company_id) {
-    const { data } = await admin
+    const { data, error } = await admin
       .from("companies")
       .select("org_id")
       .eq("id", match.company_id)
       .maybeSingle()
+    if (error) throw new RetryableDbError(error.message)
     if (!data || data.org_id !== orgId) return unlinked
+  }
+  if (match.profile_id) {
+    // A profile belongs to an org through organization_members — a standalone
+    // profile match can otherwise carry a same-number person from another
+    // tenant. Drop attribution unless they're a member here. A LOOKUP error is
+    // NOT a miss — throw so the webhook retries instead of silently unlinking.
+    const { data, error } = await admin
+      .from("organization_members")
+      .select("profile_id")
+      .eq("org_id", orgId)
+      .eq("profile_id", match.profile_id)
+      .maybeSingle()
+    if (error) throw new RetryableDbError(error.message)
+    if (!data) return unlinked
   }
   return match
 }

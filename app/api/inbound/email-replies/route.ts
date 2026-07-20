@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server"
 import { Resend, type WebhookEventPayload } from "resend"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
-import { matchCounterparty } from "@/lib/comms/match"
+import { matchCounterparty, type MatchResult } from "@/lib/comms/match"
 import { notifyStaffOfInbound } from "@/lib/comms/notify"
+
+type AdminClient = NonNullable<ReturnType<typeof createSupabaseAdminClient>>
 
 /**
  * Resend inbound webhook for the Communications hub. Outbound app emails
@@ -23,9 +25,12 @@ export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
 export const maxDuration = 60
 
-// Any local part with a +p_<uuid> tag (works whatever COMMS_INBOUND_EMAIL's
-// mailbox name is — comms@, replies@, …).
-const PLUS_TAG_RE = /\+p_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})@/i
+// Routing tag on the Reply-To local part: +p_<project> | +c_<company> |
+// +o_<org> (works whatever COMMS_INBOUND_EMAIL's mailbox name is — comms@,
+// replies@, …). With one shared From address this tag is the primary signal of
+// which org/thread a reply belongs to.
+const ROUTE_TAG_RE =
+  /\+(p|c|o)_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})@/i
 
 export async function POST(req: Request) {
   const apiKey = process.env.RESEND_API_KEY
@@ -90,27 +95,30 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, skipped: "insurance-inbox" })
     }
 
-    // Plus-tag project routing beats sender matching.
-    let taggedProjectId: string | null = null
+    // Parse the routing tag (+p_/+c_/+o_) — it beats sender matching.
+    let tag: { kind: "p" | "c" | "o"; id: string } | null = null
     for (const t of toList) {
-      const m = PLUS_TAG_RE.exec(parseAddress(t))
+      const m = ROUTE_TAG_RE.exec(parseAddress(t))
       if (m) {
-        taggedProjectId = m[1]
+        tag = { kind: m[1].toLowerCase() as "p" | "c" | "o", id: m[2] }
         break
       }
     }
-    if (taggedProjectId) {
-      const { data: proj } = await admin
-        .from("projects")
-        .select("id")
-        .eq("id", taggedProjectId)
-        .maybeSingle()
-      if (!proj) taggedProjectId = null
-    }
 
     const match = await matchCounterparty(admin, { email: fromAddress })
-    const projectId = taggedProjectId ?? match.project_id
-    const status = projectId ? "logged" : match.status
+
+    // Resolve the owning org — the tag first (strongest; the From is a shared
+    // mailbox that carries no tenant), then the matched counterparty's org.
+    const route = await resolveReplyOrg(admin, tag, match)
+    const orgId = route.orgId
+
+    // Scope the (global) matcher result to the resolved org so a shared address
+    // can't cross-file into another tenant's project/company/profile.
+    const scoped = orgId ? await scopeMatchToOrg(admin, match, orgId) : match
+
+    const projectId = route.projectId ?? scoped.project_id
+    const companyId = route.companyId ?? scoped.company_id
+    const status = projectId ? "logged" : scoped.status
 
     const bodyText =
       email.text?.trim() ||
@@ -121,13 +129,17 @@ export async function POST(req: Request) {
       {
         channel: "email",
         direction: "inbound",
+        // Stamp the resolved org so a builder's reply lands in THEIR feed, not
+        // the communications bridge default (Hines). Null only when nothing
+        // resolved — an untagged reply from an unknown address.
+        ...(orgId ? { org_id: orgId } : {}),
         status,
         project_id: projectId,
-        company_id: match.company_id,
-        profile_id: match.profile_id,
+        company_id: companyId,
+        profile_id: scoped.profile_id,
         from_address: fromAddress,
         to_address: toList.map(parseAddress).join(", "),
-        counterparty_name: match.counterparty_name ?? displayName(email.from),
+        counterparty_name: scoped.counterparty_name ?? displayName(email.from),
         subject: email.subject ?? null,
         body: bodyText,
         source: "resend_inbound",
@@ -137,26 +149,161 @@ export async function POST(req: Request) {
       },
       { onConflict: "source,provider_id", ignoreDuplicates: true }
     )
-    if (error) throw new Error(error.message)
+    if (error) throw new RetryableDbError(error.message)
 
     await notifyStaffOfInbound({
       kind: "email",
-      fromName: match.counterparty_name ?? displayName(email.from),
+      fromName: scoped.counterparty_name ?? displayName(email.from),
       preview: email.subject || bodyText,
       projectId,
       projectName: projectId ? await projectName(admin, projectId) : null,
+      // Fail CLOSED when the org is unresolved: with a shared inbound address,
+      // a null org must NOT fall into notify's legacy all-staff path (that
+      // would leak a reply's sender/subject to every tenant). The empty-string
+      // signal makes notifyStaffOfInbound notify nobody. The message is still
+      // logged for someone to find in the hub.
+      orgId: orgId ?? "",
     })
 
     // Ids only in logs — addresses and subjects are PII.
-    console.log(`[email-replies] email_id=${email.email_id} matched=${Boolean(projectId)}`)
+    console.log(
+      `[email-replies] email_id=${email.email_id} matched=${Boolean(projectId)} org=${Boolean(orgId)}`
+    )
     return NextResponse.json({ ok: true })
   } catch (e) {
+    // A transient DB failure (scope lookup or the write) is retryable — return
+    // 503 so Resend redelivers (the upsert dedups on (source, provider_id), so
+    // a retry is idempotent) rather than dropping/losing the reply.
+    if (e instanceof RetryableDbError) {
+      console.error("[email-replies] transient DB failure; requesting retry:", e.message)
+      return NextResponse.json({ ok: false, error: "database unavailable" }, { status: 503 })
+    }
     console.error(
       "[email-replies] processing failed:",
       e instanceof Error ? e.message : e
     )
     return NextResponse.json({ ok: true, stored: false })
   }
+}
+
+/**
+ * The org that owns an inbound reply. The routing tag wins (the From is a
+ * shared platform mailbox, so it can't identify the tenant): +p_ → the
+ * project's org, +c_ → the company's org, +o_ → the org directly. With no
+ * usable tag, fall back to the matched counterparty's project/company org.
+ * Returns the tag's project/company too so we file to it even when the sender
+ * match is ambiguous.
+ */
+async function resolveReplyOrg(
+  admin: AdminClient,
+  tag: { kind: "p" | "c" | "o"; id: string } | null,
+  match: MatchResult
+): Promise<{
+  orgId: string | null
+  projectId: string | null
+  companyId: string | null
+}> {
+  if (tag?.kind === "p") {
+    const { data } = await admin
+      .from("projects")
+      .select("id, org_id")
+      .eq("id", tag.id)
+      .maybeSingle()
+    if (data) return { orgId: data.org_id, projectId: data.id, companyId: null }
+  } else if (tag?.kind === "c") {
+    const { data } = await admin
+      .from("companies")
+      .select("id, org_id")
+      .eq("id", tag.id)
+      .maybeSingle()
+    if (data) return { orgId: data.org_id, projectId: null, companyId: data.id }
+  } else if (tag?.kind === "o") {
+    const { data } = await admin
+      .from("organizations")
+      .select("id")
+      .eq("id", tag.id)
+      .maybeSingle()
+    if (data) return { orgId: data.id, projectId: null, companyId: null }
+  }
+  // No usable tag — derive the org from the matched counterparty.
+  if (match.project_id) {
+    const { data } = await admin
+      .from("projects")
+      .select("org_id")
+      .eq("id", match.project_id)
+      .maybeSingle()
+    if (data?.org_id) {
+      return { orgId: data.org_id, projectId: null, companyId: null }
+    }
+  }
+  if (match.company_id) {
+    const { data } = await admin
+      .from("companies")
+      .select("org_id")
+      .eq("id", match.company_id)
+      .maybeSingle()
+    if (data?.org_id) {
+      return { orgId: data.org_id, projectId: null, companyId: null }
+    }
+  }
+  return { orgId: null, projectId: null, companyId: null }
+}
+
+/**
+ * Drops attribution that resolved into a different org than the one that owns
+ * this reply — matchCounterparty is global (a counterparty address can exist in
+ * several orgs), so a mismatched project/company/profile is discarded, keeping
+ * the reply logged under the right tenant but unlinked.
+ */
+/** A transient DB failure (scope lookup OR the communications write) — the
+ *  route returns a retryable 503 for these rather than dropping/losing the
+ *  reply and 200-ing (no retry). Genuine no-match / poison rows still 200. */
+class RetryableDbError extends Error {}
+
+async function scopeMatchToOrg(
+  admin: AdminClient,
+  match: MatchResult,
+  orgId: string
+): Promise<MatchResult> {
+  const unlinked: MatchResult = {
+    ...match,
+    project_id: null,
+    company_id: null,
+    profile_id: null,
+  }
+  if (match.project_id) {
+    const { data, error } = await admin
+      .from("projects")
+      .select("org_id")
+      .eq("id", match.project_id)
+      .maybeSingle()
+    if (error) throw new RetryableDbError(error.message)
+    if (!data || data.org_id !== orgId) return unlinked
+  }
+  if (match.company_id) {
+    const { data, error } = await admin
+      .from("companies")
+      .select("org_id")
+      .eq("id", match.company_id)
+      .maybeSingle()
+    if (error) throw new RetryableDbError(error.message)
+    if (!data || data.org_id !== orgId) return unlinked
+  }
+  if (match.profile_id) {
+    // A profile belongs to an org through organization_members — a standalone
+    // profile match (client/trade) can otherwise carry a same-address person
+    // from another tenant. Drop attribution unless they're a member here. A
+    // LOOKUP error is NOT a miss — throw so the webhook retries.
+    const { data, error } = await admin
+      .from("organization_members")
+      .select("profile_id")
+      .eq("org_id", orgId)
+      .eq("profile_id", match.profile_id)
+      .maybeSingle()
+    if (error) throw new RetryableDbError(error.message)
+    if (!data) return unlinked
+  }
+  return match
 }
 
 /** `"Jane Doe" <jane@x.com>` → `jane@x.com`; bare addresses pass through. */
@@ -182,7 +329,7 @@ function stripHtml(html: string): string {
 }
 
 async function projectName(
-  admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
+  admin: AdminClient,
   projectId: string
 ): Promise<string | null> {
   const { data } = await admin

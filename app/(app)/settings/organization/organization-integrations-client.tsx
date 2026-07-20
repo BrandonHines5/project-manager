@@ -158,14 +158,18 @@ function PlatformEmailCard({
           Your stored email key couldn&rsquo;t be read, so email is paused.
           Contact support to reset it.
         </p>
+      ) : active && address && isCustom ? (
+        <p className="text-sm">
+          Your emails send from <span className="font-medium">{address}</span> —
+          your own verified domain. Bid, PO, insurance, and client emails go out
+          from here, and replies land in your Communications feed.
+        </p>
       ) : active && address ? (
         <p className="text-sm">
-          Your emails send from <span className="font-medium">{address}</span>.
-          Bid, PO, insurance, and client emails go out from here, and replies
-          land in your Communications feed
-          {isCustom
-            ? " — sending from your own verified domain."
-            : " — nothing to set up."}
+          Emails are sent for you through BuildFox (from{" "}
+          <span className="font-medium">{address}</span>) shown under your
+          company&rsquo;s name. Bid, PO, insurance, and client emails go out this
+          way, and replies land in your Communications feed — nothing to set up.
         </p>
       ) : (
         <p className="text-xs text-muted">
