@@ -842,10 +842,19 @@ export async function saveDecision(input: DecisionInputT) {
       .eq("id", id!)
       .maybeSingle()
     if (decisionRow) {
+      // Gate the dashboard webhook on the PROJECT's org, not the actor's
+      // active org — a multi-org staffer could be acting on a project outside
+      // their selected org, and this best-effort lookup must never fail the
+      // already-saved decision.
+      const { data: proj } = await supabase
+        .from("projects")
+        .select("org_id")
+        .eq("id", decisionRow.project_id)
+        .maybeSingle()
       await sendDashboardWebhook(
         "decision.approved",
         decisionRow,
-        await getActiveOrgId(supabase, profile.id)
+        proj?.org_id ?? null
       )
     }
     try {

@@ -5,7 +5,6 @@ import { after } from "next/server"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireSession, requireStaff } from "@/lib/auth"
-import { getActiveOrgId } from "@/lib/org"
 import { assertActiveOrgWritable } from "@/lib/sandbox"
 import { sendDashboardWebhook } from "@/lib/dashboard"
 import { sendQuoSms, normalizeE164 } from "@/lib/quo"
@@ -286,11 +285,16 @@ export async function saveDailyLog(input: DailyLogInputT) {
       .eq("id", id!)
       .maybeSingle()
     if (row) {
-      await sendDashboardWebhook(
-        "daily_log.published",
-        row,
-        await getActiveOrgId(supabase, profile.id)
-      )
+      // Gate the dashboard webhook on the PROJECT's org, not the actor's
+      // active org — a multi-org staffer could be acting on a project outside
+      // their selected org, and this best-effort lookup must never fail the
+      // already-saved log.
+      const { data: proj } = await supabase
+        .from("projects")
+        .select("org_id")
+        .eq("id", parsed.project_id)
+        .maybeSingle()
+      await sendDashboardWebhook("daily_log.published", row, proj?.org_id ?? null)
     }
   }
 
