@@ -35,9 +35,7 @@ export default async function OrganizationSettingsPage() {
         .maybeSingle(),
       supabase
         .from("organizations")
-        .select(
-          "id, name, slug, settings, stripe_customer_id, stripe_subscription_status"
-        )
+        .select("id, name, settings, stripe_customer_id, stripe_subscription_status")
         .eq("id", orgId)
         .maybeSingle(),
       // Whole-org roster (org_members_member_read); profile details ride the
@@ -129,7 +127,7 @@ export default async function OrganizationSettingsPage() {
   // data-layer override) wins over the platform address; a decrypt failure on
   // that stored key fails closed (email off), never silently platform.
   const platformEmailReady = platformEmailConfigured()
-  const platformEmailAddress = isLegacy ? null : platformSenderAddress(org.slug)
+  const platformEmailAddress = isLegacy ? null : platformSenderAddress()
   const emailIsCustom = !isLegacy && resendConnected
   const emailError = !isLegacy && resendError
   const emailAddress = emailIsCustom ? resendFromEmail : platformEmailAddress

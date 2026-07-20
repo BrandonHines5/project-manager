@@ -30,28 +30,20 @@ export function platformEmailConfigured(): boolean {
   )
 }
 
-/** Sanitize an org slug into a safe email localpart, or null if empty. */
-function sanitizeLocalpart(slug: string): string | null {
-  const lp = slug
-    .toLowerCase()
-    .replace(/[^a-z0-9.-]/g, "")
-    .replace(/^[.-]+|[.-]+$/g, "")
-  return lp || null
-}
-
 /**
- * The per-org platform sending address (`{slug}@{PLATFORM_EMAIL_DOMAIN}`), or
- * null when the platform domain isn't set or the slug yields no usable
- * localpart. Deterministic from the slug — there's no provisioning step, so a
- * builder's email works the moment their org exists.
+ * The shared platform sending address (`info@{PLATFORM_EMAIL_DOMAIN}` by
+ * default; localpart overridable via `PLATFORM_EMAIL_FROM`). Buildertrend-style:
+ * ONE common address serves every builder org, personalized by the From
+ * DISPLAY NAME (the org's name) rather than the address. The address must sit on
+ * a domain we've authenticated (SPF/DKIM); a per-org custom address can't be, so
+ * reply routing rides the Reply-To plus-tag, not the From. Null when the
+ * platform domain isn't set.
  */
-export function platformSenderAddress(
-  slug: string | null | undefined
-): string | null {
+export function platformSenderAddress(): string | null {
   const domain = process.env.PLATFORM_EMAIL_DOMAIN
-  if (!domain || !slug) return null
-  const lp = sanitizeLocalpart(slug)
-  return lp ? `${lp}@${domain}` : null
+  if (!domain) return null
+  const localpart = (process.env.PLATFORM_EMAIL_FROM || "info").trim() || "info"
+  return `${localpart}@${domain}`
 }
 
 /**
@@ -65,15 +57,16 @@ async function resolvePlatformResendConfig(
   orgId: string
 ): Promise<ResendConfig | null> {
   const key = process.env.RESEND_PLATFORM_API_KEY
-  if (!key) return null
+  const from = platformSenderAddress()
+  if (!key || !from) return null
+  // The org's name is the friendly-from display name — the whole point of the
+  // shared address, so bail if we can't read it rather than send anonymously.
   const { data: org, error } = await admin
     .from("organizations")
-    .select("slug, name")
+    .select("name")
     .eq("id", orgId)
     .maybeSingle()
   if (error || !org) return null
-  const from = platformSenderAddress(org.slug)
-  if (!from) return null
   return { apiKey: key, from, fromName: org.name ?? null }
 }
 
@@ -349,16 +342,26 @@ export async function sendEmail(opts: {
     return { sent: false, reason: "Email is not connected for this organization" }
   }
 
-  // Project-scoped sends default their Reply-To to the comms inbound
-  // address with a project plus-tag (comms+p_<id>@…), so a client/sub reply
-  // threads straight back into that job's Communications feed. Callers that
-  // set an explicit replyTo (e.g. insurance, utilities) are untouched.
+  // Reply-To routing tag. With one shared From address (info@…), this tag is
+  // the ONLY reliable signal of which org/thread a reply belongs to — the From
+  // no longer identifies the tenant and a counterparty's own address can live
+  // in several orgs. So every counterparty send carries one, most-specific
+  // first: the project (`+p_<id>`), else the company (`+c_<id>`), else the org
+  // (`+o_<id>`). The email-replies webhook parses it to route + org-stamp the
+  // reply. Callers with an explicit replyTo (insurance, utilities) are untouched.
   let replyTo = opts.replyTo
-  if (!replyTo && opts.log?.project_id) {
+  if (!replyTo && opts.log) {
+    const tag = opts.log.project_id
+      ? `p_${opts.log.project_id}`
+      : opts.log.company_id
+        ? `c_${opts.log.company_id}`
+        : orgId
+          ? `o_${orgId}`
+          : null
     const inbound = process.env.COMMS_INBOUND_EMAIL
     const at = inbound?.indexOf("@") ?? -1
-    if (inbound && at > 0) {
-      replyTo = `${inbound.slice(0, at)}+p_${opts.log.project_id}${inbound.slice(at)}`
+    if (tag && inbound && at > 0) {
+      replyTo = `${inbound.slice(0, at)}+${tag}${inbound.slice(at)}`
     }
   }
 
