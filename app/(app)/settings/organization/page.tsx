@@ -4,6 +4,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { getActiveOrgId, LEGACY_ORG_ID } from "@/lib/org"
 import { getOrgIntegration } from "@/lib/integrations/org"
 import { twilioConfigured, resolveTwilioConfig } from "@/lib/twilio"
+import { platformEmailConfigured, platformSenderAddress } from "@/lib/email"
 import { parseBrandConfig } from "@/lib/brand"
 import { OrganizationSettingsClient } from "./organization-settings-client"
 import {
@@ -34,7 +35,9 @@ export default async function OrganizationSettingsPage() {
         .maybeSingle(),
       supabase
         .from("organizations")
-        .select("id, name, settings, stripe_customer_id, stripe_subscription_status")
+        .select(
+          "id, name, slug, settings, stripe_customer_id, stripe_subscription_status"
+        )
         .eq("id", orgId)
         .maybeSingle(),
       // Whole-org roster (org_members_member_read); profile details ride the
@@ -117,6 +120,12 @@ export default async function OrganizationSettingsPage() {
     ? null
     : (await resolveTwilioConfig(orgId))?.phoneNumber ?? null
 
+  // Platform-managed email for non-legacy (builder) orgs — keyless: the
+  // sending address is derived from the org slug, no provisioning step. Legacy
+  // keeps its env/Graph identity + the bring-your-own Resend card.
+  const platformEmailReady = platformEmailConfigured()
+  const platformEmailAddress = isLegacy ? null : platformSenderAddress(org.slug)
+
   const config = parseBrandConfig(org.settings, org.name)
   const members: OrgMemberRow[] = (memberRows ?? []).map((m) => ({
     profile_id: m.profile_id,
@@ -160,6 +169,8 @@ export default async function OrganizationSettingsPage() {
           isLegacy={isLegacy}
           twilioConfigured={twilioIsConfigured}
           twilioNumber={twilioNumber}
+          platformEmailConfigured={platformEmailReady}
+          platformEmailAddress={platformEmailAddress}
           quoConnected={quoConnected}
           quoSharedFrom={quoSharedFrom}
           quoError={quoError}

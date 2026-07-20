@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { Plug, MessageSquare } from "lucide-react"
+import { Plug, MessageSquare, Mail } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { saveQuoIntegration, saveResendIntegration } from "@/app/actions/org"
@@ -21,6 +21,8 @@ export function OrganizationIntegrationsClient({
   isLegacy,
   twilioConfigured,
   twilioNumber,
+  platformEmailConfigured,
+  platformEmailAddress,
   quoConnected,
   quoSharedFrom,
   quoError,
@@ -41,6 +43,10 @@ export function OrganizationIntegrationsClient({
   twilioConfigured: boolean
   /** The org's provisioned Twilio number, or null when it has none yet. */
   twilioNumber: string | null
+  /** Whether the platform email account (Resend + shared domain) is wired up. */
+  platformEmailConfigured: boolean
+  /** The org's keyless platform sending address, or null (legacy / unconfigured). */
+  platformEmailAddress: string | null
   quoConnected: boolean
   quoSharedFrom: string
   quoError: boolean
@@ -81,15 +87,69 @@ export function OrganizationIntegrationsClient({
           number={twilioNumber}
         />
       )}
-      <ResendIntegrationCard
-        orgId={orgId}
-        connected={resendConnected}
-        fromEmail={resendFromEmail}
-        fromName={resendFromName}
-        error={resendError}
-        envFallback={resendEnvFallback}
-      />
+      {isLegacy ? (
+        <ResendIntegrationCard
+          orgId={orgId}
+          connected={resendConnected}
+          fromEmail={resendFromEmail}
+          fromName={resendFromName}
+          error={resendError}
+          envFallback={resendEnvFallback}
+        />
+      ) : (
+        <PlatformEmailCard
+          configured={platformEmailConfigured}
+          address={platformEmailAddress}
+        />
+      )}
     </section>
+  )
+}
+
+/**
+ * Platform-managed email for builder orgs — no API key, no DNS. The sending
+ * address is derived from the org slug on the shared verified domain, so email
+ * works out of the box; this card is purely informational.
+ */
+function PlatformEmailCard({
+  configured,
+  address,
+}: {
+  configured: boolean
+  address: string | null
+}) {
+  return (
+    <div className="rounded-md border border-border p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <Mail className="h-4 w-4 text-muted" />
+          Email
+        </div>
+        <span
+          className={
+            configured && address
+              ? "text-xs text-brand-600"
+              : "text-xs text-muted"
+          }
+        >
+          {configured && address ? "Active" : "Not set up"}
+        </span>
+      </div>
+
+      {configured && address ? (
+        <p className="text-sm">
+          Your emails send from{" "}
+          <span className="font-medium">{address}</span>. Bid, PO, insurance,
+          and client emails go out from here, and replies land in your
+          Communications feed — nothing to set up.
+        </p>
+      ) : (
+        <p className="text-xs text-muted">
+          Email isn&rsquo;t available yet. It&rsquo;ll appear here once it&rsquo;s
+          switched on for your account.
+        </p>
+      )}
+    </div>
   )
 }
 
