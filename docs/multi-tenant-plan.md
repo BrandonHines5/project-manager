@@ -470,7 +470,8 @@ existing/provisioned org is `active_subscriber` and never participates.
   created sandbox org always carries its status — no half-provisioned
   free-forever leak). Abuse protection, in order: **TRIAL_SIGNUP_SECRET** shared
   header (primary gate; unset → endpoint closed 503), optional **Turnstile**
-  (env-gated on `TURNSTILE_SECRET_KEY`), and a serverless-safe DB rate limit
+  (env-gated on `TRIAL_TURNSTILE_SECRET_KEY` — the sales site's Turnstile secret,
+  since the token is minted by the sales site's widget), and a serverless-safe DB rate limit
   (`trial_signup_attempts` + `record_trial_signup_attempt`: 5/IP/hour,
   3/email/day). Isolation is inherited from `create_organization` (seed-from-Hines,
   same RLS visibility — the sandbox variant only adds a status stamp).

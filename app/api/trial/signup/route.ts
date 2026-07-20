@@ -16,8 +16,11 @@ import { provisionOrgCore } from "@/lib/provisioning/core"
  * Abuse protection, in order:
  *  1. TRIAL_SIGNUP_SECRET shared header — the primary gate. Only the sales-site
  *     backend holds it. Unset → the endpoint is closed (503).
- *  2. Turnstile (optional, env-gated) — CAPTCHA the sales site can add later by
- *     setting TURNSTILE_SECRET_KEY and passing turnstileToken; skipped until then.
+ *  2. Turnstile (optional, env-gated) — an extra CAPTCHA layer. The token is
+ *     minted by the SALES SITE's widget, so it can only be verified with the
+ *     secret paired to that site key: set TRIAL_TURNSTILE_SECRET_KEY to the
+ *     sales site's Turnstile secret. Skipped until that's set (verifying with
+ *     any other keypair fails every token). Not this app's own TURNSTILE key.
  *  3. record_trial_signup_attempt — a serverless-safe DB rate limit (5/IP/hour,
  *     3/email/day) as defense-in-depth if the shared secret ever leaks.
  *
@@ -64,13 +67,23 @@ function secretsMatch(provided: string, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b)
 }
 
-/** True unless Turnstile is configured AND the token fails to verify. */
+/**
+ * True unless Turnstile is configured AND the token fails to verify.
+ *
+ * The token here is minted by the SALES SITE's Turnstile widget, so it must be
+ * verified with the secret paired to that site key — configured as
+ * TRIAL_TURNSTILE_SECRET_KEY (the sales site's Turnstile secret), NOT this app's
+ * own TURNSTILE_SECRET_KEY. Verifying a sales-site token against a different
+ * keypair fails every time ("CAPTCHA verification failed"), which would reject
+ * every legitimate signup. Unset → this layer is skipped; the endpoint is still
+ * gated by the shared TRIAL_SIGNUP_SECRET and the DB rate limit.
+ */
 async function verifyTurnstile(
   token: string | undefined,
   ip: string | null
 ): Promise<boolean> {
-  const secret = process.env.TURNSTILE_SECRET_KEY
-  if (!secret) return true // not configured → CAPTCHA not enforced yet
+  const secret = process.env.TRIAL_TURNSTILE_SECRET_KEY
+  if (!secret) return true // not configured → CAPTCHA not enforced
   if (!token) return false
   const form = new URLSearchParams()
   form.set("secret", secret)
@@ -133,7 +146,8 @@ export async function POST(req: Request) {
   const { orgName, slug, ownerName, ownerEmail, turnstileToken } = parsed.data
   const ip = clientIp(req)
 
-  // 3. Turnstile (only enforced when TURNSTILE_SECRET_KEY is set).
+  // 3. Turnstile (only enforced when TRIAL_TURNSTILE_SECRET_KEY is set to the
+  //    sales site's Turnstile secret — see verifyTurnstile).
   if (!(await verifyTurnstile(turnstileToken, ip))) {
     return NextResponse.json(
       { ok: false, error: "CAPTCHA verification failed." },
