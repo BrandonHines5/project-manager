@@ -1,5 +1,7 @@
 "use server"
 
+import type { SupabaseClient } from "@supabase/supabase-js"
+import type { Database } from "@/lib/db/types"
 import { requireStaff } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
@@ -7,26 +9,32 @@ import { getActiveOrgId } from "@/lib/org"
 import { getStripe, stripeConfigured, stripePriceId } from "@/lib/stripe"
 import { appUrl } from "@/lib/email"
 
-// Subscription checkout for a lapsed sandbox trial (Stage S / S3). Called from
-// the paywall's "Subscribe now" button. Deliberately does NOT run the sandbox
-// write guard (assertActiveOrgWritable): the caller's org IS the expired trial,
-// and paying is exactly how they escape the paywall — so this action must work
-// while the org is frozen. The org row write (storing the Stripe customer id)
-// goes through the admin client, which bypasses the org write policies.
+// Stripe billing actions (Stage S / S3). Checkout starts a subscription from the
+// paywall's "Subscribe now"; the billing-portal action lets an existing
+// subscriber manage/cancel from Organization settings. Neither runs the sandbox
+// write guard (assertActiveOrgWritable): the caller's org may BE the expired
+// trial, and paying is how they escape the paywall — so these must work while
+// the org is frozen. The org row read/write goes through the admin client, which
+// bypasses the org write policies.
 
 const NOT_CONFIGURED =
   "Billing isn't set up yet — please reach out to your BuildFox contact to activate your subscription."
 
 export type CheckoutResult = { ok: true; url: string } | { ok: false; error: string }
 
+type OrgRow = { id: string; name: string; stripe_customer_id: string | null }
+type BillingCtx =
+  | { ok: true; orgId: string; org: OrgRow; admin: SupabaseClient<Database> }
+  | { ok: false; error: string }
+
 /**
- * Create (or resume) a Stripe Checkout session for the caller's active org and
- * return its URL for the browser to redirect to. Owner/admin only. Reuses the
- * org's Stripe customer across attempts, and tags the session with the org id
- * (client_reference_id + subscription metadata) so the webhook can resolve the
- * org even before the customer id is stored.
+ * Shared gate for the billing actions: resolve the caller's active org, require
+ * they're an owner/admin of it, and load the org row (name + Stripe customer id)
+ * on the admin client. The admin client is used because a frozen sandbox org
+ * would block a session-client write, and both actions need to reach the org row
+ * regardless of lifecycle status.
  */
-export async function createSubscriptionCheckout(): Promise<CheckoutResult> {
+async function resolveOwnerAdminOrg(): Promise<BillingCtx> {
   const me = await requireStaff()
   const supabase = await createSupabaseServerClient()
 
@@ -37,7 +45,6 @@ export async function createSubscriptionCheckout(): Promise<CheckoutResult> {
     return { ok: false, error: "Couldn't resolve your organization." }
   }
 
-  // Only an owner/admin of the org may start a subscription.
   const { data: membership } = await supabase
     .from("organization_members")
     .select("member_role")
@@ -45,21 +52,9 @@ export async function createSubscriptionCheckout(): Promise<CheckoutResult> {
     .eq("profile_id", me.id)
     .maybeSingle()
   if (!membership || !["owner", "admin"].includes(membership.member_role)) {
-    return {
-      ok: false,
-      error: "Only an owner or admin can start a subscription.",
-    }
+    return { ok: false, error: "Only an owner or admin can manage billing." }
   }
 
-  const stripe = getStripe()
-  const priceId = stripePriceId()
-  if (!stripeConfigured() || !stripe || !priceId) {
-    return { ok: false, error: NOT_CONFIGURED }
-  }
-
-  // The org row write (customer id) and read run on the admin client — the
-  // caller's org may be frozen (sandbox_expired), which would block a session
-  // write, and admin also sidesteps any read nuance.
   const admin = createSupabaseAdminClient()
   if (!admin) return { ok: false, error: "Server is not configured." }
 
@@ -70,6 +65,26 @@ export async function createSubscriptionCheckout(): Promise<CheckoutResult> {
     .maybeSingle()
   if (orgErr || !org) {
     return { ok: false, error: "Couldn't load your organization." }
+  }
+  return { ok: true, orgId, org, admin }
+}
+
+/**
+ * Create (or resume) a Stripe Checkout session for the caller's active org and
+ * return its URL for the browser to redirect to. Owner/admin only. Reuses the
+ * org's Stripe customer across attempts, and tags the session with the org id
+ * (client_reference_id + subscription metadata) so the webhook can resolve the
+ * org even before the customer id is stored.
+ */
+export async function createSubscriptionCheckout(): Promise<CheckoutResult> {
+  const ctx = await resolveOwnerAdminOrg()
+  if (!ctx.ok) return { ok: false, error: ctx.error }
+  const { orgId, org, admin } = ctx
+
+  const stripe = getStripe()
+  const priceId = stripePriceId()
+  if (!stripeConfigured() || !stripe || !priceId) {
+    return { ok: false, error: NOT_CONFIGURED }
   }
 
   try {
@@ -111,5 +126,46 @@ export async function createSubscriptionCheckout(): Promise<CheckoutResult> {
   } catch (e) {
     console.error("[billing] checkout create failed:", (e as Error).message)
     return { ok: false, error: "Couldn't start checkout. Please try again." }
+  }
+}
+
+/**
+ * Open a Stripe Billing Portal session for the caller's active org so an
+ * existing subscriber can update their card, view invoices, or cancel. Owner/
+ * admin only. Requires the org to already have a Stripe customer (i.e. they've
+ * been through checkout at least once). Returns the hosted portal URL to
+ * redirect to; the portal returns the user to Organization settings.
+ *
+ * NOTE: the Customer Portal must be enabled once in the Stripe dashboard
+ * (Settings → Billing → Customer portal) before this succeeds.
+ */
+export async function createBillingPortalSession(): Promise<CheckoutResult> {
+  const ctx = await resolveOwnerAdminOrg()
+  if (!ctx.ok) return { ok: false, error: ctx.error }
+  const { org } = ctx
+
+  const stripe = getStripe()
+  if (!stripe) {
+    return { ok: false, error: NOT_CONFIGURED }
+  }
+  if (!org.stripe_customer_id) {
+    return {
+      ok: false,
+      error: "This organization doesn't have a billing account yet.",
+    }
+  }
+
+  try {
+    const session = await stripe.billingPortal.sessions.create({
+      customer: org.stripe_customer_id,
+      return_url: appUrl("/settings/organization"),
+    })
+    return { ok: true, url: session.url }
+  } catch (e) {
+    console.error("[billing] portal session create failed:", (e as Error).message)
+    return {
+      ok: false,
+      error: "Couldn't open the billing portal. Please try again.",
+    }
   }
 }
