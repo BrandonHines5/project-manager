@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
+import { getActiveOrgId } from "@/lib/org"
 import { sendDashboardWebhook } from "@/lib/dashboard"
 
 // Audit-log writes are no longer done here. Migration 0031 installed an
@@ -92,7 +93,11 @@ export async function savePayment(input: PaymentInputT) {
       .single()
     if (error) throw new Error(error.message)
     if (row) {
-      await sendDashboardWebhook("payment.recorded", row)
+      await sendDashboardWebhook(
+        "payment.recorded",
+        row,
+        await getActiveOrgId(supabase, profile.id)
+      )
     }
   }
   revalidatePath(`/projects/${parsed.project_id}/pricing`)

@@ -13,6 +13,7 @@ import {
   type ScheduleCommentRow,
 } from "@/lib/comms/feed"
 import { createCrmClient } from "@/lib/supabase/crm"
+import { LEGACY_ORG_ID } from "@/lib/org"
 import type { ComposeContact } from "@/components/comms/compose-dialog"
 import { buildCompanyContacts } from "@/lib/comms/contacts"
 import { CommunicationsClient } from "./communications-client"
@@ -35,7 +36,7 @@ export default async function CommunicationsPage({
   const { data: project } = await supabase
     .from("projects")
     .select(
-      "id, name, client_name, client_email, client_phone, client_name_2, client_email_2, client_phone_2, created_at"
+      "id, name, org_id, client_name, client_email, client_phone, client_name_2, client_email_2, client_phone_2, created_at"
     )
     .eq("id", projectId)
     .maybeSingle()
@@ -132,8 +133,9 @@ export default async function CommunicationsPage({
   // the sales deal; we surface the ones exchanged with this project's client
   // BEFORE the job existed. Anything after that is (or will be) captured by
   // this app's own pipeline, so the date cutoff prevents double rows once
-  // the Outlook sync is live.
-  if (profile.role === "staff") {
+  // the Outlook sync is live. The CRM is Hines Homes' external system, so this
+  // history only applies to a legacy-org project.
+  if (profile.role === "staff" && project.org_id === LEGACY_ORG_ID) {
     const crmItems = await fetchCrmEmailHistory(
       projectId,
       [project.client_email, project.client_email_2].filter(

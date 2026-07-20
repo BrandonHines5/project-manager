@@ -6,7 +6,7 @@ import {
   isCawConfigured,
   isLumberOneConfigured,
 } from "@/lib/utilities/org-config"
-import { getActiveOrgId } from "@/lib/org"
+import { getActiveOrgId, LEGACY_ORG_ID } from "@/lib/org"
 import { UtilitiesClient, type UtilitiesData, type UtilityJob } from "./utilities-client"
 
 export const metadata = { title: "Initiate Utilities — BuildFox" }
@@ -49,8 +49,12 @@ async function fetchCrmJobs(): Promise<CrmJobRow[] | null> {
  * and/or the Lumber One new-job set-up form (emailed to Brad) — in one pass.
  */
 export default async function UtilitiesPage() {
-  await requireStaff()
+  const me = await requireStaff()
   const supabase = await createSupabaseServerClient()
+  // Resolve the active org once — it gates the CRM read (Hines' external
+  // system, legacy org only) and scopes the utility config.
+  const orgId = await getActiveOrgId(supabase, me.id).catch(() => null)
+  const isLegacy = orgId === LEGACY_ORG_ID
 
   const [
     { data: projects, error: pErr },
@@ -66,12 +70,12 @@ export default async function UtilitiesPage() {
       .from("utility_requests")
       .select("*")
       .order("created_at", { ascending: false }),
-    fetchCrmJobs(),
+    // CRM jobs come from Hines Homes' external CRM — legacy org only. Any
+    // other org falls back to its own local project list for the Job dropdown.
+    isLegacy ? fetchCrmJobs() : Promise.resolve(null),
     // The org's utility config (B3 part 2). Null = this org doesn't have the
     // Utilities module — the client renders its not-configured state.
-    getActiveOrgId(supabase)
-      .catch(() => null)
-      .then((orgId) => getUtilityConfig(supabase, orgId)),
+    getUtilityConfig(supabase, orgId),
   ])
   if (pErr) throw new Error(pErr.message)
   if (rErr) throw new Error(rErr.message)

@@ -2,6 +2,8 @@
 
 import { z } from "zod"
 import { requireStaff } from "@/lib/auth"
+import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { isLegacyActiveOrg } from "@/lib/org"
 import { createSpecMagicianClient } from "@/lib/supabase/specmagician"
 
 // Live search against the HH-SpecMagician item catalog (a separate Supabase
@@ -41,11 +43,19 @@ type CatalogRow = {
 export async function searchCatalogItems(input: {
   query: string
 }): Promise<SearchCatalogResult> {
-  await requireStaff()
+  const me = await requireStaff()
   const parsed = z.object({ query: z.string().max(200) }).safeParse(input)
   if (!parsed.success) return { ok: false, error: "Bad search input." }
   const q = parsed.data.query.trim()
   if (q.length < 2) return { ok: true, items: [] }
+
+  // SpecMagician is Hines' own catalog (global env creds) — legacy org only.
+  // Non-Hines orgs get an empty result set (the picker just shows nothing)
+  // rather than a leak of Hines' catalog.
+  const supabase = await createSupabaseServerClient()
+  if (!(await isLegacyActiveOrg(supabase, me.id))) {
+    return { ok: true, items: [] }
+  }
 
   const sm = createSpecMagicianClient()
   if (!sm) {

@@ -5,7 +5,7 @@ import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createCrmClient } from "@/lib/supabase/crm"
 import { requireStaff } from "@/lib/auth"
-import { getActiveOrgId } from "@/lib/org"
+import { getActiveOrgId, isLegacyActiveOrg } from "@/lib/org"
 import type { TablesUpdate } from "@/lib/db/types"
 
 const nullableDate = z
@@ -120,7 +120,14 @@ type CrmClientRow = { id: string; name: string | null }
 export async function syncRentalsFromCrm(): Promise<
   { ok: true; synced: number } | { ok: false; error: string }
 > {
-  await requireStaff()
+  const me = await requireStaff()
+  const supabase = await createSupabaseServerClient()
+  if (!(await isLegacyActiveOrg(supabase, me.id))) {
+    return {
+      ok: false,
+      error: "Rental sync is only available for Hines Homes.",
+    }
+  }
   const crm = createCrmClient()
   if (!crm) {
     return {
@@ -147,8 +154,7 @@ export async function syncRentalsFromCrm(): Promise<
     if (c.name) nameById.set(c.id, c.name)
   }
 
-  const supabase = await createSupabaseServerClient()
-  const orgId = await getActiveOrgId(supabase)
+  const orgId = await getActiveOrgId(supabase, me.id)
   const rows = ((rentals ?? []) as CrmRentalRow[])
     .filter((r) => r.property_address)
     .map((r) => {

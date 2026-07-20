@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createCrmClient } from "@/lib/supabase/crm"
 import { requireStaff } from "@/lib/auth"
+import { isLegacyActiveOrg } from "@/lib/org"
 import { crmStatusToEnum } from "@/lib/crm-status"
 import type { Enums, TablesUpdate } from "@/lib/db/types"
 
@@ -92,7 +93,18 @@ function canonicalCrmName(row: CrmProjectRow): string | null {
  * production, and "CRM not configured" needs to reach the user verbatim.
  */
 export async function syncProjectsFromCrm(): Promise<SyncFromCrmResult> {
-  await requireStaff()
+  const me = await requireStaff()
+  const supabase = await createSupabaseServerClient()
+
+  // The CRM is Hines' own external database (global env creds). Only the legacy
+  // (Hines) org may sync from it — never pull Hines' project list into another
+  // tenant.
+  if (!(await isLegacyActiveOrg(supabase, me.id))) {
+    return {
+      ok: false,
+      error: "Sync from CRM is only available for Hines Homes.",
+    }
+  }
 
   const crm = createCrmClient()
   if (!crm) {
@@ -103,7 +115,6 @@ export async function syncProjectsFromCrm(): Promise<SyncFromCrmResult> {
     }
   }
 
-  const supabase = await createSupabaseServerClient()
   const { data: localRows, error: localErr } = await supabase
     .from("projects")
     .select(

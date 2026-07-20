@@ -1,5 +1,6 @@
 import { requireStaff } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { getActiveOrgId } from "@/lib/org"
 import {
   dashboardBaseUrl,
   listAvailableDashboardProjects,
@@ -13,15 +14,17 @@ export const metadata = { title: "New project — BuildFox" }
 export const dynamic = "force-dynamic"
 
 export default async function NewProjectPage() {
-  await requireStaff()
+  const profile = await requireStaff()
   const supabase = await createSupabaseServerClient()
+  // The dashboard project picker is Hines-only (its own external site).
+  const orgId = await getActiveOrgId(supabase, profile.id)
   // Best-effort: if the dashboard integration isn't configured or the
   // dashboard is unreachable, we fall back to the "create blank" path.
   // The template list is restricted to projects explicitly flagged as
   // templates (Edit project → "Use as template") — staff copy from a curated
   // set of templates, not from every job in the system.
   const [available, templatesResult] = await Promise.all([
-    listAvailableDashboardProjects(),
+    listAvailableDashboardProjects(orgId),
     supabase
       .from("projects")
       .select("id, project_number, name, status")

@@ -842,7 +842,11 @@ export async function saveDecision(input: DecisionInputT) {
       .eq("id", id!)
       .maybeSingle()
     if (decisionRow) {
-      await sendDashboardWebhook("decision.approved", decisionRow)
+      await sendDashboardWebhook(
+        "decision.approved",
+        decisionRow,
+        await getActiveOrgId(supabase, profile.id)
+      )
     }
     try {
       await notifyStaffOfApprovedDecision(id!)
@@ -1987,7 +1991,18 @@ export async function clientDecideDecision({
       .eq("id", decision_id)
       .maybeSingle()
     if (decisionRow) {
-      await sendDashboardWebhook("decision.approved", decisionRow)
+      // Client path (no org membership) — resolve the org from the decision's
+      // project so the dashboard webhook still gates on the legacy org.
+      const { data: proj } = await supabase
+        .from("projects")
+        .select("org_id")
+        .eq("id", decisionRow.project_id)
+        .maybeSingle()
+      await sendDashboardWebhook(
+        "decision.approved",
+        decisionRow,
+        proj?.org_id ?? null
+      )
     }
     try {
       await notifyStaffOfApprovedDecision(decision_id)

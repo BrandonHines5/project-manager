@@ -1,6 +1,7 @@
 import "server-only"
 import { createClient } from "@supabase/supabase-js"
 import { crmStatusToEnum } from "@/lib/crm-status"
+import { LEGACY_ORG_ID } from "@/lib/org"
 import type { Enums } from "@/lib/db/types"
 
 // Direct read access to the Hines Homes CRM database (a separate Supabase
@@ -39,8 +40,12 @@ export type CrmProjectStatus = {
  * Server-only; call behind requireStaff() (same trust boundary as the sync).
  */
 export async function getCrmProjectStatus(
-  projectNumber: string
+  projectNumber: string,
+  orgId: string | null
 ): Promise<CrmProjectStatus | null> {
+  // The CRM is Hines' own external database — only consult it for the legacy
+  // (Hines) org. A non-Hines project must never inherit a Hines CRM status.
+  if (orgId !== LEGACY_ORG_ID) return null
   const crm = createCrmClient()
   if (!crm) return null
   // Fail OPEN. This lookup is best-effort — a project must stay creatable even

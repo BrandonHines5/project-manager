@@ -16,7 +16,7 @@ import {
   defaultDeliveryDirections,
   type UtilityOrgConfig,
 } from "@/lib/utilities/org-config"
-import { getActiveOrgId } from "@/lib/org"
+import { getActiveOrgId, isLegacyActiveOrg, LEGACY_ORG_ID } from "@/lib/org"
 import { fillCawForms, type CawRenderData } from "@/lib/utilities/caw/pdf"
 import {
   fillLumberOneForms,
@@ -217,6 +217,11 @@ async function resolveJob(
   const supabase = await createSupabaseServerClient()
 
   if (input.crm_project_id) {
+    // The CRM is Hines Homes' external system — only the legacy org may pair a
+    // request with a CRM job. orgId is already the caller's ACTIVE org here.
+    if (orgId !== LEGACY_ORG_ID) {
+      throw new Error("CRM jobs are only available for Hines Homes.")
+    }
     const crm = createCrmClient()
     if (!crm) {
       throw new Error(
@@ -974,10 +979,14 @@ export async function getUtilityPrefill({
   projectId?: string | null
   crmId?: string | null
 }): Promise<UtilityPrefill> {
-  await requireStaff()
-  const crm = createCrmClient()
+  const me = await requireStaff()
   const supabase = await createSupabaseServerClient()
   const cfg = await requireUtilityConfig(supabase)
+  // CRM prefill reads Hines Homes' external CRM — legacy org only. A
+  // non-legacy org falls through to the local-project branch.
+  const crm = (await isLegacyActiveOrg(supabase, me.id))
+    ? createCrmClient()
+    : null
 
   if (crmId) {
     if (!crm) return { source: "none" }

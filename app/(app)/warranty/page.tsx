@@ -2,6 +2,7 @@ import { ShieldCheck } from "lucide-react"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createCrmClient } from "@/lib/supabase/crm"
 import { requireStaff } from "@/lib/auth"
+import { isLegacyActiveOrg } from "@/lib/org"
 import { EmptyState } from "@/components/ui/empty"
 import { WarrantySheet } from "@/components/warranty/warranty-sheet"
 import { AddWarrantyProjectButton } from "@/components/warranty/add-warranty-project"
@@ -21,7 +22,7 @@ type Status = Enums<"schedule_item_status">
  * and offers an "Add project" action to adopt warranty homes from the CRM.
  */
 export default async function WarrantyPage() {
-  await requireStaff()
+  const me = await requireStaff()
   const supabase = await createSupabaseServerClient()
 
   const [{ data: projects, error: projErr }, { data: properties, error: propErr }] =
@@ -158,7 +159,11 @@ export default async function WarrantyPage() {
   // Live read of property identity (address / tenant / owner) straight from the
   // CRM database, keyed by crm_rental_id. Falls back to the local cache when the
   // CRM connection isn't configured or a read fails — the page never breaks.
-  const liveByCrmId = await fetchLiveRentalInfo()
+  // The CRM is Hines Homes' external system, so only the legacy org reads it;
+  // any other org shows purely from its own rental_properties cache.
+  const liveByCrmId = (await isLegacyActiveOrg(supabase, me.id))
+    ? await fetchLiveRentalInfo()
+    : new Map<string, LiveRental>()
 
   const rentalCards: TrackerCard[] = (properties ?? []).map((p) => {
     const live = p.crm_rental_id ? liveByCrmId.get(p.crm_rental_id) : undefined
