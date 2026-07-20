@@ -141,12 +141,18 @@ export async function isLegacyOrgMember(
   supabase: SupabaseClient<Database>,
   profileId: string
 ): Promise<boolean> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("organization_members")
     .select("org_id")
     .eq("org_id", LEGACY_ORG_ID)
     .eq("profile_id", profileId)
     .maybeSingle()
+  // Fail open (see doc comment) but never silently: a read failure here means
+  // a Hines-staff password session that should be forced onto SSO slips
+  // through, so log it for observability. The access decision is unchanged.
+  if (error) {
+    console.warn("[org] isLegacyOrgMember read failed, failing open:", error.message)
+  }
   return data != null
 }
 
