@@ -56,13 +56,19 @@ export function GanttView({
   useEffect(() => {
     if (!printing) return
     // Two frames so the print DOM is laid out before the dialog snapshots it.
-    const raf = requestAnimationFrame(() =>
-      requestAnimationFrame(() => {
+    // Both handles are cancelled on cleanup — cancelling only the outer one
+    // would let the inner callback open the print dialog after an unmount.
+    let raf2 = 0
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
         window.print()
         setPrinting(false)
       })
-    )
-    return () => cancelAnimationFrame(raf)
+    })
+    return () => {
+      cancelAnimationFrame(raf1)
+      cancelAnimationFrame(raf2)
+    }
   }, [printing])
   const { DAY_PX, ROW_PX, HEADER_PX, LABEL_PX } =
     condensed ? DENSITY.condensed : DENSITY.comfortable
