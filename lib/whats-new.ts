@@ -18,7 +18,7 @@ export const WHATS_NEW: WhatsNewEntry[] = [
   {
     date: "2026-07-23",
     title:
-      "You can now add a job log straight from the all-jobs Job Logs view — a picker asks which job it belongs to, then the usual editor opens.",
+      "You can now add a job log straight from the all-jobs Job Logs view — a picker asks which job it belongs to (any job, including Complete and Warranty), then the usual editor opens.",
     kind: "feature",
   },
   {
