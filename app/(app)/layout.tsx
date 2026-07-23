@@ -107,6 +107,28 @@ export default async function AppLayout({
   // Client components need a serializable prop, not a Set.
   const features = [...orgFeatures]
 
+  // "Upgrade Account" entry in the avatar menu — owner/admin only (billing
+  // actions reject everyone else). A trial org gets a Stripe Checkout shortcut
+  // ("trial"); a former trial that already subscribed via Stripe gets a billing-
+  // portal shortcut ("subscribed"). Hines and operator-provisioned subscribers
+  // (active_subscriber with no Stripe customer) show nothing here.
+  let billing: "trial" | "subscribed" | null = null
+  if (profile.role === "staff" && orgAdmin && activeOrgId) {
+    if (orgLifecycle === "sandbox_active" || orgLifecycle === "sandbox_expired") {
+      billing = "trial"
+    } else if (activeOrgId !== LEGACY_ORG_ID) {
+      // Only a real Stripe customer (a former trial that paid) can manage
+      // billing; the read fails safe (item hidden) so a hiccup never disrupts
+      // the shell.
+      const { data: orgBilling } = await supabase
+        .from("organizations")
+        .select("stripe_customer_id")
+        .eq("id", activeOrgId)
+        .maybeSingle()
+      if (orgBilling?.stripe_customer_id) billing = "subscribed"
+    }
+  }
+
   // Buildertrend-style shell: dark menu bar on top, section tabs under it,
   // jobs list on the left, and the page content scrolling on its own inside
   // a viewport-height column (so the jobs list and its controls never
@@ -137,6 +159,7 @@ export default async function AppLayout({
         orgAdmin={orgAdmin}
         platformAdmin={platformAdmin}
         features={features}
+        billing={billing}
         // The jobs-list sidebar is desktop-only; the topbar hands the same
         // list to the mobile drawer so phones can switch jobs too.
         projects={projects ?? []}

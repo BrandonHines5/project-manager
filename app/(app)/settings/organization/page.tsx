@@ -167,6 +167,9 @@ export default async function OrganizationSettingsPage() {
               }
             : null
         }
+        // Only our own company (the legacy org) runs a second, commercial
+        // client-facing brand; other tenants present a single brand.
+        showCommercial={isLegacy}
       />
       <div className="max-w-2xl mx-auto px-4 md:px-6 pb-6 space-y-4">
         <OrganizationMembersClient

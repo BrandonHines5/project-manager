@@ -6,6 +6,7 @@ import { requireSession } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { getOrgIntegration, upsertOrgIntegration } from "@/lib/integrations/org"
+import { LEGACY_ORG_ID } from "@/lib/org"
 import type { Json } from "@/lib/db/types"
 
 /**
@@ -147,7 +148,12 @@ export async function saveOrgSettings(
         parsed.error.issues[0]?.message ?? "Invalid organization settings.",
     }
   }
-  const { orgId, name, defaultBrand, commercialBrand } = parsed.data
+  const { orgId, name, defaultBrand } = parsed.data
+  // Only our own company (the legacy org) runs a commercial sub-brand; drop it
+  // for any other tenant even if a forged call supplies one (the editor is
+  // hidden for them). Saving thus also clears any stray stored commercial block.
+  const commercialBrand =
+    orgId === LEGACY_ORG_ID ? parsed.data.commercialBrand : null
   for (const brand of [defaultBrand, commercialBrand]) {
     for (const path of [brand?.logoPath, brand?.iconPath]) {
       if (path && !validAssetPath(path, orgId)) {
