@@ -259,11 +259,20 @@ export async function postPoCommentPublic(input: { token: string; body: string }
 
   const staffLink = `/projects/${po.project_id}/purchase-orders?open=${po.id}`
   try {
-    const { data: staff } = await admin
-      .from("profiles")
-      .select("email, notifications_enabled")
-      .eq("role", "staff")
-      .eq("notifications_enabled", true)
+    // Org-scoped like every other staff fan-out in this file — the admin
+    // client bypasses org RLS, so an unscoped query would email every
+    // tenant's staff. Missing org fails closed to nobody.
+    const orgId = po.projects?.org_id ?? null
+    const { data: staff } = orgId
+      ? await admin
+          .from("profiles")
+          .select(
+            "email, notifications_enabled, organization_members!inner(org_id)"
+          )
+          .eq("role", "staff")
+          .eq("notifications_enabled", true)
+          .eq("organization_members.org_id", orgId)
+      : { data: [] }
     const emails = (staff ?? [])
       .map((p) => p.email)
       .filter((e): e is string => !!e)

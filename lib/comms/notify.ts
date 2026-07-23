@@ -25,13 +25,14 @@ export async function notifyCommentPosted(opts: {
   counterpartyProfileIds?: string[]
   counterpartyLink?: string | null
   /**
-   * The project the commented entity belongs to. When set, the staff fan-out
-   * is limited to members of that project's organization (the admin client
-   * bypasses org RLS, so an unscoped all-staff query would ring every
-   * tenant's bell). Resolution failure fails CLOSED to nobody. Omit only for
-   * entities with genuinely no project.
+   * The project the commented entity belongs to. REQUIRED so a future caller
+   * can't reintroduce an unscoped all-staff fan-out by omission — the staff
+   * fan-out is limited to members of the project's organization (the admin
+   * client bypasses org RLS). Resolution failure fails CLOSED to nobody.
+   * Pass `null` explicitly only for entities with genuinely no project
+   * (those notify all staff, the legacy single-tenant behavior).
    */
-  projectId?: string | null
+  projectId: string | null
 }): Promise<void> {
   try {
     const admin = createSupabaseAdminClient()
@@ -42,6 +43,30 @@ export async function notifyCommentPosted(opts: {
     if (opts.authorIsStaff) {
       recipientIds = opts.counterpartyProfileIds ?? []
       linkUrl = opts.counterpartyLink ?? opts.staffLink
+    } else if (opts.projectId) {
+      const { data: proj } = await admin
+        .from("projects")
+        .select("org_id")
+        .eq("id", opts.projectId)
+        .maybeSingle()
+      const orgId = proj?.org_id
+      if (!orgId) {
+        console.warn(
+          "[comms] could not resolve the project's org — skipping staff fan-out"
+        )
+        return
+      }
+      const { data: staff, error } = await admin
+        .from("profiles")
+        .select("id, organization_members!inner(org_id)")
+        .eq("role", "staff")
+        .eq("organization_members.org_id", orgId)
+      if (error) {
+        console.warn("[comms] staff lookup failed:", error.message)
+        return
+      }
+      recipientIds = (staff ?? []).map((p) => p.id)
+      linkUrl = opts.staffLink
     } else {
       const { data: staff, error } = await admin
         .from("profiles")
@@ -52,26 +77,6 @@ export async function notifyCommentPosted(opts: {
         return
       }
       recipientIds = (staff ?? []).map((p) => p.id)
-      if (opts.projectId) {
-        const { data: proj } = await admin
-          .from("projects")
-          .select("org_id")
-          .eq("id", opts.projectId)
-          .maybeSingle()
-        const orgId = proj?.org_id
-        if (!orgId) {
-          console.warn(
-            "[comms] could not resolve the project's org — skipping staff fan-out"
-          )
-          return
-        }
-        const { data: members } = await admin
-          .from("organization_members")
-          .select("profile_id")
-          .eq("org_id", orgId)
-        const memberIds = new Set((members ?? []).map((m) => m.profile_id))
-        recipientIds = recipientIds.filter((id) => memberIds.has(id))
-      }
       linkUrl = opts.staffLink
     }
 
