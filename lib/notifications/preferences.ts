@@ -80,6 +80,10 @@ type AnySupabase = SupabaseClient<Database>
  * writing a notifications row. Fails open (empty set) like isChannelEnabled
  * — a lookup error must never swallow real notifications. No project = no
  * mutes apply.
+ *
+ * IMPORTANT: the mutes table is owner-only RLS, so checking OTHER users'
+ * mutes requires the ADMIN client — an RLS-scoped session client silently
+ * returns an empty set for anyone but the caller.
  */
 export async function mutedProfileIdsForProject(
   supabase: AnySupabase,

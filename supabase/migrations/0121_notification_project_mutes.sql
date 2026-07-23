@@ -22,6 +22,12 @@ create table if not exists public.notification_project_mutes (
   primary key (profile_id, project_id)
 );
 
+-- Covering index for project_id-only access — the per-project mute lookups
+-- and the projects ON DELETE CASCADE aren't served by the (profile_id,
+-- project_id) PK.
+create index if not exists idx_npm_project
+  on public.notification_project_mutes (project_id);
+
 alter table public.notification_project_mutes enable row level security;
 
 -- Owner-only: users manage their own mutes. A mute only ever suppresses the

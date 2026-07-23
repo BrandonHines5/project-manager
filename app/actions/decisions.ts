@@ -913,12 +913,17 @@ async function notifyClientOfDecision(
   // the client see their own row under RLS.
   const recipients: { profile_id: string; email: string; name: string | null }[] = []
   // Per-job mutes (0121) apply to clients too — this is a direct email with
-  // no notifications row for the trigger to drop.
-  const mutedClients = await mutedProfileIdsForProject(
-    supabase,
-    (clients ?? []).map((m) => m.profile_id),
-    projectId
-  )
+  // no notifications row for the trigger to drop. The lookup MUST run on the
+  // admin client: the mutes table is owner-only RLS, so a staff session
+  // reading the clients' mutes would always see an empty set.
+  const adminForMutes = createSupabaseAdminClient()
+  const mutedClients = adminForMutes
+    ? await mutedProfileIdsForProject(
+        adminForMutes,
+        (clients ?? []).map((m) => m.profile_id),
+        projectId
+      )
+    : new Set<string>()
   for (const m of clients ?? []) {
     if (mutedClients.has(m.profile_id)) continue
     const prof = (

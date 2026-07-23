@@ -3,6 +3,7 @@
 import { z } from "zod"
 import { revalidatePath } from "next/cache"
 import { requireSession } from "@/lib/auth"
+import { assertActiveOrgWritable } from "@/lib/sandbox"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 
 const Input = z.object({
@@ -22,8 +23,19 @@ export async function setProjectNotificationsMuted(input: {
   muted: boolean
 }) {
   const me = await requireSession()
+  await assertActiveOrgWritable()
   const parsed = Input.parse(input)
   const supabase = await createSupabaseServerClient()
+
+  // Only jobs the caller can actually see can be muted — the RLS-scoped
+  // projects read is the visibility source of truth, so an arbitrary UUID
+  // (another org's project) can't be written into a mute row.
+  const { data: project } = await supabase
+    .from("projects")
+    .select("id")
+    .eq("id", parsed.project_id)
+    .maybeSingle()
+  if (!project) throw new Error("Job not found or not accessible.")
 
   if (parsed.muted) {
     const { error } = await supabase.from("notification_project_mutes").upsert(

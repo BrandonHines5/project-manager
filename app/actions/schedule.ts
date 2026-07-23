@@ -745,12 +745,17 @@ async function notifyScheduleAssignees(
         .select("id, email, email_digest_pref, notifications_enabled")
         .in("id", profileIds)
       // Per-job mutes (0121): the in-app rows above are trigger-covered;
-      // this immediate email is not.
-      const mutedForJob = await mutedProfileIdsForProject(
-        supabase,
-        (profs ?? []).map((p) => p.id),
-        projectId
-      )
+      // this immediate email is not. Owner-only RLS on the mutes table means
+      // the ADMIN client is required to see the assignees' mutes — the
+      // session client would always read an empty set.
+      const adminForMutes = createSupabaseAdminClient()
+      const mutedForJob = adminForMutes
+        ? await mutedProfileIdsForProject(
+            adminForMutes,
+            (profs ?? []).map((p) => p.id),
+            projectId
+          )
+        : new Set<string>()
       for (const p of profs ?? []) {
         if (
           p.email &&
