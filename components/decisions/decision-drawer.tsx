@@ -1588,6 +1588,28 @@ export function DecisionDrawer({
   )
 }
 
+/**
+ * Letters each choice by its SAVED position ("C." keeps reading "C." after a
+ * move, so options still match prior conversations about them) and, when
+ * `pinKey` matches a choice's key, floats that choice to the top. Shared by
+ * the staff editor (keyed by client_key) and the client picker (keyed by id)
+ * so the two views' ordering can't drift.
+ */
+function pinChoiceFirst(
+  choices: Choice[],
+  keyOf: (c: Choice) => string | undefined,
+  pinKey: string | null
+): { c: Choice; letter: string }[] {
+  const lettered = choices.map((c, i) => ({
+    c,
+    letter: String.fromCharCode(65 + i),
+  }))
+  if (!pinKey) return lettered
+  return [...lettered].sort(
+    (a, b) => Number(keyOf(b.c) === pinKey) - Number(keyOf(a.c) === pinKey)
+  )
+}
+
 function ChoicesEditor({
   value,
   onChange,
@@ -1663,18 +1685,11 @@ function ChoicesEditor({
   }
   // Same treatment as the client picker: once approved, the chosen option
   // floats to the top but keeps its original letter.
-  const lettered = value.map((c, i) => ({
-    c,
-    letter: String.fromCharCode(65 + i),
-  }))
-  const displayed =
-    pinChosen && selectedChoiceKey
-      ? [...lettered].sort(
-          (a, b) =>
-            Number(b.c.client_key === selectedChoiceKey) -
-            Number(a.c.client_key === selectedChoiceKey)
-        )
-      : lettered
+  const displayed = pinChoiceFirst(
+    value,
+    (c) => c.client_key,
+    pinChosen ? selectedChoiceKey : null
+  )
 
   return (
     <div className="rounded-md border border-border-strong bg-background/30 p-3 space-y-3">
@@ -1715,7 +1730,7 @@ function ChoicesEditor({
               className={cn(
                 "rounded-md border bg-surface p-3 space-y-2",
                 isSelected
-                  ? "border-green-600 ring-2 ring-green-500/30 bg-green-50/60"
+                  ? "border-success ring-2 ring-success/30 bg-success/10"
                   : "border-border"
               )}
             >
@@ -2249,20 +2264,8 @@ function ClientChoicePicker({
     )
   }
   const hasAllowance = allowance != null
-  // The approved pick floats to the top so it's unmissable. Letters stay
-  // tied to each choice's saved position ("C." keeps reading "C." after the
-  // move) so the options still match any prior conversation about them.
-  const lettered = choices.map((c, i) => ({
-    c,
-    letter: String.fromCharCode(65 + i),
-  }))
-  const ordered = approvedChoiceId
-    ? [...lettered].sort(
-        (a, b) =>
-          Number(b.c.id === approvedChoiceId) -
-          Number(a.c.id === approvedChoiceId)
-      )
-    : lettered
+  // The approved pick floats to the top so it's unmissable.
+  const ordered = pinChoiceFirst(choices, (c) => c.id, approvedChoiceId)
   return (
     <div className="space-y-2">
       <Label>
@@ -2320,7 +2323,7 @@ function ClientChoicePicker({
                   "w-full text-left rounded-md border p-3 transition-colors",
                   locked ? "cursor-default" : "cursor-pointer hover:bg-background/60",
                   isApproved
-                    ? "border-green-600 ring-2 ring-green-500/40 bg-green-50"
+                    ? "border-success ring-2 ring-success/40 bg-success/10"
                     : isSelected
                     ? "border-blue-500 ring-1 ring-blue-500/20"
                     : "border-border"
