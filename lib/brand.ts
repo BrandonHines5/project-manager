@@ -49,6 +49,23 @@ export const MJV_BUILDING_GROUP: Brand = {
 }
 
 /**
+ * The platform's own brand — the neutral placeholder every org that hasn't
+ * uploaded its own logo yet presents under (a fresh trial org, or any org with
+ * no configured brand). The square icon is a real 512px PNG so link-preview
+ * crawlers on the public bid/PO pages render it (they routinely refuse SVG).
+ * Used only for its logo/icon assets in the parse fallbacks below — the org's
+ * own NAME still carries through, so a trial builder sees their company name,
+ * not "BuildFox".
+ */
+export const BUILDFOX: Brand = {
+  key: "buildfox",
+  name: "BuildFox",
+  mark: "/brand/buildfox-mark.svg",
+  logo: "/brand/buildfox-mark.svg",
+  icon: "/brand/buildfox-icon.png",
+}
+
+/**
  * An org's client-facing branding (Stage B3): the default brand plus an
  * optional commercial sub-brand that commercial project types present under.
  * Stored as `organizations.settings.brands` and parsed with
@@ -81,9 +98,9 @@ function parseBrand(v: unknown): Brand | null {
   return {
     key: o.key,
     name: o.name,
-    mark: str(o.mark, "/brand/buildfox-mark.svg"),
-    logo: str(o.logo, "/brand/buildfox-mark.svg"),
-    icon: str(o.icon, "/icon-512.png"),
+    mark: str(o.mark, BUILDFOX.mark),
+    logo: str(o.logo, BUILDFOX.logo),
+    icon: str(o.icon, BUILDFOX.icon),
   }
 }
 
@@ -115,10 +132,10 @@ export function parseBrandConfig(
     return {
       default: {
         key: "org",
-        name: orgName?.trim() || "BuildFox",
-        mark: "/brand/buildfox-mark.svg",
-        logo: "/brand/buildfox-mark.svg",
-        icon: "/icon-512.png",
+        name: orgName?.trim() || BUILDFOX.name,
+        mark: BUILDFOX.mark,
+        logo: BUILDFOX.logo,
+        icon: BUILDFOX.icon,
       },
       ...(commercial ? { commercial } : {}),
     }

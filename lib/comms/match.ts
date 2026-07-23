@@ -32,6 +32,83 @@ function last10(phone: string | null | undefined): string | null {
 }
 
 /**
+ * Discards attribution that resolved into a different org than the one the
+ * event verifiably belongs to (the org owning a Twilio number, or the org
+ * whose OpenPhone signing secret verified the event). Verifies the matched
+ * project and company are in-org, and that a matched profile is an
+ * organization member there; if any link isn't, drops project/company/
+ * profile AND the display name (all resolved from the other tenant's
+ * directory) so a cross-tenant contact can never file a message onto — or
+ * leak contact names into — another org. No-op when the match had no links.
+ *
+ * `lookupFailed` distinguishes a query ERROR (the match comes back unlinked
+ * AND flagged, so a transient failure can't silently unlink) from a genuine
+ * cross-org drop. Callers choose their posture: the Twilio webhook throws for
+ * a retryable 503, the Quo webhook keeps the message with attribution dropped
+ * (its always-200 contract can't retry without losing the event).
+ */
+export async function scopeMatchToOrg(
+  admin: AdminClient,
+  match: MatchResult,
+  orgId: string
+): Promise<{ match: MatchResult; lookupFailed: boolean }> {
+  const unlinked: MatchResult = {
+    ...match,
+    project_id: null,
+    company_id: null,
+    profile_id: null,
+    // The display name was resolved from another tenant's directory — it
+    // goes too, or org B's feed would show org A's contact naming.
+    counterparty_name: null,
+  }
+  if (match.project_id) {
+    const { data, error } = await admin
+      .from("projects")
+      .select("org_id")
+      .eq("id", match.project_id)
+      .maybeSingle()
+    if (error) {
+      console.warn("[comms] org-scope project lookup failed:", error.message)
+      return { match: unlinked, lookupFailed: true }
+    }
+    if (!data || data.org_id !== orgId) {
+      return { match: unlinked, lookupFailed: false }
+    }
+  }
+  if (match.company_id) {
+    const { data, error } = await admin
+      .from("companies")
+      .select("org_id")
+      .eq("id", match.company_id)
+      .maybeSingle()
+    if (error) {
+      console.warn("[comms] org-scope company lookup failed:", error.message)
+      return { match: unlinked, lookupFailed: true }
+    }
+    if (!data || data.org_id !== orgId) {
+      return { match: unlinked, lookupFailed: false }
+    }
+  }
+  if (match.profile_id) {
+    // A profile belongs to an org through organization_members — a standalone
+    // profile match can otherwise carry a same-number person from another
+    // tenant. Drop attribution unless they're a member here.
+    const { data, error } = await admin
+      .from("organization_members")
+      .select("profile_id")
+      .eq("org_id", orgId)
+      .eq("profile_id", match.profile_id)
+      .maybeSingle()
+    if (error) {
+      console.warn("[comms] org-scope membership lookup failed:", error.message)
+      return { match: unlinked, lookupFailed: true }
+    }
+    if (!data) return { match: unlinked, lookupFailed: false }
+  }
+  return { match, lookupFailed: false }
+}
+
+/**
  * Attribute an inbound phone number / email address to a project, company,
  * and/or person. Resolution order:
  *

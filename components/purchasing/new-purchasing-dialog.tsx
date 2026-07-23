@@ -53,6 +53,7 @@ export function NewPurchasingDialog({
   companies,
   costCodes,
   templates,
+  allowedKinds = ["bid", "po"],
 }: {
   open: boolean
   onClose: () => void
@@ -63,11 +64,15 @@ export function NewPurchasingDialog({
     "id" | "code" | "name" | "position" | "is_active"
   >[]
   templates: PurchasingTemplateRow[]
+  /** Feature gating (0122): which kinds the org's plan includes. */
+  allowedKinds?: Kind[]
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
 
-  const [kind, setKind] = useState<Kind>("bid")
+  const [kind, setKind] = useState<Kind>(
+    allowedKinds.includes("bid") ? "bid" : "po"
+  )
   const [templateId, setTemplateId] = useState("")
   const [title, setTitle] = useState("")
   const [scope, setScope] = useState("")
@@ -216,6 +221,7 @@ export function NewPurchasingDialog({
         <DialogBody className="space-y-6">
           {/* Kind toggle */}
           <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Record type">
+            {allowedKinds.includes("bid") && (
             <button
               type="button"
               role="radio"
@@ -235,6 +241,8 @@ export function NewPurchasingDialog({
                 Multiple subs price the scope; you compare and award.
               </span>
             </button>
+            )}
+            {allowedKinds.includes("po") && (
             <button
               type="button"
               role="radio"
@@ -254,6 +262,7 @@ export function NewPurchasingDialog({
                 One sub/vendor approves a priced scope via a private link.
               </span>
             </button>
+            )}
           </div>
 
           {/* Template */}

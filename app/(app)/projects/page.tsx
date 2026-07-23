@@ -26,7 +26,7 @@ export default async function ProjectsPage() {
   const profile = await requireSession()
   const supabase = await createSupabaseServerClient()
   // The "new requests waiting for review" banner belongs to whoever triages
-  // feedback — legacy (Hines) staff, per the 0123 routing. Builder-org staff
+  // feedback — legacy (Hines) staff, per the 0124 routing. Builder-org staff
   // are submitters, so they get the same "updates on your requests" panel as
   // clients/trades.
   const triagesFeedback =

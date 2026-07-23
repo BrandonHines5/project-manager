@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
+import { hasOrgFeature } from "@/lib/feature-gate"
 import { runAgentTurn, type OnsiteProjectContext } from "@/lib/ai/agent"
 import { applyPlan as applyPlanInternal } from "@/lib/ai/apply"
 import type { AgentTurnResult, AppliedMutation, ProposedMutation } from "@/lib/ai/types"
@@ -102,6 +103,12 @@ export async function runAgentTurnAction(input: {
   context?: OnsiteContextInput
 }): Promise<AgentTurnResult> {
   const profile = await requireStaff()
+  if (!(await hasOrgFeature("ai_assistant", profile.id))) {
+    return {
+      type: "error",
+      message: "The AI assistant isn't included in your plan. Contact support to upgrade.",
+    }
+  }
   const displayName = profile.full_name || profile.email || "Team member"
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
@@ -477,6 +484,12 @@ export async function applyPlanAction(input: {
   // useless for the user. Return typed errors instead so the dialog can
   // show the real reason a plan didn't apply.
   const profile = await requireStaff()
+  if (!(await hasOrgFeature("ai_assistant", profile.id))) {
+    return {
+      ok: false,
+      error: "The AI assistant isn't included in your plan. Contact support to upgrade.",
+    }
+  }
   const parsed = ApplyInputSchema.safeParse(input)
   if (!parsed.success) {
     const issue = parsed.error.issues[0]

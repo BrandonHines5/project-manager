@@ -7,6 +7,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { brandForProjectTypes } from "@/lib/brand"
 import { getBrandConfig } from "@/lib/org-brand"
 import { getOrgMemberships, resolveActiveOrgId, LEGACY_ORG_ID } from "@/lib/org"
+import { getOrgFeatures } from "@/lib/features"
 import { resolveOrgLifecycle } from "@/lib/sandbox"
 import { SandboxPaywall } from "@/components/layout/sandbox-paywall"
 
@@ -98,7 +99,38 @@ export default async function AppLayout({
   // Sandbox/trial lifecycle (S1): an org whose trial has lapsed is frozen
   // behind the paywall. Lazy-flips sandbox_active→sandbox_expired on read and
   // fails open, so the ~everyone case (active_subscriber) is untouched.
-  const orgLifecycle = await resolveOrgLifecycle(supabase, activeOrgId)
+  // Feature gating (0122) resolves alongside — both are independent org reads.
+  const [orgLifecycle, orgFeatures] = await Promise.all([
+    resolveOrgLifecycle(supabase, activeOrgId),
+    getOrgFeatures(supabase, activeOrgId),
+  ])
+  // Client components need a serializable prop, not a Set.
+  const features = [...orgFeatures]
+
+  // "Upgrade Account" entry in the avatar menu — owner/admin only (billing
+  // actions reject everyone else). An ACTIVE trial gets a Stripe Checkout
+  // shortcut ("trial"); a former trial that already subscribed via Stripe gets
+  // a billing-portal shortcut ("subscribed"). Hines and operator-provisioned
+  // subscribers (active_subscriber with no Stripe customer) show nothing here.
+  // An EXPIRED trial is deliberately excluded: its whole shell (this menu
+  // included) is inert, and the SandboxPaywall carries the Checkout button
+  // outside that inert subtree — so Checkout stays reachable to restore access.
+  let billing: "trial" | "subscribed" | null = null
+  if (profile.role === "staff" && orgAdmin && activeOrgId) {
+    if (orgLifecycle === "sandbox_active") {
+      billing = "trial"
+    } else if (activeOrgId !== LEGACY_ORG_ID) {
+      // Only a real Stripe customer (a former trial that paid) can manage
+      // billing; the read fails safe (item hidden) so a hiccup never disrupts
+      // the shell.
+      const { data: orgBilling } = await supabase
+        .from("organizations")
+        .select("stripe_customer_id")
+        .eq("id", activeOrgId)
+        .maybeSingle()
+      if (orgBilling?.stripe_customer_id) billing = "subscribed"
+    }
+  }
 
   // Buildertrend-style shell: dark menu bar on top, section tabs under it,
   // jobs list on the left, and the page content scrolling on its own inside
@@ -129,6 +161,8 @@ export default async function AppLayout({
         activeOrgId={activeOrgId}
         orgAdmin={orgAdmin}
         platformAdmin={platformAdmin}
+        features={features}
+        billing={billing}
         // The jobs-list sidebar is desktop-only; the topbar hands the same
         // list to the mobile drawer so phones can switch jobs too.
         projects={projects ?? []}
@@ -136,6 +170,7 @@ export default async function AppLayout({
       <SectionTabs
         role={profile.role}
         financialAccess={profile.role === "staff" && !!profile.financial_access}
+        features={features}
       />
       <ProjectContextShell
         sidebar={

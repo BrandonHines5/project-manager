@@ -41,7 +41,7 @@ export async function submitFeedback(input: SubmitFeedbackInput) {
   })
   if (error) throw new Error(error.message)
 
-  // A request from a builder org is a message TO the platform operator (0123):
+  // A request from a builder org is a message TO the platform operator (0124):
   // it lands in the operator's own Feedback & Requests queue via RLS, and this
   // email makes sure it's seen without polling that page. Legacy (Hines)
   // submissions keep the internal flow — the dashboard banner, no email.
@@ -175,7 +175,7 @@ export async function updateFeedbackNotes(input: z.infer<typeof NotesInput>) {
   if (error) throw new Error(error.message)
 
   // A note on a builder org's request is the platform's reply to the
-  // requestor (0123). Their own Feedback & Requests page shows it, but they
+  // requestor (0124). Their own Feedback & Requests page shows it, but they
   // shouldn't have to poll — email them the reply too. Legacy (Hines) rows
   // keep the internal flow: no email, the dashboard panel covers it.
   if (

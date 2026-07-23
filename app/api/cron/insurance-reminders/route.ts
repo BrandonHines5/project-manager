@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
+import { getOrgFeatures } from "@/lib/features"
 import { sendEmail, appUrl } from "@/lib/email"
 import { isChannelEnabled } from "@/lib/notifications/preferences"
 import {
@@ -113,7 +114,7 @@ export async function GET(req: Request) {
   const { data: companies, error: compErr } = await supabase
     .from("companies")
     .select(
-      "id, name, email, contact_name, status, notifications_enabled, insurance_upload_token, insurance_agent_email"
+      "id, name, org_id, email, contact_name, status, notifications_enabled, insurance_upload_token, insurance_agent_email"
     )
     .in("id", Array.from(new Set(current.map((c) => c.company_id))))
   if (compErr) {
@@ -135,6 +136,17 @@ export async function GET(req: Request) {
     byCompany.set(c.company_id, list)
   }
 
+  const orgVendorDocs = new Map<string, boolean>()
+  const orgHasVendorDocs = async (orgId: string | null): Promise<boolean> => {
+    if (!orgId) return true
+    let has = orgVendorDocs.get(orgId)
+    if (has === undefined) {
+      has = (await getOrgFeatures(supabase, orgId)).has("vendor_documents")
+      orgVendorDocs.set(orgId, has)
+    }
+    return has
+  }
+
   for (const [companyId, policies] of byCompany) {
     const company = companyById.get(companyId)
     if (!company) continue
@@ -149,6 +161,18 @@ export async function GET(req: Request) {
         policies: policies.length,
         sent: false,
         reason: `insurance not required (status: ${company.status ?? "none"})`,
+      })
+      continue
+    }
+    // Feature gating (0122): reminders go out on the org's behalf — an org
+    // whose plan lacks vendor documents shouldn't have subs chased by email.
+    // Fail-open resolution, cached per org for the run.
+    if (!(await orgHasVendorDocs(company.org_id))) {
+      summary.push({
+        company: company.name,
+        policies: policies.length,
+        sent: false,
+        reason: "vendor documents not in the organization's plan",
       })
       continue
     }

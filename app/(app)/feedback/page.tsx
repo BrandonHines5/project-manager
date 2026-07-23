@@ -12,7 +12,7 @@ export default async function FeedbackPage() {
   const isStaff = profile.role === "staff"
   const supabase = await createSupabaseServerClient()
 
-  // Triage rights mirror the 0123 RLS: Hines (legacy-org) staff triage Hines
+  // Triage rights mirror the 0124 RLS: Hines (legacy-org) staff triage Hines
   // rows, and the platform operator (legacy-org OWNER) reads + triages every
   // org's rows. Builder-org staff are submitters here — their requests route
   // to the platform, so they get the tracking view, not the triage controls.

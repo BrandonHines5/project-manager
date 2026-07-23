@@ -27,7 +27,7 @@ type Filter = "All" | FeedbackStatus
 
 // `isStaff` shows the Submitted-by column (a builder owner still sees which
 // teammate filed a request); `canTriage` (legacy staff / platform operator —
-// mirrors the 0123 RLS) unlocks the status/notes editors and delete; `showOrg`
+// mirrors the 0124 RLS) unlocks the status/notes editors and delete; `showOrg`
 // adds the Organization column on the platform operator's cross-org queue.
 export function FeedbackTable({
   rows,

@@ -9,11 +9,14 @@ import {
   Check,
   ChevronDown,
   Clock,
+  CreditCard,
   LogOut,
   MessageSquarePlus,
   Plug,
   PlusCircle,
   Settings,
+  SlidersHorizontal,
+  Sparkles,
   Tags,
   Wallet,
 } from "lucide-react"
@@ -28,7 +31,12 @@ import { BrandTile } from "@/components/layout/brand-tile"
 import type { SidebarProject } from "@/components/layout/project-list-sidebar"
 import type { UserRole } from "@/lib/auth"
 import { HINES_HOMES, type Brand } from "@/lib/brand"
+import { ALL_FEATURE_KEYS, type FeatureKey } from "@/lib/features"
 import { setActiveOrg } from "@/app/actions/org"
+import {
+  createSubscriptionCheckout,
+  createBillingPortalSession,
+} from "@/app/actions/billing"
 
 // AIAgent bundles the smart-update chat, its ~450-LOC plan-review UI, and the
 // Web-Speech shims — all of it only ever mounts behind the trigger button. Code-
@@ -49,7 +57,7 @@ type MenuEntry =
   | { label: string; href: string; items?: undefined }
   | { label: string; items: MenuLink[]; href?: undefined }
 
-function menusFor(role: UserRole): MenuEntry[] {
+function menusFor(role: UserRole, features: FeatureKey[]): MenuEntry[] {
   if (role === "staff") {
     return [
       { label: "Projects", href: "/projects" },
@@ -57,7 +65,11 @@ function menusFor(role: UserRole): MenuEntry[] {
         label: "People",
         items: [
           { href: "/companies", label: "Companies" },
-          { href: "/companies/vendor-documents", label: "Vendor Documents" },
+          // Feature-gated (0122): hidden for orgs whose plan lacks it — the
+          // page + actions re-enforce server-side.
+          ...(features.includes("vendor_documents")
+            ? [{ href: "/companies/vendor-documents", label: "Vendor Documents" }]
+            : []),
           { href: "/clients", label: "Clients" },
           { href: "/team", label: "Team" },
         ],
@@ -96,6 +108,8 @@ export function Topbar({
   activeOrgId = null,
   orgAdmin = false,
   platformAdmin = false,
+  features = [...ALL_FEATURE_KEYS],
+  billing = null,
 }: {
   fullName: string
   email: string
@@ -111,10 +125,42 @@ export function Topbar({
   /** Owner of the legacy (Hines) org — the platform operator who can
    * provision new organizations. */
   platformAdmin?: boolean
+  /** The active org's feature set (0122) — trims gated nav/buttons. Defaults
+   * to everything so a missing prop can never hide features. */
+  features?: FeatureKey[]
+  /**
+   * Billing shortcut for the avatar menu (owner/admin only): "trial" → start a
+   * Stripe Checkout to subscribe; "subscribed" → open the billing portal to
+   * manage/upgrade; null → no billing entry.
+   */
+  billing?: "trial" | "subscribed" | null
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [switching, setSwitching] = useState(false)
+  const [billingLoading, setBillingLoading] = useState(false)
   const router = useRouter()
+
+  // Owner/admin billing shortcut: trial orgs go to Checkout, existing
+  // subscribers to the Stripe portal. Keep the button in its loading state
+  // through the redirect so it can't be double-fired.
+  const startBilling = async () => {
+    if (billingLoading) return
+    setBillingLoading(true)
+    try {
+      const result =
+        billing === "subscribed"
+          ? await createBillingPortalSession()
+          : await createSubscriptionCheckout()
+      if (result.ok) {
+        window.location.href = result.url
+        return
+      }
+      toast.error(result.error ?? "Couldn't open billing. Please try again.")
+    } catch {
+      toast.error("Couldn't open billing. Please try again.")
+    }
+    setBillingLoading(false)
+  }
 
   const switchOrg = async (orgId: string) => {
     if (switching || orgId === activeOrgId) return
@@ -134,7 +180,7 @@ export function Topbar({
     // extends up under the iPhone status bar in home-screen mode without
     // the notch overlapping the controls.
     <header className="min-h-14 pt-[env(safe-area-inset-top)] shrink-0 bg-sidebar text-sidebar-foreground flex items-center gap-2 px-3 md:px-4">
-      <MobileNav role={role} brand={brand} projects={projects} />
+      <MobileNav role={role} brand={brand} projects={projects} features={features} />
       <Link
         href="/projects"
         className="flex items-center gap-2 shrink-0 md:mr-3"
@@ -150,14 +196,14 @@ export function Topbar({
         </div>
       </Link>
 
-      <TopNavMenus role={role} />
+      <TopNavMenus role={role} features={features} />
 
       {/* min-w-0 lets the search pill (the only shrinkable item) absorb any
           squeeze instead of the bar overflowing. */}
       <div className="ml-auto flex items-center gap-1.5 min-w-0">
         <GlobalSearch dark />
         <FeedbackButton dark />
-        <AIAgent dark />
+        {features.includes("ai_assistant") && <AIAgent dark />}
         <Link
           href="/notifications"
           className="relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-white/70 hover:bg-white/10 hover:text-white"
@@ -199,6 +245,29 @@ export function Topbar({
                   <div className="text-sm font-medium">{fullName || "—"}</div>
                   <div className="text-xs text-muted">{email}</div>
                 </div>
+                {/* Billing shortcut — trial orgs subscribe, subscribers manage.
+                    Highlighted so the upsell stands out from the settings list. */}
+                {billing && (
+                  <div className="border-b border-border py-1">
+                    <button
+                      type="button"
+                      onClick={startBilling}
+                      disabled={billingLoading}
+                      className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 font-medium text-brand-700 hover:bg-background cursor-pointer disabled:opacity-60"
+                    >
+                      {billing === "subscribed" ? (
+                        <CreditCard className="h-4 w-4" />
+                      ) : (
+                        <Sparkles className="h-4 w-4" />
+                      )}
+                      {billingLoading
+                        ? "Opening…"
+                        : billing === "subscribed"
+                          ? "Manage subscription"
+                          : "Upgrade Account"}
+                    </button>
+                  </div>
+                )}
                 {/* Org switcher — only when the user belongs to 2+ orgs
                     (today nobody does; this is the B5 multi-org surface). */}
                 {orgs.length > 1 && (
@@ -242,6 +311,16 @@ export function Topbar({
                     Provision organization
                   </Link>
                 )}
+                {role === "staff" && platformAdmin && (
+                  <Link
+                    href="/settings/features"
+                    onClick={() => setMenuOpen(false)}
+                    className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-background cursor-pointer"
+                  >
+                    <SlidersHorizontal className="h-4 w-4 text-muted" />
+                    Feature access
+                  </Link>
+                )}
                 <Link
                   href="/settings/notifications"
                   onClick={() => setMenuOpen(false)}
@@ -280,7 +359,7 @@ export function Topbar({
                     QuickBooks
                   </Link>
                 )}
-                {role === "staff" && (
+                {role === "staff" && features.includes("budget") && (
                   <Link
                     href="/settings/budget"
                     onClick={() => setMenuOpen(false)}
@@ -321,10 +400,16 @@ export function Topbar({
  * drawer keeps the flat list). Click-to-open with an outside-click overlay;
  * a group lights up when the current route lives inside it.
  */
-function TopNavMenus({ role }: { role: UserRole }) {
+function TopNavMenus({
+  role,
+  features,
+}: {
+  role: UserRole
+  features: FeatureKey[]
+}) {
   const path = usePathname()
   const [openLabel, setOpenLabel] = useState<string | null>(null)
-  const menus = menusFor(role)
+  const menus = menusFor(role, features)
 
   const matches = (href: string) => path === href || path.startsWith(`${href}/`)
   // Longest-prefix match across every destination so /companies/vendor-documents

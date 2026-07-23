@@ -24,6 +24,36 @@ export const WHATS_NEW: WhatsNewEntry[] = [
   {
     date: "2026-07-23",
     title:
+      "Owners and admins can now upgrade straight from the account menu — trial orgs get an \"Upgrade Account\" shortcut to subscribe, and existing subscribers get a shortcut to manage their billing.",
+    kind: "feature",
+  },
+  {
+    date: "2026-07-23",
+    title:
+      "New organizations now start with a neutral BuildFox logo and square icon until you upload your own in Organization settings.",
+    kind: "improvement",
+  },
+  {
+    date: "2026-07-23",
+    title:
+      "The commercial sub-brand setting is now limited to Hines Homes; other organizations manage a single brand.",
+    kind: "improvement",
+  },
+  {
+    date: "2026-07-23",
+    title:
+      "Organizations can now connect their own OpenPhone account (Settings → Organization → Integrations, under Advanced) to text and call from a full phone app — it takes over from the built-in texting number automatically, and adding the webhook signing secret mirrors replies and calls into the Communications feed.",
+    kind: "feature",
+  },
+  {
+    date: "2026-07-23",
+    title:
+      "Platform: feature access levels — define what each subscription level includes and assign organizations to levels (avatar menu → Feature access, platform owner only).",
+    kind: "feature",
+  },
+  {
+    date: "2026-07-23",
+    title:
       "Synced Outlook emails now file to a job only when AI confidently matches the email's content to that job — everything else stays in the global Communications hub.",
     kind: "improvement",
   },

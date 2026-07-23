@@ -9,6 +9,7 @@ import { SidebarBrand, SidebarNavList } from "@/components/layout/sidebar"
 import type { SidebarProject } from "@/components/layout/project-list-sidebar"
 import { matchesStatusFilter } from "@/lib/project-status"
 import type { UserRole } from "@/lib/auth"
+import type { FeatureKey } from "@/lib/features"
 import { HINES_HOMES, type Brand } from "@/lib/brand"
 
 /**
@@ -29,10 +30,13 @@ export function MobileNav({
   role,
   brand = HINES_HOMES,
   projects = [],
+  features,
 }: {
   role: UserRole
   brand?: Brand
   projects?: SidebarProject[]
+  /** The active org's feature set (0122); defaults to everything. */
+  features?: FeatureKey[]
 }) {
   const [open, setOpen] = useState(false)
   const close = () => setOpen(false)
@@ -108,6 +112,7 @@ export function MobileNav({
             meaningful room. */}
         <SidebarNavList
           role={role}
+          features={features}
           onNavigate={close}
           className={cn(projects.length > 0 && "flex-none max-h-[45dvh]")}
         />
