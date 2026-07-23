@@ -638,7 +638,8 @@ function GanttPrintDocument({
   const LABEL = 190
   const W = LABEL + days.length * DAY
   const H = HEADER + sortedItems.length * ROW
-  const todayXP = LABEL + differenceInCalendarDays(parseISO(todayISO()), minDate) * DAY
+  const todayIso = todayISO()
+  const todayXP = LABEL + differenceInCalendarDays(parseISO(todayIso), minDate) * DAY
   // Day-level weekend stripes get noisy (and slow) on long timelines; keep
   // them for ~3 months and fall back to week gridlines beyond that.
   const showWeekends = days.length <= 100
@@ -656,7 +657,7 @@ function GanttPrintDocument({
   // Same date source as the today marker (todayISO) and the app's standard
   // fixed-locale formatter — no ambient-locale drift between server render
   // and hydration, and the header can never disagree with the marker.
-  const printedOn = formatDate(todayISO())
+  const printedOn = formatDate(todayIso)
 
   return (
     <div id="gantt-print-root">
@@ -772,7 +773,14 @@ function GanttPrintDocument({
                 stroke="#f0f0f1"
                 strokeWidth="0.5"
               />
-              <text x={4} y={y + ROW / 2 + 3.5} fontSize="9" fill="#18181b">
+              <text
+                x={4}
+                y={y + ROW / 2 + 3.5}
+                fontSize="9"
+                fill={
+                  isLateScheduleItem(item, todayIso) ? "#c62828" : "#18181b"
+                }
+              >
                 {label}
               </text>
               <rect

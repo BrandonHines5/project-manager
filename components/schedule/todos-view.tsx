@@ -91,6 +91,9 @@ export function TodosView({
           )
           .map((m) => m.role_id)
       )
+      const assignedItemIds = new Set(
+        data.assignments.map((a) => a.schedule_item_id)
+      )
       const matchingItemIds = new Set(
         data.assignments
           .filter(
@@ -101,7 +104,16 @@ export function TodosView({
           )
           .map((a) => a.schedule_item_id)
       )
-      list = list.filter((t) => matchingItemIds.has(t.id))
+      list = list.filter((t) => {
+        if (matchingItemIds.has(t.id)) return true
+        // A to-do with no assignments of its own displays its parent work
+        // item's assignees (the dimmed "inherited" chips) — match through
+        // the parent so the filter agrees with what the row shows.
+        if (t.parent_id && !assignedItemIds.has(t.id)) {
+          return matchingItemIds.has(t.parent_id)
+        }
+        return false
+      })
     }
 
     // Sort
