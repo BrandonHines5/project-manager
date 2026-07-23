@@ -161,8 +161,12 @@ async function uploadResumable(
       endpoint: `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/upload/resumable`,
       chunkSize: TUS_CHUNK_BYTES,
       retryDelays: [0, 3_000, 5_000, 10_000, 20_000],
+      // authorization is deliberately NOT in this static header map — it's
+      // set per-request in onBeforeRequest below. Listing it in both places
+      // makes XHR setRequestHeader APPEND the second value ("Bearer x,
+      // Bearer x"), which Storage rejects as 403 "Invalid Compact JWS" and
+      // every large upload dies at creation.
       headers: {
-        authorization: `Bearer ${session.access_token}`,
         apikey: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
         "x-upsert": "false",
       },
@@ -174,15 +178,18 @@ async function uploadResumable(
       },
       uploadDataDuringCreation: true,
       removeFingerprintOnSuccess: true,
-      // A long video on jobsite LTE can outlive the ~1h access token —
-      // re-read the session before each request so later chunks don't 401.
+      // The ONLY place the auth header is set (see the headers note above).
+      // Re-read per request because a long video on jobsite LTE can outlive
+      // the ~1h access token; fall back to the session captured at start so
+      // a transient getSession miss doesn't send an unauthenticated chunk.
       onBeforeRequest: async (req) => {
         const {
           data: { session: fresh },
         } = await supabase.auth.getSession()
-        if (fresh) {
-          req.setHeader("authorization", `Bearer ${fresh.access_token}`)
-        }
+        req.setHeader(
+          "authorization",
+          `Bearer ${(fresh ?? session).access_token}`
+        )
       },
       onProgress: (sent, total) => {
         if (total > 0) opts.onProgress?.(sent / total)

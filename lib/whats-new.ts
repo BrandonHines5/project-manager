@@ -18,6 +18,24 @@ export const WHATS_NEW: WhatsNewEntry[] = [
   {
     date: "2026-07-23",
     title:
+      "Fixed large-file uploads: files over 6 MB (plans, videos) failed with an authorization error — they upload normally now.",
+    kind: "fix",
+  },
+  {
+    date: "2026-07-23",
+    title:
+      "Assignment notifications now appear in the recipient's in-app bell (previously only the email went out).",
+    kind: "fix",
+  },
+  {
+    date: "2026-07-23",
+    title:
+      "Fixed decision follow-up tasks not showing in the decision drawer on the Decisions page.",
+    kind: "fix",
+  },
+  {
+    date: "2026-07-23",
+    title:
       "Approved selections and change orders can no longer be deleted (or their approved choice removed) without resetting the approval first.",
     kind: "improvement",
   },

@@ -48,9 +48,15 @@ export default async function DecisionsPage({
       .select("*")
       .eq("project_id", projectId)
       .order("number", { ascending: false }),
+    // FK-hinted: templates relate to decisions twice (direct decision_id FK
+    // and many-to-many through decision_followup_materializations), so an
+    // unhinted embed is PGRST201-ambiguous — PostgREST 300s and the page
+    // loses every follow-up template.
     supabase
       .from("decision_followup_templates")
-      .select("*, decisions!inner(project_id)")
+      .select(
+        "*, decisions!decision_followup_templates_decision_id_fkey!inner(project_id)"
+      )
       .eq("decisions.project_id", projectId)
       .order("position", { ascending: true }),
     supabase
