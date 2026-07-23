@@ -18,6 +18,7 @@ import { Select } from "@/components/ui/input"
 import { StatusBadge } from "./status-badge"
 import { PriorityBadge } from "./priority-badge"
 import { assigneeNamesFor, checklistFor } from "./helpers"
+import { isLateScheduleItem } from "@/lib/schedule/late"
 import type { ScheduleData } from "@/app/(app)/projects/[id]/schedule/schedule-client"
 import type { Tables, Enums } from "@/lib/db/types"
 import { setItemStatus } from "@/app/actions/schedule"
@@ -76,13 +77,27 @@ export function TodosView({
       }
     }
 
-    // Assignee filter: any assignment for this profile/company that matches
+    // Assignee filter: any assignment for this profile/company that matches.
+    // Role assignments count too — an item assigned to "Internal Operations
+    // Manager" belongs to whoever fills that role on this project, so
+    // filtering by that person surfaces it alongside their direct items.
     if (assigneeFilter !== "all") {
+      const filledRoleIds = new Set(
+        data.roleMembers
+          .filter(
+            (m) =>
+              m.profile_id === assigneeFilter ||
+              m.company_id === assigneeFilter
+          )
+          .map((m) => m.role_id)
+      )
       const matchingItemIds = new Set(
         data.assignments
           .filter(
             (a) =>
-              a.profile_id === assigneeFilter || a.company_id === assigneeFilter
+              a.profile_id === assigneeFilter ||
+              a.company_id === assigneeFilter ||
+              (a.role_id != null && filledRoleIds.has(a.role_id))
           )
           .map((a) => a.schedule_item_id)
       )
@@ -120,6 +135,7 @@ export function TodosView({
   }, [
     data.items,
     data.assignments,
+    data.roleMembers,
     sort,
     statusFilter,
     priorityFilter,
@@ -256,6 +272,7 @@ function TodoRow({
 
   const [pending, startTransition] = useTransition()
   const isComplete = item.status === "complete"
+  const isLate = isLateScheduleItem(item)
   // Same constraint as the schedule list view: only round-trip via this
   // control when the current status is one of the two binary states.
   // Otherwise toggling would erase `in_progress` / `delayed`.
@@ -314,6 +331,7 @@ function TodoRow({
           <span
             className={cn(
               "text-sm",
+              isLate && "text-danger",
               isComplete && "line-through text-muted"
             )}
           >
@@ -331,7 +349,12 @@ function TodoRow({
         </div>
         <div className="flex items-center gap-3 mt-0.5 text-xs text-muted">
           {item.due_date && (
-            <span className="inline-flex items-center gap-1">
+            <span
+              className={cn(
+                "inline-flex items-center gap-1",
+                isLate && "text-danger"
+              )}
+            >
               <CalendarDays className="h-3 w-3" /> Due {formatDate(item.due_date)}
             </span>
           )}

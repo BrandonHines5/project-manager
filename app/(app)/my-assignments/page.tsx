@@ -11,7 +11,8 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
 import { EmptyState } from "@/components/ui/empty"
-import { formatDate, formatDateRange } from "@/lib/utils"
+import { cn, formatDate, formatDateRange, todayISO } from "@/lib/utils"
+import { isLateScheduleItem } from "@/lib/schedule/late"
 import type { Enums } from "@/lib/db/types"
 
 export const metadata = { title: "My assignments — BuildFox" }
@@ -299,6 +300,8 @@ export default async function MyAssignmentsPage() {
     selectionRows.filter((s) => s.status === "pending_client").length
   const delayedCount = rows.filter((r) => r.status === "delayed").length
   const totalCount = rows.length + selectionRows.length
+  // One "today" for the whole render so every row's late check agrees.
+  const today = todayISO()
 
   return (
     <div className="max-w-5xl mx-auto px-4 md:px-6 py-6">
@@ -347,6 +350,7 @@ export default async function MyAssignmentsPage() {
                   : r.due_date
                     ? `Due ${formatDate(r.due_date)}`
                     : "—"
+              const isLate = isLateScheduleItem(r, today)
               return (
                 <li key={r.id} className="px-4 py-3">
                   <Link
@@ -363,12 +367,14 @@ export default async function MyAssignmentsPage() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span
-                          className={
-                            "text-sm font-medium group-hover:text-brand-600 " +
-                            (r.status === "complete"
+                          className={cn(
+                            "text-sm font-medium group-hover:text-brand-600",
+                            r.status === "complete"
                               ? "line-through text-muted"
-                              : "text-foreground")
-                          }
+                              : isLate
+                                ? "text-danger"
+                                : "text-foreground"
+                          )}
                         >
                           {r.title}
                         </span>
@@ -387,7 +393,12 @@ export default async function MyAssignmentsPage() {
                       <div className="flex items-center gap-3 mt-1 text-xs text-muted">
                         <span className="font-mono">{r.project_number}</span>
                         <span className="truncate">{r.project_name}</span>
-                        <span className="inline-flex items-center gap-1">
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1",
+                            isLate && "text-danger"
+                          )}
+                        >
                           <CalendarDays className="h-3 w-3" />
                           {dateLabel}
                         </span>

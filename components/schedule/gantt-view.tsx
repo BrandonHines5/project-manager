@@ -8,6 +8,7 @@ import { addDays as fnsAddDays, differenceInCalendarDays, parseISO, format, isWe
 import { CalendarDays, Zap, Minimize2, Printer } from "lucide-react"
 import { EmptyState } from "@/components/ui/empty"
 import { cn, todayISO, addDays, formatDate, formatDateRange } from "@/lib/utils"
+import { isLateScheduleItem } from "@/lib/schedule/late"
 import { moveScheduleItem, type MoveReasonT } from "@/app/actions/schedule"
 import { computeScheduleAnalysis } from "@/lib/schedule/scheduling"
 import { MoveReasonDialog } from "./move-reason-dialog"
@@ -238,7 +239,8 @@ export function GanttView({
 
   const totalWidth = LABEL_PX + days.length * DAY_PX
   const totalHeight = HEADER_PX + sortedItems.length * ROW_PX
-  const today = parseISO(todayISO())
+  const todayIso = todayISO()
+  const today = parseISO(todayIso)
   const todayX = LABEL_PX + differenceInCalendarDays(today, minDate) * DAY_PX
 
   // Group days by month for header.
@@ -440,7 +442,12 @@ export function GanttView({
               )}
               {/* Label */}
               <div
-                className="absolute left-0 px-3 text-sm font-medium text-foreground truncate bg-surface border-r border-border z-10 flex items-center"
+                className={cn(
+                  "absolute left-0 px-3 text-sm font-medium truncate bg-surface border-r border-border z-10 flex items-center",
+                  isLateScheduleItem(item, todayIso)
+                    ? "text-danger"
+                    : "text-foreground"
+                )}
                 style={{
                   width: LABEL_PX,
                   top: y,
