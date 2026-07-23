@@ -243,13 +243,15 @@ export async function saveDecision(input: DecisionInputT) {
   // earlier code path). Used to decide whether this save crosses an
   // approval / pending_client boundary.
   let prevStatus: string | null = null
+  let prevSelectedChoiceId: string | null = null
   if (id) {
     const { data: cur } = await supabase
       .from("decisions")
-      .select("status")
+      .select("status, selected_choice_id")
       .eq("id", id)
       .maybeSingle()
     prevStatus = cur?.status ?? null
+    prevSelectedChoiceId = cur?.selected_choice_id ?? null
   }
   const wasApproved = prevStatus === "approved"
   const newlyApproved = parsed.status === "approved" && !wasApproved
@@ -542,6 +544,18 @@ export async function saveDecision(input: DecisionInputT) {
     const choiceIdsToDelete = (existingChoices ?? [])
       .map((c) => c.id)
       .filter((cid) => !keepChoiceIds.has(cid))
+    // The approved choice can't be deleted out from under an approval — the
+    // decision's cost and the client's sign-off point at it. Reset first
+    // (which clears the approval + selected_choice_id), then remove it.
+    if (
+      wasApproved &&
+      prevSelectedChoiceId &&
+      choiceIdsToDelete.includes(prevSelectedChoiceId)
+    ) {
+      throw new Error(
+        "That choice is the approved one — reset the selection first, then remove it."
+      )
+    }
     if (choiceIdsToDelete.length) {
       const { error: dchDelErr } = await supabase
         .from("decision_choices")
@@ -1654,6 +1668,20 @@ export async function deleteDecision({
 }) {
   await requireStaff()
   const supabase = await createSupabaseServerClient()
+  // An approved decision is a financial record — its cost flows to billing
+  // and its follow-ups may have materialized. Deleting one outright is
+  // almost always a mistake, so require an explicit Reset (which undoes the
+  // approval and removes the auto-created follow-ups) first.
+  const { data: cur } = await supabase
+    .from("decisions")
+    .select("status, kind")
+    .eq("id", id)
+    .maybeSingle()
+  if (cur?.status === "approved") {
+    throw new Error(
+      `This ${cur.kind === "selection" ? "selection" : "change order"} is approved — use Reset to undo the approval first, then delete.`
+    )
+  }
   // Attachment Storage objects are NOT removed here: the delete is captured
   // into deleted_items (0088) so it can be restored from the History tab, and
   // the trash purge removes the objects when the entry expires unrestored.
