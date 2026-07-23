@@ -7,6 +7,10 @@ import { Pencil, Plus, Trash2, Users } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 import { Field, Input, Select } from "@/components/ui/input"
+import {
+  SearchableSelect,
+  type SearchableOption,
+} from "@/components/ui/searchable-select"
 import { roleLabel } from "@/lib/utils"
 import {
   Dialog,
@@ -55,6 +59,28 @@ type RoleAssignment = { role_id: string; schedule_item_id: string }
 
 function normalizeRoleKind(kind: string): RoleKind {
   return (["staff", "company", "any"].includes(kind) ? kind : "any") as RoleKind
+}
+
+// Flat people+companies list for the assignee pickers, preferred group first.
+// Values keep the `p:{id}` / `c:{id}` encoding setProjectRole expects.
+function assigneeOptions(
+  people: Profile[],
+  companies: Company[],
+  peopleFirst: boolean
+): SearchableOption[] {
+  const peopleOpts = people.map((p) => ({
+    value: `p:${p.id}`,
+    label: p.full_name || p.email || "",
+    hint: roleLabel(p.role),
+  }))
+  const companyOpts = companies.map((c) => ({
+    value: `c:${c.id}`,
+    label: c.name,
+    hint: c.trade_category ?? "company",
+  }))
+  return peopleFirst
+    ? [...peopleOpts, ...companyOpts]
+    : [...companyOpts, ...peopleOpts]
 }
 
 export function RolesClient({
@@ -288,45 +314,14 @@ function RoleRow({
         {pmHint && <p className="text-xs text-muted mt-0.5">{pmHint}</p>}
       </div>
       <div className="w-full sm:w-64">
-        <Select
+        <SearchableSelect
           value={value}
           disabled={pending}
-          onChange={(e) => change(e.target.value)}
-          aria-label={`Assignee for ${role.name}`}
-        >
-          <option value="">— Unassigned —</option>
-          {(peopleFirst
-            ? ([
-                ["people", people],
-                ["companies", companies],
-              ] as const)
-            : ([
-                ["companies", companies],
-                ["people", people],
-              ] as const)
-          ).map(([group]) =>
-            group === "people"
-              ? people.length > 0 && (
-                  <optgroup key="people" label="People">
-                    {people.map((p) => (
-                      <option key={p.id} value={`p:${p.id}`}>
-                        {(p.full_name || p.email) + ` · ${roleLabel(p.role)}`}
-                      </option>
-                    ))}
-                  </optgroup>
-                )
-              : companies.length > 0 && (
-                  <optgroup key="companies" label="Subs / vendors">
-                    {companies.map((c) => (
-                      <option key={c.id} value={`c:${c.id}`}>
-                        {c.name}
-                        {c.trade_category ? ` (${c.trade_category})` : ""}
-                      </option>
-                    ))}
-                  </optgroup>
-                )
-          )}
-        </Select>
+          onChange={change}
+          options={assigneeOptions(people, companies, peopleFirst)}
+          placeholder="— Unassigned —"
+          ariaLabel={`Assignee for ${role.name}`}
+        />
       </div>
       <button
         type="button"
@@ -593,40 +588,13 @@ function RoleDialog({
             label="Assign to (this job)"
             hint="Maps the role to a person or sub/vendor for this job."
           >
-            <Select value={target} onChange={(e) => setTarget(e.target.value)}>
-              <option value="">— Unassigned —</option>
-              {(peopleFirst
-                ? ([
-                    ["people", people],
-                    ["companies", sortedCompanies],
-                  ] as const)
-                : ([
-                    ["companies", sortedCompanies],
-                    ["people", people],
-                  ] as const)
-              ).map(([group]) =>
-                group === "people"
-                  ? people.length > 0 && (
-                      <optgroup key="people" label="People">
-                        {people.map((p) => (
-                          <option key={p.id} value={`p:${p.id}`}>
-                            {(p.full_name || p.email) + ` · ${roleLabel(p.role)}`}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )
-                  : sortedCompanies.length > 0 && (
-                      <optgroup key="companies" label="Subs / vendors">
-                        {sortedCompanies.map((c) => (
-                          <option key={c.id} value={`c:${c.id}`}>
-                            {c.name}
-                            {c.trade_category ? ` (${c.trade_category})` : ""}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )
-              )}
-            </Select>
+            <SearchableSelect
+              value={target}
+              onChange={setTarget}
+              options={assigneeOptions(people, sortedCompanies, peopleFirst)}
+              placeholder="— Unassigned —"
+              ariaLabel="Assign role to"
+            />
           </Field>
 
           <div>
