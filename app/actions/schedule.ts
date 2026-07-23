@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { requireStaff, requireSession } from "@/lib/auth"
 import { assertActiveOrgWritable } from "@/lib/sandbox"
 import {
