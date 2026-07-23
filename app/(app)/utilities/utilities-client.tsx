@@ -4,7 +4,8 @@ import { useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { toastActionError, actionErrorMessage } from "@/lib/action-error"
-import { Droplets, FileDown, Send, Loader2, CheckCircle2, Trash2 } from "lucide-react"
+import { Droplets, FileDown, Send, Loader2, CheckCircle2, Trash2, Search } from "lucide-react"
+import { formatDate } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -266,6 +267,31 @@ function sameJob(a: UtilityRequestRow, b: UtilityRequestRow): boolean {
   )
 }
 
+/** The address a request's form was filled with (either provider's key). */
+function requestAddress(req: UtilityRequestRow): string {
+  return (
+    (req.form_data.serviceAddress as string) ||
+    (req.form_data.streetAddress as string) ||
+    (req.form_data.service_address as string) ||
+    ""
+  )
+}
+
+/** Does a request match the Requests search box (job, address, provider, status)? */
+function matchesRequestQuery(req: UtilityRequestRow, query: string): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  return [
+    req.project_label,
+    requestAddress(req),
+    PROVIDER_BADGE[req.provider] ?? req.provider,
+    statusLabel(req),
+  ]
+    .join(" ")
+    .toLowerCase()
+    .includes(q)
+}
+
 type GeneratedFile = { provider: ProviderKey; filename: string; url: string }
 
 export function UtilitiesClient({ data }: { data: UtilitiesData }) {
@@ -284,12 +310,15 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
   const [form, setForm] = useState<FormState>(emptyForm())
   const [lumber, setLumber] = useState<LumberState>(emptyLumber())
   const [generated, setGenerated] = useState<GeneratedFile[]>([])
+  // Free-text filter over the Requests list below (job, address, provider, status).
+  const [requestQuery, setRequestQuery] = useState("")
   // Tracks the most recent job selection so a slow CRM prefill for an earlier
   // job can't land on top of a newer one (see onSelectJob).
   const latestPrefillJobKey = useRef<string>("")
 
   const selectedJob = data.jobs.find((j) => j.key === jobKey)
   const selectedProviders = PROVIDERS.filter((p) => selected[p.key])
+  const visibleRequests = data.requests.filter((r) => matchesRequestQuery(r, requestQuery))
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => {
     setForm((f) => ({ ...f, [k]: v }))
@@ -962,18 +991,38 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
         </CardBody>
       </Card>
 
-      <h2 className="text-sm font-semibold text-muted uppercase tracking-wide mb-3">
-        Requests
-      </h2>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold text-muted uppercase tracking-wide">
+          Requests
+        </h2>
+        {data.requests.length > 0 && (
+          <div className="relative w-full sm:w-72">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+            <Input
+              value={requestQuery}
+              onChange={(e) => setRequestQuery(e.target.value)}
+              placeholder="Search job, address, or status…"
+              aria-label="Search requests"
+              className="pl-8"
+            />
+          </div>
+        )}
+      </div>
       {data.requests.length === 0 ? (
         <EmptyState
           icon={<Droplets className="h-8 w-8" />}
           title="No utility requests yet"
           description="Pick a job above and generate the CAW and Lumber One forms to get started."
         />
+      ) : visibleRequests.length === 0 ? (
+        <EmptyState
+          icon={<Search className="h-8 w-8" />}
+          title="No matching requests"
+          description={`Nothing matches "${requestQuery.trim()}" — try a job number, address, or a status like "submitted".`}
+        />
       ) : (
         <div className="space-y-3">
-          {data.requests.map((r) => (
+          {visibleRequests.map((r) => (
             <RequestCard
               key={r.id}
               req={r}
@@ -1042,12 +1091,14 @@ function RequestCard({
   onDelete: (req: UtilityRequestRow) => void
   pending: boolean
 }) {
-  const addr =
-    (req.form_data.serviceAddress as string) ||
-    (req.form_data.streetAddress as string) ||
-    (req.form_data.service_address as string) ||
-    "—"
+  const addr = requestAddress(req) || "—"
   const isLumber = req.provider === "lumber_one"
+  const dates = [
+    req.submitted_at
+      ? `Submitted ${formatDate(req.submitted_at)}`
+      : `Created ${formatDate(req.created_at)}`,
+    ...(req.paid_at ? [`Paid ${formatDate(req.paid_at)}`] : []),
+  ].join(" · ")
   return (
     <Card>
       <CardBody>
@@ -1058,6 +1109,7 @@ function RequestCard({
               <Badge tone={STATUS_TONE[req.status]}>{statusLabel(req)}</Badge>
             </div>
             <div className="text-sm text-muted mt-0.5 truncate">{addr}</div>
+            <div className="text-xs text-muted mt-1">{dates}</div>
           </div>
           <Badge tone="muted">{PROVIDER_BADGE[req.provider] ?? req.provider}</Badge>
         </div>
