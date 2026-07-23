@@ -29,10 +29,10 @@
 create or replace function public.is_platform_admin()
 returns boolean
 language sql stable security definer
-set search_path = public
+set search_path = public, pg_temp
 as $$
   select exists (
-    select 1 from organization_members m
+    select 1 from public.organization_members m
     where m.org_id = '018f6f2a-4c1e-4b8e-9d3a-7c5b2e8a1f10'
       and m.profile_id = auth.uid()
       and m.member_role = 'owner'
