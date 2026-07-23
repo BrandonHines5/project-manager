@@ -69,6 +69,12 @@ export async function getOrgIntegration(
  * warning instead of throwing: one tenant's corrupt envelope must not take
  * down every other tenant's webhook, and a skipped secret can only make
  * verification fail (the event is dropped), never misroute it to another org.
+ *
+ * Scale note: this decrypts every enabled row for the provider on each call
+ * (OpenPhone signatures carry no workspace identifier, so verification must
+ * try each candidate). Fine while bring-your-own OpenPhone orgs number in the
+ * dozens; if that grows hot, add a short-lived in-memory cache of decrypted
+ * secrets keyed by row updated_at.
  */
 export async function listOrgIntegrationSecrets(
   admin: SupabaseClient<Database>,

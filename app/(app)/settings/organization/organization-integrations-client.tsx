@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useTransition } from "react"
+import { useId, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { ChevronRight, Plug, MessageSquare, Mail } from "lucide-react"
@@ -227,11 +227,14 @@ function AdvancedDisclosure({
   children: React.ReactNode
 }) {
   const [open, setOpen] = useState(defaultOpen)
+  const contentId = useId()
   return (
     <div className="space-y-2">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-controls={contentId}
         className="flex items-center gap-1 text-xs text-muted hover:text-foreground transition-colors"
       >
         <ChevronRight
@@ -239,7 +242,9 @@ function AdvancedDisclosure({
         />
         {label}
       </button>
-      {open && children}
+      <div id={contentId} hidden={!open}>
+        {children}
+      </div>
     </div>
   )
 }

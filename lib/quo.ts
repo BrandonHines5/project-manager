@@ -148,8 +148,11 @@ export async function sendQuoSms(opts: {
     const twilio = await resolveTwilioConfig(orgId)
     if (twilio) {
       // Honor an explicit `from` override (the documented contract) with the
-      // org's provisioned number as the fallback sender.
-      const twilioFrom = opts.from ?? twilio.phoneNumber
+      // org's provisioned number as the fallback sender — but only when it's
+      // E.164: a Quo "PN…" phone-number id is a valid override for the Quo
+      // path below, never a Twilio sender, so it falls back rather than
+      // failing the send at the Twilio API.
+      const twilioFrom = (opts.from && normalizeE164(opts.from)) || twilio.phoneNumber
       const result = await sendTwilioSms({ to, from: twilioFrom, content })
       if (result.sent && opts.log) {
         await logCommunication({

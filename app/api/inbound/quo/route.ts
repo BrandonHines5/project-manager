@@ -96,10 +96,14 @@ export async function POST(req: NextRequest) {
         // Which staffer owns the Quo number this text went through — powers
         // per-user attribution for texts typed directly in the Quo app (app-sent
         // texts already carry sent_by and win the ON CONFLICT below).
-        const staffProfileId = await staffProfileForQuoNumber(
+        const staffProfileId = await scopeStaffToOrg(
           admin,
-          obj.phoneNumberId,
-          inbound ? firstTo(obj.to) : (obj.from ?? null)
+          await staffProfileForQuoNumber(
+            admin,
+            obj.phoneNumberId,
+            inbound ? firstTo(obj.to) : (obj.from ?? null)
+          ),
+          verifiedOrgId
         )
         const { match, orgId } = await attributeForOrg(
           admin,
@@ -156,9 +160,11 @@ export async function POST(req: NextRequest) {
             preview: obj.body ?? obj.text ?? "",
             projectId: match.project_id,
             projectName: await projectName(admin, match.project_id),
-            // Org-verified events ring only that org's staff; null keeps the
-            // legacy env workspace's all-staff fan-out.
-            orgId: verifiedOrgId,
+            // Ring only the resolved org's staff — the verified org, or the
+            // legacy path's best-effort resolution (which also stamps the
+            // row, so the bell and the row's visibility agree). Null = truly
+            // unattributed → the legacy all-staff fan-out.
+            orgId,
           })
         }
         return NextResponse.json({ ok: true })
@@ -167,10 +173,14 @@ export async function POST(req: NextRequest) {
       case "call.completed": {
         const inbound = obj.direction === "incoming"
         const counterpartyNumber = inbound ? obj.from : firstTo(obj.to)
-        const staffProfileId = await staffProfileForQuoNumber(
+        const staffProfileId = await scopeStaffToOrg(
           admin,
-          obj.phoneNumberId,
-          inbound ? firstTo(obj.to) : (obj.from ?? null)
+          await staffProfileForQuoNumber(
+            admin,
+            obj.phoneNumberId,
+            inbound ? firstTo(obj.to) : (obj.from ?? null)
+          ),
+          verifiedOrgId
         )
         const { match, orgId } = await attributeForOrg(
           admin,
@@ -243,9 +253,11 @@ export async function POST(req: NextRequest) {
                   : "Call",
             projectId: match.project_id,
             projectName: await projectName(admin, match.project_id),
-            // Org-verified events ring only that org's staff; null keeps the
-            // legacy env workspace's all-staff fan-out.
-            orgId: verifiedOrgId,
+            // Ring only the resolved org's staff — the verified org, or the
+            // legacy path's best-effort resolution (which also stamps the
+            // row, so the bell and the row's visibility agree). Null = truly
+            // unattributed → the legacy all-staff fan-out.
+            orgId,
           })
         }
         return NextResponse.json({ ok: true })
@@ -343,6 +355,35 @@ async function staffProfileForQuoNumber(
     if (data?.id) return data.id
   }
   return null
+}
+
+/**
+ * For org-verified events, a staff-number match must belong to that org —
+ * staffProfileForQuoNumber matches quo numbers across ALL tenants (fine for
+ * the legacy single-workspace path), so a stale number reassigned between
+ * workspaces (or a forged event signed with the org's own secret) could
+ * otherwise stamp another tenant's profile into this org's rows via sent_by /
+ * meta.quoStaffProfileId. A lookup ERROR fails closed to null (drops
+ * attribution, keeps the event). Legacy env-verified events pass through
+ * unchanged.
+ */
+async function scopeStaffToOrg(
+  admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
+  staffProfileId: string | null,
+  verifiedOrgId: string | null
+): Promise<string | null> {
+  if (!staffProfileId || !verifiedOrgId) return staffProfileId
+  const { data, error } = await admin
+    .from("organization_members")
+    .select("profile_id")
+    .eq("org_id", verifiedOrgId)
+    .eq("profile_id", staffProfileId)
+    .maybeSingle()
+  if (error) {
+    console.warn("[quo webhook] staff org-scope lookup failed:", error.message)
+    return null
+  }
+  return data ? staffProfileId : null
 }
 
 /**
