@@ -2,10 +2,26 @@
 
 import { useMemo, useState } from "react"
 import Link from "next/link"
-import { Search } from "lucide-react"
+import { Plus, Search } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogBody,
+  DialogFooter,
+} from "@/components/ui/dialog"
+import { Field } from "@/components/ui/input"
+import { SearchableSelect } from "@/components/ui/searchable-select"
 import { formatDate } from "@/lib/utils"
+import { STATUS_FILTER_LABEL } from "@/lib/project-status"
 import { LogCommentsToggle } from "@/components/daily-logs/log-comments-toggle"
+import { DailyLogDrawer } from "@/components/daily-logs/daily-log-drawer"
+import type { DailyLogsData } from "@/app/(app)/projects/[id]/daily-logs/daily-logs-client"
+import type { Enums } from "@/lib/db/types"
 
 type LogComment = {
   id: string
@@ -26,20 +42,44 @@ export type DailyLogRow = {
   project: { name: string; project_number: string } | null
 }
 
+// Everything the staff-only create flow needs: the jobs the picker offers
+// (EVERY job regardless of status — with cost_plus so the drawer knows to
+// show the hours field, and status so closed jobs are recognizable) and the
+// org-wide lists the drawer's to-do/subs editors use. Null for non-staff.
+export type CreateLogData = {
+  meName: string
+  projects: {
+    id: string
+    name: string
+    project_number: string
+    cost_plus: boolean
+    status: Enums<"project_status">
+  }[]
+  profiles: DailyLogsData["profiles"]
+  companies: DailyLogsData["companies"]
+}
+
 export function AllDailyLogsList({
   rows,
   scopeLabel,
   truncated,
   meName,
   placeholder,
+  create,
 }: {
   rows: DailyLogRow[]
   scopeLabel: string
   truncated: boolean
   meName: string
   placeholder: string
+  create: CreateLogData | null
 }) {
   const [query, setQuery] = useState("")
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [pickedProjectId, setPickedProjectId] = useState("")
+  const [drawerProject, setDrawerProject] = useState<
+    CreateLogData["projects"][number] | null
+  >(null)
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -54,17 +94,57 @@ export function AllDailyLogsList({
 
   const active = query.trim().length > 0
 
+  function openPicker() {
+    setPickedProjectId("")
+    setPickerOpen(true)
+  }
+
+  function startLog() {
+    const project =
+      create?.projects.find((p) => p.id === pickedProjectId) ?? null
+    if (!project) return
+    setPickerOpen(false)
+    setDrawerProject(project)
+  }
+
+  // The drawer's create mode only reads the project, the people/company
+  // lists, and cost_plus — the per-log collections can stay empty.
+  const drawerData: DailyLogsData | null =
+    create && drawerProject
+      ? {
+          project_id: drawerProject.id,
+          role: "staff",
+          me_name: create.meName,
+          cost_plus: drawerProject.cost_plus,
+          logs: [],
+          subs_on_site: [],
+          attachments: [],
+          profiles: create.profiles,
+          companies: create.companies,
+          signed_urls: {},
+          comments: [],
+          open_log_id: null,
+        }
+      : null
+
   return (
     <div>
-      <div className="mb-3 relative max-w-md">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search logs or jobs…"
-          aria-label="Search job logs"
-          className="w-full h-10 pl-9 pr-3 text-sm rounded-lg border border-border bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40"
-        />
+      <div className="mb-3 flex items-center gap-2 flex-wrap">
+        <div className="relative max-w-md flex-1 min-w-[220px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search logs or jobs…"
+            aria-label="Search job logs"
+            className="w-full h-10 pl-9 pr-3 text-sm rounded-lg border border-border bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40"
+          />
+        </div>
+        {create && (
+          <Button onClick={openPicker}>
+            <Plus className="h-4 w-4" /> New job log
+          </Button>
+        )}
       </div>
 
       <div className="mb-4 text-sm text-muted">
@@ -125,6 +205,65 @@ export function AllDailyLogsList({
             </li>
           ))}
         </ul>
+      )}
+
+      {create && (
+        <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
+          <DialogContent size="sm">
+            <DialogHeader>
+              <div>
+                <DialogTitle>New job log</DialogTitle>
+                <DialogDescription>
+                  Which job is this log for?
+                </DialogDescription>
+              </div>
+            </DialogHeader>
+            <DialogBody>
+              <Field label="Job">
+                <SearchableSelect
+                  value={pickedProjectId}
+                  onChange={setPickedProjectId}
+                  options={create.projects.map((p) => ({
+                    value: p.id,
+                    label: p.name,
+                    // Status rides in the hint so Complete/Warranty jobs
+                    // read as such — and it's searchable ("warranty").
+                    hint: `${p.project_number} · ${STATUS_FILTER_LABEL[p.status]}`,
+                  }))}
+                  placeholder="Select a job…"
+                  ariaLabel="Job for the new log"
+                  clearable={false}
+                />
+              </Field>
+            </DialogBody>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setPickerOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={startLog}
+                disabled={!pickedProjectId}
+              >
+                Continue
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {drawerData && (
+        <DailyLogDrawer
+          key={drawerData.project_id}
+          open={true}
+          onClose={() => setDrawerProject(null)}
+          data={drawerData}
+          mode="create"
+        />
       )}
     </div>
   )
