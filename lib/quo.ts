@@ -190,6 +190,33 @@ export async function sendQuoSms(opts: {
     cfg.sharedFrom ??
     undefined
   if (!from) {
+    // An OpenPhone key with no resolvable sending number (no shared number,
+    // sender has none assigned) must not strand the text when the org still
+    // holds a platform Twilio number — same-tenant degradation, matching the
+    // decrypt-failure posture above.
+    const twilio = await resolveTwilioConfig(orgId)
+    if (twilio) {
+      const result = await sendTwilioSms({ to, from: twilio.phoneNumber, content })
+      if (result.sent && opts.log) {
+        await logCommunication({
+          channel: "sms",
+          direction: "outbound",
+          org_id: opts.log.org_id ?? orgId ?? undefined,
+          project_id: opts.log.project_id,
+          company_id: opts.log.company_id,
+          profile_id: opts.log.profile_id,
+          sent_by: opts.log.sent_by,
+          from_address: twilio.phoneNumber,
+          to_address: to,
+          counterparty_name: opts.log.counterparty_name,
+          body: content,
+          source: "twilio",
+          source_kind: opts.log.kind,
+          provider_id: result.providerId ?? null,
+        })
+      }
+      return result
+    }
     return {
       sent: false,
       reason:

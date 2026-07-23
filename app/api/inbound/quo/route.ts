@@ -268,11 +268,18 @@ export async function POST(req: NextRequest) {
         // existing call row. media shape: [{ url, type }]
         const url = obj.media?.[0]?.url ?? null
         if (!url) return NextResponse.json({ ok: true, skipped: "no-recording-url" })
-        const { error } = await admin
+        // Org-verified events may only touch THEIR tenant's rows —
+        // provider_id comes from the event body, so without this an event
+        // signed with one org's secret could stamp a recording URL onto
+        // another tenant's call row. Legacy env-verified events keep the
+        // unscoped match (their rows may carry heuristic org stamps).
+        let update = admin
           .from("communications")
           .update({ call_recording_url: url })
           .eq("source", "quo")
           .eq("provider_id", obj.id)
+        if (verifiedOrgId) update = update.eq("org_id", verifiedOrgId)
+        const { error } = await update
         if (error) throw new Error(error.message)
         return NextResponse.json({ ok: true })
       }

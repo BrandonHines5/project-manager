@@ -113,7 +113,7 @@ export function OrganizationIntegrationsClient({
               never hidden. */}
           <AdvancedDisclosure
             label="Using OpenPhone? Connect your own account"
-            defaultOpen={quoConnected || quoError}
+            defaultOpen={quoConnected || quoWebhookConnected || quoError}
           >
             <QuoIntegrationCard
               orgId={orgId}
@@ -315,7 +315,12 @@ function TwilioSmsCard({
         </span>
       </div>
 
-      {!configured ? (
+      {openPhoneActive && !number ? (
+        <p className="text-xs text-muted">
+          Your OpenPhone account is connected and handles texting, so
+          there&rsquo;s nothing to set up here.
+        </p>
+      ) : !configured ? (
         <p className="text-xs text-muted">
           Text messaging isn&rsquo;t available yet. It&rsquo;ll appear here once
           it&rsquo;s switched on for your account.
@@ -349,12 +354,6 @@ function TwilioSmsCard({
             {pending ? "Releasing…" : "Release number"}
           </Button>
         </div>
-      ) : openPhoneActive ? (
-        <p className="text-xs text-muted">
-          Your OpenPhone account is connected and handles texting, so
-          there&rsquo;s nothing to set up here. If you ever disconnect
-          OpenPhone, come back to get a built-in texting number.
-        </p>
       ) : (
         <div className="space-y-3">
           <p className="text-xs text-muted">
@@ -497,7 +496,8 @@ function QuoIntegrationCard({
       {error && (
         <p className="text-xs text-danger">
           The stored key couldn&rsquo;t be read (the encryption key may be
-          misconfigured). Re-enter the API key to reset it.
+          misconfigured). Re-enter the API key — and the webhook signing
+          secret, if you use one — to reset it.
         </p>
       )}
 
@@ -530,9 +530,16 @@ function QuoIntegrationCard({
           maxLength={40}
         />
         <p className="text-xs text-muted">
-          The fallback number for staff who don&rsquo;t have their own Quo
-          number assigned. E.164 (+1…) or an OpenPhone number id.
+          The fallback number for staff who don&rsquo;t have their own
+          OpenPhone number assigned. E.164 (+1…) or an OpenPhone number id.
         </p>
+        {!isLegacy && connected && !initialSharedFrom.trim() && (
+          <p className="text-xs text-warning">
+            No sending number yet — texts go out from your BuildFox texting
+            number until you set a shared number here or assign per-user
+            numbers on the Team page.
+          </p>
+        )}
       </div>
 
       {!isLegacy && (
@@ -565,7 +572,7 @@ function QuoIntegrationCard({
         <Button size="sm" onClick={() => save(false)} disabled={pending}>
           {pending ? "Saving…" : "Save"}
         </Button>
-        {connected && (
+        {(connected || webhookConnected) && (
           <Button
             size="sm"
             variant="ghost"

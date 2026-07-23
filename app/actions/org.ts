@@ -347,6 +347,22 @@ export async function saveQuoIntegration(
         try {
           existing = (await getOrgIntegration(admin, orgId, "quo"))?.secrets ?? {}
         } catch {
+          // Distinguish a CORRUPT envelope (replace with just the typed
+          // fields — the documented reset) from a transient READ failure
+          // (abort — overwriting on a hiccup would silently destroy the
+          // sibling secret). The probe re-reads the row without decrypting.
+          const probe = await admin
+            .from("org_integrations")
+            .select("org_id")
+            .eq("org_id", orgId)
+            .eq("provider", "quo")
+            .maybeSingle()
+          if (probe.error) {
+            return {
+              ok: false,
+              error: "Couldn't read the stored integration — try again.",
+            }
+          }
           existing = {}
         }
         secrets = { ...existing }

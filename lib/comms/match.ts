@@ -36,9 +36,10 @@ function last10(phone: string | null | undefined): string | null {
  * event verifiably belongs to (the org owning a Twilio number, or the org
  * whose OpenPhone signing secret verified the event). Verifies the matched
  * project and company are in-org, and that a matched profile is an
- * organization member there; if any link isn't, drops project/company/profile
- * (keeping the display name) so a cross-tenant contact can never file a
- * message onto another org's job. No-op when the match carried no links.
+ * organization member there; if any link isn't, drops project/company/
+ * profile AND the display name (all resolved from the other tenant's
+ * directory) so a cross-tenant contact can never file a message onto — or
+ * leak contact names into — another org. No-op when the match had no links.
  *
  * `lookupFailed` distinguishes a query ERROR (the match comes back unlinked
  * AND flagged, so a transient failure can't silently unlink) from a genuine
@@ -56,6 +57,9 @@ export async function scopeMatchToOrg(
     project_id: null,
     company_id: null,
     profile_id: null,
+    // The display name was resolved from another tenant's directory — it
+    // goes too, or org B's feed would show org A's contact naming.
+    counterparty_name: null,
   }
   if (match.project_id) {
     const { data, error } = await admin
