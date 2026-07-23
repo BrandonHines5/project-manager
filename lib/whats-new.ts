@@ -18,6 +18,12 @@ export const WHATS_NEW: WhatsNewEntry[] = [
   {
     date: "2026-07-23",
     title:
+      "Synced Outlook emails now file to a job only when AI confidently matches the email's content to that job — everything else stays in the global Communications hub.",
+    kind: "improvement",
+  },
+  {
+    date: "2026-07-23",
+    title:
       "Fixed large-file uploads: files over 6 MB (plans, videos) failed with an authorization error — they upload normally now.",
     kind: "fix",
   },
