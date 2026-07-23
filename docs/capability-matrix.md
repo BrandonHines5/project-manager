@@ -148,8 +148,8 @@ company/their project; **Create/Edit/Approve** = write; **None** = RLS denies.
 | Capability | Team (staff) | Client | Trade (sub) | Public |
 |---|---|---|---|---|
 | Submit feedback | Yes | Yes | Yes | None |
-| Read feedback | Own + all staff | Own only | Own only | None |
-| Triage / update / delete | Yes | None | None | None |
+| Read feedback | Own + own org's rows; platform admin (legacy-org owner) reads every org's | Own only | Own only | None |
+| Triage / update / delete | Legacy (Hines) staff on legacy rows; platform admin on all rows — builder-org staff are submitters only | None | None | None |
 
 ---
 

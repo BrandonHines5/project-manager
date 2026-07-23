@@ -1,7 +1,8 @@
 import { requireSession } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { isLegacyOrgMember, isLegacyOrgOwner } from "@/lib/org"
 import { FeedbackTable } from "@/components/feedback/feedback-table"
-import type { FeedbackRow } from "@/lib/feedback"
+import type { FeedbackListRow } from "@/lib/feedback"
 
 export const metadata = { title: "Feedback & Requests — BuildFox" }
 export const dynamic = "force-dynamic"
@@ -11,11 +12,25 @@ export default async function FeedbackPage() {
   const isStaff = profile.role === "staff"
   const supabase = await createSupabaseServerClient()
 
-  // RLS scopes this automatically: staff see every request, everyone else sees
-  // only the rows they submitted.
+  // Triage rights mirror the 0123 RLS: Hines (legacy-org) staff triage Hines
+  // rows, and the platform operator (legacy-org OWNER) reads + triages every
+  // org's rows. Builder-org staff are submitters here — their requests route
+  // to the platform, so they get the tracking view, not the triage controls.
+  const [legacyMember, platformAdmin] = isStaff
+    ? await Promise.all([
+        isLegacyOrgMember(supabase, profile.id),
+        isLegacyOrgOwner(supabase, profile.id),
+      ])
+    : [false, false]
+  const canTriage = isStaff && legacyMember
+
+  // RLS scopes this automatically: staff see their org's requests (the
+  // platform operator sees every org's), everyone else sees only the rows
+  // they submitted. The org-name embed feeds the operator's Organization
+  // column.
   const { data: rows, error } = await supabase
     .from("feedback_requests")
-    .select("*")
+    .select("*, organizations:org_id(name)")
     .order("created_at", { ascending: false })
   // Surface real failures via the error boundary rather than rendering a
   // misleading "no requests" empty state.
@@ -28,12 +43,19 @@ export default async function FeedbackPage() {
           Feedback &amp; Requests
         </h1>
         <p className="text-sm text-muted">
-          {isStaff
-            ? "Review and triage update requests from your team and clients."
-            : "Submit requests and track their status here."}
+          {platformAdmin
+            ? "Review and triage update requests from your team, clients, and builder accounts."
+            : canTriage
+              ? "Review and triage update requests from your team and clients."
+              : "Submit requests and track their status here — the app team follows up on each one."}
         </p>
       </div>
-      <FeedbackTable rows={rows as FeedbackRow[]} isStaff={isStaff} />
+      <FeedbackTable
+        rows={(rows ?? []) as FeedbackListRow[]}
+        isStaff={isStaff}
+        canTriage={canTriage}
+        showOrg={platformAdmin}
+      />
     </div>
   )
 }

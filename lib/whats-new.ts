@@ -18,6 +18,12 @@ export const WHATS_NEW: WhatsNewEntry[] = [
   {
     date: "2026-07-23",
     title:
+      "“Request an update” now routes builder-account requests straight to the app team — the operator is emailed on submit, and replies land back in the requestor's Feedback & Requests view with an email copy.",
+    kind: "feature",
+  },
+  {
+    date: "2026-07-23",
+    title:
       "Synced Outlook emails now file to a job only when AI confidently matches the email's content to that job — everything else stays in the global Communications hub.",
     kind: "improvement",
   },

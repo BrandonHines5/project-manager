@@ -13,7 +13,7 @@ import {
   FEEDBACK_STATUSES,
   TYPE_TONE,
   STATUS_TONE,
-  type FeedbackRow,
+  type FeedbackListRow,
   type FeedbackStatus,
   type FeedbackType,
 } from "@/lib/feedback"
@@ -25,12 +25,20 @@ import {
 
 type Filter = "All" | FeedbackStatus
 
+// `isStaff` shows the Submitted-by column (a builder owner still sees which
+// teammate filed a request); `canTriage` (legacy staff / platform operator —
+// mirrors the 0123 RLS) unlocks the status/notes editors and delete; `showOrg`
+// adds the Organization column on the platform operator's cross-org queue.
 export function FeedbackTable({
   rows,
   isStaff,
+  canTriage,
+  showOrg,
 }: {
-  rows: FeedbackRow[]
+  rows: FeedbackListRow[]
   isStaff: boolean
+  canTriage: boolean
+  showOrg: boolean
 }) {
   const [filter, setFilter] = useState<Filter>("All")
 
@@ -50,7 +58,7 @@ export function FeedbackTable({
         icon={<Inbox className="h-10 w-10" />}
         title="No requests yet"
         description={
-          isStaff
+          canTriage
             ? "Requests submitted by your team and clients will show up here."
             : "Use “Request an update” in the top bar to submit your first request."
         }
@@ -103,11 +111,16 @@ export function FeedbackTable({
                   Submitted by
                 </th>
               )}
+              {showOrg && (
+                <th className="text-left font-medium px-4 py-2.5">
+                  Organization
+                </th>
+              )}
               <th className="text-left font-medium px-4 py-2.5">Type</th>
               <th className="text-left font-medium px-4 py-2.5">Request</th>
               <th className="text-left font-medium px-4 py-2.5">Status</th>
               <th className="text-left font-medium px-4 py-2.5">Admin notes</th>
-              {isStaff && <th className="px-4 py-2.5" />}
+              {canTriage && <th className="px-4 py-2.5" />}
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -118,6 +131,8 @@ export function FeedbackTable({
                 key={`${row.id}-${row.updated_at}`}
                 row={row}
                 isStaff={isStaff}
+                canTriage={canTriage}
+                showOrg={showOrg}
               />
             ))}
           </tbody>
@@ -130,9 +145,13 @@ export function FeedbackTable({
 function FeedbackTableRow({
   row,
   isStaff,
+  canTriage,
+  showOrg,
 }: {
-  row: FeedbackRow
+  row: FeedbackListRow
   isStaff: boolean
+  canTriage: boolean
+  showOrg: boolean
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
@@ -190,6 +209,11 @@ function FeedbackTableRow({
           )}
         </td>
       )}
+      {showOrg && (
+        <td className="px-4 py-3 whitespace-nowrap">
+          {row.organizations?.name ?? "—"}
+        </td>
+      )}
       <td className="px-4 py-3">
         <Badge tone={TYPE_TONE[row.request_type as FeedbackType] ?? "neutral"}>
           {row.request_type}
@@ -204,7 +228,7 @@ function FeedbackTableRow({
         )}
       </td>
       <td className="px-4 py-3">
-        {isStaff ? (
+        {canTriage ? (
           <Select
             value={row.status}
             disabled={pending}
@@ -224,7 +248,7 @@ function FeedbackTableRow({
         )}
       </td>
       <td className="px-4 py-3 max-w-xs">
-        {isStaff ? (
+        {canTriage ? (
           <Textarea
             value={notes}
             disabled={pending}
@@ -240,7 +264,7 @@ function FeedbackTableRow({
           <span className="text-xs text-muted">—</span>
         )}
       </td>
-      {isStaff && (
+      {canTriage && (
         <td className="px-4 py-3">
           <button
             type="button"
