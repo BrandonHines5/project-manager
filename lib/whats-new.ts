@@ -18,6 +18,12 @@ export const WHATS_NEW: WhatsNewEntry[] = [
   {
     date: "2026-07-23",
     title:
+      "Initiate Utilities: each request now shows the date it was submitted, and a search box filters requests by job, address, or status.",
+    kind: "improvement",
+  },
+  {
+    date: "2026-07-23",
+    title:
       "Fixed: the Gantt chart crashed phone browsers on long schedules — it now loads on mobile.",
     kind: "fix",
   },
