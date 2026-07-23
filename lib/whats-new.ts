@@ -30,6 +30,12 @@ export const WHATS_NEW: WhatsNewEntry[] = [
   {
     date: "2026-07-23",
     title:
+      "The commercial sub-brand setting is now limited to Hines Homes; other organizations manage a single brand.",
+    kind: "improvement",
+  },
+  {
+    date: "2026-07-23",
+    title:
       "Organizations can now connect their own OpenPhone account (Settings → Organization → Integrations, under Advanced) to text and call from a full phone app — it takes over from the built-in texting number automatically, and adding the webhook signing secret mirrors replies and calls into the Communications feed.",
     kind: "feature",
   },

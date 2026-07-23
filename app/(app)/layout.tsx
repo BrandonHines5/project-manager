@@ -108,13 +108,16 @@ export default async function AppLayout({
   const features = [...orgFeatures]
 
   // "Upgrade Account" entry in the avatar menu — owner/admin only (billing
-  // actions reject everyone else). A trial org gets a Stripe Checkout shortcut
-  // ("trial"); a former trial that already subscribed via Stripe gets a billing-
-  // portal shortcut ("subscribed"). Hines and operator-provisioned subscribers
-  // (active_subscriber with no Stripe customer) show nothing here.
+  // actions reject everyone else). An ACTIVE trial gets a Stripe Checkout
+  // shortcut ("trial"); a former trial that already subscribed via Stripe gets
+  // a billing-portal shortcut ("subscribed"). Hines and operator-provisioned
+  // subscribers (active_subscriber with no Stripe customer) show nothing here.
+  // An EXPIRED trial is deliberately excluded: its whole shell (this menu
+  // included) is inert, and the SandboxPaywall carries the Checkout button
+  // outside that inert subtree — so Checkout stays reachable to restore access.
   let billing: "trial" | "subscribed" | null = null
   if (profile.role === "staff" && orgAdmin && activeOrgId) {
-    if (orgLifecycle === "sandbox_active" || orgLifecycle === "sandbox_expired") {
+    if (orgLifecycle === "sandbox_active") {
       billing = "trial"
     } else if (activeOrgId !== LEGACY_ORG_ID) {
       // Only a real Stripe customer (a former trial that paid) can manage

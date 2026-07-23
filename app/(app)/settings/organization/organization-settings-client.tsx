@@ -9,12 +9,13 @@ import { Input } from "@/components/ui/input"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
 import { uploadToStorage } from "@/lib/storage/upload"
 import { saveOrgSettings, type BrandInput } from "@/app/actions/org"
+import { BUILDFOX } from "@/lib/brand"
 
-// Neutral app fallbacks parseBrandConfig fills when a slot is unset — shown
-// as the preview after "Remove" so the editor matches what will render. Kept
-// in sync with lib/brand.ts BUILDFOX (the platform placeholder brand).
-const FALLBACK_LOGO = "/brand/buildfox-mark.svg"
-const FALLBACK_ICON = "/brand/buildfox-icon.png"
+// Neutral app fallbacks parseBrandConfig fills when a slot is unset — shown as
+// the preview after "Remove" so the editor matches what will render. Sourced
+// from the shared BUILDFOX placeholder brand so they can't drift.
+const FALLBACK_LOGO = BUILDFOX.logo
+const FALLBACK_ICON = BUILDFOX.icon
 
 // No SVG on purpose: the bucket is public and a raw SVG opened as a top-level
 // document executes embedded script (self-XSS). Raster covers logo needs.
