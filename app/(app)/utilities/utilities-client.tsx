@@ -390,6 +390,8 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
   }
 
   function resetForm() {
+    // Invalidate any in-flight CRM prefill so it can't repopulate the cleared form.
+    latestPrefillJobKey.current = ""
     setJobKey("")
     setCurrentIds({ caw: null, lumber: null })
     setGenerated([])
@@ -398,6 +400,9 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
   }
 
   function handleContinue(req: UtilityRequestRow) {
+    // Invalidate any in-flight CRM prefill from a prior dropdown pick — landing
+    // late, it would overwrite this draft's loaded answers with the other job's.
+    latestPrefillJobKey.current = ""
     // Match on either link — a pre-CRM draft carries only project_id, while
     // the dropdown entry for the same job is keyed by its CRM id.
     const job = data.jobs.find(
