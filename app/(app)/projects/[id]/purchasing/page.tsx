@@ -339,8 +339,35 @@ export default async function PurchasingPage({
 
   return (
     <PurchasingClient
-      bids={bidsData}
-      pos={posData}
+      bids={
+        bidsEnabled
+          ? bidsData
+          : {
+              ...bidsData,
+              open_package_id: null,
+              open_recipient_id: null,
+              packages: [],
+              line_items: [],
+              attachments: [],
+              recipients: [],
+              quotes: [],
+              comments: [],
+              signed_urls: {},
+            }
+      }
+      pos={
+        posEnabled
+          ? posData
+          : {
+              ...posData,
+              open_po_id: null,
+              pos: [],
+              line_items: [],
+              attachments: [],
+              comments: [],
+              signed_urls: {},
+            }
+      }
       templates={templates}
       initialTab={initialTab}
       enabledTabs={[

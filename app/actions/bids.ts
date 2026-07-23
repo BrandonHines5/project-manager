@@ -203,9 +203,11 @@ async function reconcileAttachments(
 
 export async function saveBidPackage(input: BidPackageInputT) {
   const profile = await requireStaff()
-  await requireOrgFeature("bid_requests")
-  await assertActiveOrgWritable()
   const parsed = parseOrThrow(BidPackageInput, input)
+  // Gate CREATION only — an existing draft stays editable after a plan
+  // downgrade (send/copy stay gated; they mint new outbound artifacts).
+  if (!parsed.id) await requireOrgFeature("bid_requests")
+  await assertActiveOrgWritable()
   const supabase = await createSupabaseServerClient()
 
   let id = nz(parsed.id)

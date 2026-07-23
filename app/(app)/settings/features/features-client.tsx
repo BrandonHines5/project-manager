@@ -60,6 +60,11 @@ export function FeatureAccessClient({
   )
 }
 
+/**
+ * The features × levels checkbox matrix: rename levels inline, toggle their
+ * features, save per level, add new levels, delete empty ones. Holds a local
+ * edit buffer; a saved level re-seeds from fresh server props on refresh.
+ */
 function LevelsMatrix({ plans, orgs }: { plans: PlanRow[]; orgs: OrgRow[] }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
@@ -292,6 +297,10 @@ function LevelsMatrix({ plans, orgs }: { plans: PlanRow[]; orgs: OrgRow[] }) {
   )
 }
 
+/**
+ * The organization → level assignment table. The legacy (platform) org is
+ * rendered locked to Internal; the server refuses moving it regardless.
+ */
 function OrgAssignments({ plans, orgs }: { plans: PlanRow[]; orgs: OrgRow[] }) {
   const router = useRouter()
   const [pendingOrg, setPendingOrg] = useState<string | null>(null)

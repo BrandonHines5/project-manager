@@ -107,15 +107,20 @@ export function PurchasingClient({
         </Button>
       </div>
 
-      {/* Both stay mounted — flipping tabs must not reset list/drawer state
-          or re-trigger the ?open= auto-open. Drawers render in portals, so
-          hiding the container never hides an open drawer. */}
-      <div className={tab === "bids" ? "" : "hidden"}>
-        <BidsClient data={bids} embedded />
-      </div>
-      <div className={tab === "pos" ? "" : "hidden"}>
-        <PurchaseOrdersClient data={pos} embedded />
-      </div>
+      {/* Both ENABLED sides stay mounted — flipping tabs must not reset
+          list/drawer state or re-trigger the ?open= auto-open. Drawers render
+          in portals, so hiding the container never hides an open drawer. A
+          feature-disabled side is never mounted (its dataset arrives empty). */}
+      {enabledTabs.includes("bids") && (
+        <div className={tab === "bids" ? "" : "hidden"}>
+          <BidsClient data={bids} embedded />
+        </div>
+      )}
+      {enabledTabs.includes("pos") && (
+        <div className={tab === "pos" ? "" : "hidden"}>
+          <PurchaseOrdersClient data={pos} embedded />
+        </div>
+      )}
 
       {newOpen && (
         <NewPurchasingDialog

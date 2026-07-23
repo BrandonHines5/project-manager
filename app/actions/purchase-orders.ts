@@ -85,9 +85,13 @@ function nz(v: string | null | undefined) {
  */
 export async function savePurchaseOrder(input: PurchaseOrderInputT) {
   const profile = await requireStaff()
-  await requireOrgFeature("purchase_orders")
-  await assertActiveOrgWritable()
   const result = PurchaseOrderInput.safeParse(input)
+  // Gate CREATION only — an existing draft stays editable after a plan
+  // downgrade (release/copy stay gated; they mint new outbound artifacts).
+  if (result.success && !result.data.id) {
+    await requireOrgFeature("purchase_orders")
+  }
+  await assertActiveOrgWritable()
   if (!result.success) {
     const first = result.error.issues[0]
     throw new Error(

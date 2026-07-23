@@ -111,9 +111,12 @@ export async function getOrgFeatures(
 ): Promise<Set<FeatureKey>> {
   if (!orgId) return new Set(ALL_FEATURE_KEYS)
   try {
+    // One round trip: the plan's feature list rides the organizations read
+    // via the organizations.plan → platform_plans FK embed (a to-one embed —
+    // object, not array). This path runs on every authed layout render.
     const { data: org, error } = await supabase
       .from("organizations")
-      .select("plan, feature_overrides")
+      .select("plan, feature_overrides, platform_plans(features)")
       .eq("id", orgId)
       .maybeSingle()
     if (error || !org) {
@@ -121,16 +124,11 @@ export async function getOrgFeatures(
       return new Set(ALL_FEATURE_KEYS)
     }
     if (!org.plan || org.plan === INTERNAL_PLAN) return new Set(ALL_FEATURE_KEYS)
-    const { data: plan, error: planError } = await supabase
-      .from("platform_plans")
-      .select("features")
-      .eq("key", org.plan)
-      .maybeSingle()
-    if (planError) {
-      console.warn("[features] plan read failed:", planError.message)
-      return new Set(ALL_FEATURE_KEYS)
-    }
-    return resolveFeatures(org.plan, plan?.features, org.feature_overrides)
+    return resolveFeatures(
+      org.plan,
+      org.platform_plans?.features,
+      org.feature_overrides
+    )
   } catch (e) {
     console.warn(
       "[features] resolution failed:",

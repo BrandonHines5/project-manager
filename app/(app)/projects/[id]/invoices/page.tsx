@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireSession } from "@/lib/auth"
-import { hasOrgFeature } from "@/lib/feature-gate"
+import { orgHasFeatureAdmin } from "@/lib/feature-gate"
 import { EmptyState } from "@/components/ui/empty"
 import { InvoicesClient } from "./invoices-client"
 
@@ -17,27 +17,28 @@ export default async function ProjectInvoicesPage({
   // Trades never see client invoices — the tab is hidden for them and RLS
   // returns no rows; a 404 keeps a hand-typed URL honest too.
   if (profile.role === "trade") notFound()
-  if (
-    profile.role === "staff" &&
-    !(await hasOrgFeature("client_invoices", profile.id))
-  ) {
-    return (
-      <div className="max-w-3xl mx-auto px-4 md:px-6 py-10">
-        <EmptyState
-          title="Client invoices aren't included in your plan"
-          description="Contact support to add invoice mirroring to your subscription."
-        />
-      </div>
-    )
-  }
 
   const supabase = await createSupabaseServerClient()
   const { data: project } = await supabase
     .from("projects")
-    .select("id, name, qbo_customer_id, qbo_customer_name")
+    .select("id, name, org_id, qbo_customer_id, qbo_customer_name")
     .eq("id", projectId)
     .maybeSingle()
   if (!project) notFound()
+
+  // Feature gating (0122), on the PROJECT's org so clients are covered too —
+  // a client has no org membership (their active-org check would fail open),
+  // but the builder's plan is what governs this tab for everyone viewing it.
+  if (!(await orgHasFeatureAdmin(project.org_id, "client_invoices"))) {
+    return (
+      <div className="max-w-3xl mx-auto px-4 md:px-6 py-10">
+        <EmptyState
+          title="Client invoices aren't included in this plan"
+          description="Contact support to add invoice mirroring to the subscription."
+        />
+      </div>
+    )
+  }
 
   // RLS scopes this per role: staff see everything (incl. voided/deleted for
   // history), clients only open/paid on their own projects.

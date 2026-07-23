@@ -1,5 +1,6 @@
 import "server-only"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { getActiveOrgId, NoActiveOrgError } from "@/lib/org"
 import {
   FEATURE_DEFS,
@@ -60,4 +61,21 @@ export async function hasOrgFeature(
     }
     return true
   }
+}
+
+/**
+ * Feature check for a KNOWN org id, read via the ADMIN client. For pages a
+ * counterparty reaches without any org membership of their own — a client
+ * viewing a builder's Invoices tab — where the gate must follow the RECORD's
+ * org (the caller can't read the builder's organizations row under RLS, and
+ * has no active org to resolve). Same fail-open posture.
+ */
+export async function orgHasFeatureAdmin(
+  orgId: string | null | undefined,
+  feature: FeatureKey
+): Promise<boolean> {
+  if (!orgId) return true
+  const admin = createSupabaseAdminClient()
+  if (!admin) return true
+  return (await getOrgFeatures(admin, orgId)).has(feature)
 }
