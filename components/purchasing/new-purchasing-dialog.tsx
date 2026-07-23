@@ -13,7 +13,8 @@ import {
   DialogBody,
   DialogFooter,
 } from "@/components/ui/dialog"
-import { Field, Input, Textarea, Select, Label } from "@/components/ui/input"
+import { Field, Input, Select, Label } from "@/components/ui/input"
+import { ScopeEditor } from "@/components/purchasing/scope-editor"
 import { Button } from "@/components/ui/button"
 import { cn, formatCurrency } from "@/lib/utils"
 import { saveBidPackage } from "@/app/actions/bids"
@@ -300,9 +301,9 @@ export function NewPurchasingDialog({
             />
           </Field>
           <Field label="Scope">
-            <Textarea
+            <ScopeEditor
               value={scope}
-              onChange={(e) => setScope(e.target.value)}
+              onChange={setScope}
               rows={4}
               placeholder="What's included, exclusions, site conditions, timing."
             />

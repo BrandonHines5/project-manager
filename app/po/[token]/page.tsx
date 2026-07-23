@@ -6,6 +6,7 @@ import { ACCESS_TOKEN_RE } from "@/lib/tokens"
 import { brandForProjectType, HINES_HOMES } from "@/lib/brand"
 import { getBrandConfig } from "@/lib/org-brand"
 import { appUrl } from "@/lib/email"
+import { ScopeText } from "@/components/purchasing/scope-text"
 import type { Enums } from "@/lib/db/types"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card"
@@ -274,7 +275,7 @@ export default async function PoTokenPage({
               <h2 className="text-xs font-medium text-muted uppercase tracking-wide mb-1">
                 Scope of work
               </h2>
-              <p className="text-sm whitespace-pre-wrap">{po.scope}</p>
+              <ScopeText text={po.scope} className="text-sm" />
             </div>
           )}
 

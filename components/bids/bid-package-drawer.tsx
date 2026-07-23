@@ -30,7 +30,8 @@ import {
   DialogBody,
   DialogFooter,
 } from "@/components/ui/dialog"
-import { Field, Input, Textarea, Select, Label } from "@/components/ui/input"
+import { Field, Input, Select, Label } from "@/components/ui/input"
+import { ScopeEditor } from "@/components/purchasing/scope-editor"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { cn, formatCurrency, formatDate } from "@/lib/utils"
@@ -638,9 +639,9 @@ export function BidPackageDrawer({
             />
           </Field>
           <Field label="Scope">
-            <Textarea
+            <ScopeEditor
               value={scope}
-              onChange={(e) => setScope(e.target.value)}
+              onChange={setScope}
               disabled={!isDraft}
               rows={4}
               placeholder="What's included, exclusions, site conditions, timing."
