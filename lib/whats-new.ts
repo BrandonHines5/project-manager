@@ -17,6 +17,12 @@ export type WhatsNewEntry = {
 export const WHATS_NEW: WhatsNewEntry[] = [
   {
     date: "2026-07-23",
+    title:
+      "Fixed: the Gantt chart crashed phone browsers on long schedules — it now loads on mobile.",
+    kind: "fix",
+  },
+  {
+    date: "2026-07-23",
     title: "What's New — this page. Every update lands here, newest first.",
     kind: "feature",
   },
