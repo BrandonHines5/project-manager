@@ -1283,6 +1283,7 @@ export function DecisionDrawer({
                 uploading={uploading}
                 selectedChoiceKey={staffSelectedChoiceKey}
                 onSelectChoice={setStaffSelectedChoiceKey}
+                pinChosen={status === "approved"}
                 allowance={allowanceNum}
                 markupPercent={markupNum}
                 markupPercentText={markupPercent}
@@ -1597,6 +1598,7 @@ function ChoicesEditor({
   uploading,
   selectedChoiceKey,
   onSelectChoice,
+  pinChosen,
   allowance,
   markupPercent,
   markupPercentText,
@@ -1617,6 +1619,10 @@ function ChoicesEditor({
   // when re-opening an approved selection). Null = nothing chosen yet.
   selectedChoiceKey: string | null
   onSelectChoice: (key: string) => void
+  // True once the decision is approved: the chosen card is surfaced at the
+  // top of the list (display only — the saved order and letters keep their
+  // positions, and live "Choose" clicks while drafting don't reorder).
+  pinChosen: boolean
   // When non-null we're in the allowance flow: per-choice prices become
   // absolute costs and we surface a variance preview against this amount.
   allowance: number | null
@@ -1655,6 +1661,20 @@ function ChoicesEditor({
     )
     return Math.round(sub * (1 + markupPercent / 100) * 100) / 100
   }
+  // Same treatment as the client picker: once approved, the chosen option
+  // floats to the top but keeps its original letter.
+  const lettered = value.map((c, i) => ({
+    c,
+    letter: String.fromCharCode(65 + i),
+  }))
+  const displayed =
+    pinChosen && selectedChoiceKey
+      ? [...lettered].sort(
+          (a, b) =>
+            Number(b.c.client_key === selectedChoiceKey) -
+            Number(a.c.client_key === selectedChoiceKey)
+        )
+      : lettered
 
   return (
     <div className="rounded-md border border-border-strong bg-background/30 p-3 space-y-3">
@@ -1675,7 +1695,7 @@ function ChoicesEditor({
         </p>
       )}
       <ul className="space-y-3">
-        {value.map((c, i) => {
+        {displayed.map(({ c, letter }) => {
           const photos = attachmentsForChoice(c.client_key)
           const isSelected = c.client_key === selectedChoiceKey
           const price = effectivePrice(c)
@@ -1695,13 +1715,13 @@ function ChoicesEditor({
               className={cn(
                 "rounded-md border bg-surface p-3 space-y-2",
                 isSelected
-                  ? "border-green-500 ring-1 ring-green-500/20"
+                  ? "border-green-600 ring-2 ring-green-500/30 bg-green-50/60"
                   : "border-border"
               )}
             >
               <div className="flex items-start gap-2">
                 <span className="text-xs font-mono text-muted mt-2.5 w-5 text-right">
-                  {String.fromCharCode(65 + i)}.
+                  {letter}.
                 </span>
                 <div className="flex-1 grid grid-cols-1 sm:grid-cols-[1fr_140px] gap-2">
                   <Input
@@ -2131,6 +2151,7 @@ function ChoicePhotosRow({
   uploading: boolean
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
+  const [viewPhoto, setViewPhoto] = useState<Attachment | null>(null)
   return (
     <div>
       <input
@@ -2149,12 +2170,19 @@ function ChoicePhotosRow({
           <div key={p.storage_path} className="relative group">
             <div className="aspect-square rounded border border-border bg-background overflow-hidden flex items-center justify-center">
               {p.file_type?.startsWith("image/") && p.preview_url ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={p.preview_url}
-                  alt={p.file_name}
-                  className="h-full w-full object-cover"
-                />
+                <button
+                  type="button"
+                  onClick={() => setViewPhoto(p)}
+                  className="h-full w-full cursor-zoom-in"
+                  aria-label={`View ${p.file_name} larger`}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={p.preview_url}
+                    alt={p.file_name}
+                    className="h-full w-full object-cover"
+                  />
+                </button>
               ) : (
                 <FileIcon className="h-5 w-5 text-muted" />
               )}
@@ -2179,6 +2207,13 @@ function ChoicePhotosRow({
           <Upload className="h-4 w-4" />
         </button>
       </div>
+      {viewPhoto?.preview_url && (
+        <Lightbox
+          url={viewPhoto.preview_url}
+          name={viewPhoto.file_name}
+          onClose={() => setViewPhoto(null)}
+        />
+      )}
     </div>
   )
 }
@@ -2205,6 +2240,7 @@ function ClientChoicePicker({
     "code" | "name"
   > | null
 }) {
+  const [viewPhoto, setViewPhoto] = useState<Attachment | null>(null)
   if (choices.length === 0) {
     return (
       <div className="rounded-md border border-border bg-background/40 p-3 text-sm text-muted">
@@ -2213,6 +2249,20 @@ function ClientChoicePicker({
     )
   }
   const hasAllowance = allowance != null
+  // The approved pick floats to the top so it's unmissable. Letters stay
+  // tied to each choice's saved position ("C." keeps reading "C." after the
+  // move) so the options still match any prior conversation about them.
+  const lettered = choices.map((c, i) => ({
+    c,
+    letter: String.fromCharCode(65 + i),
+  }))
+  const ordered = approvedChoiceId
+    ? [...lettered].sort(
+        (a, b) =>
+          Number(b.c.id === approvedChoiceId) -
+          Number(a.c.id === approvedChoiceId)
+      )
+    : lettered
   return (
     <div className="space-y-2">
       <Label>
@@ -2238,7 +2288,7 @@ function ClientChoicePicker({
         </div>
       )}
       <ul className="space-y-2">
-        {choices.map((c, i) => {
+        {ordered.map(({ c, letter }) => {
           const isSelected = selected === c.client_key
           const isApproved = approvedChoiceId && c.id === approvedChoiceId
           const photos = attachmentsForChoice(c.client_key)
@@ -2248,15 +2298,29 @@ function ClientChoicePicker({
               : null
           return (
             <li key={c.client_key}>
-              <button
-                type="button"
-                disabled={locked}
-                onClick={() => onSelect(c.client_key)}
+              {/* div[role=button] rather than <button>: the photo tiles
+                  inside are themselves buttons (click to enlarge), and
+                  nested buttons are invalid HTML. */}
+              <div
+                role={locked ? undefined : "button"}
+                tabIndex={locked ? undefined : 0}
+                onClick={locked ? undefined : () => onSelect(c.client_key)}
+                onKeyDown={
+                  locked
+                    ? undefined
+                    : (e) => {
+                        if (e.target !== e.currentTarget) return
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault()
+                          onSelect(c.client_key)
+                        }
+                      }
+                }
                 className={cn(
                   "w-full text-left rounded-md border p-3 transition-colors",
                   locked ? "cursor-default" : "cursor-pointer hover:bg-background/60",
                   isApproved
-                    ? "border-green-500 ring-1 ring-green-500/20 bg-green-50/40"
+                    ? "border-green-600 ring-2 ring-green-500/40 bg-green-50"
                     : isSelected
                     ? "border-blue-500 ring-1 ring-blue-500/20"
                     : "border-border"
@@ -2275,7 +2339,7 @@ function ClientChoicePicker({
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium">
-                        {String.fromCharCode(65 + i)}. {c.title}
+                        {letter}. {c.title}
                       </span>
                       {isApproved && (
                         <Badge tone="success">Your choice</Badge>
@@ -2317,32 +2381,52 @@ function ClientChoicePicker({
                     )}
                     {photos.length > 0 && (
                       <div className="mt-2 grid grid-cols-3 sm:grid-cols-4 gap-1.5">
-                        {photos.map((p) => (
-                          <div
-                            key={p.storage_path}
-                            className="aspect-square rounded border border-border bg-background overflow-hidden flex items-center justify-center"
-                          >
-                            {p.file_type?.startsWith("image/") && p.preview_url ? (
-                              // eslint-disable-next-line @next/next/no-img-element
+                        {photos.map((p) =>
+                          p.file_type?.startsWith("image/") &&
+                          p.preview_url ? (
+                            <button
+                              key={p.storage_path}
+                              type="button"
+                              onClick={(e) => {
+                                // Don't also select the choice card.
+                                e.stopPropagation()
+                                setViewPhoto(p)
+                              }}
+                              className="aspect-square rounded border border-border bg-background overflow-hidden cursor-zoom-in"
+                              aria-label={`View ${p.file_name} larger`}
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img
                                 src={p.preview_url}
                                 alt={p.file_name}
                                 className="h-full w-full object-cover"
                               />
-                            ) : (
+                            </button>
+                          ) : (
+                            <div
+                              key={p.storage_path}
+                              className="aspect-square rounded border border-border bg-background overflow-hidden flex items-center justify-center"
+                            >
                               <FileIcon className="h-5 w-5 text-muted" />
-                            )}
-                          </div>
-                        ))}
+                            </div>
+                          )
+                        )}
                       </div>
                     )}
                   </div>
                 </div>
-              </button>
+              </div>
             </li>
           )
         })}
       </ul>
+      {viewPhoto?.preview_url && (
+        <Lightbox
+          url={viewPhoto.preview_url}
+          name={viewPhoto.file_name}
+          onClose={() => setViewPhoto(null)}
+        />
+      )}
     </div>
   )
 }
@@ -2988,16 +3072,24 @@ function AttachmentTile({
   onCaption: (c: string) => void
 }) {
   const isImage = att.file_type?.startsWith("image/") ?? false
+  const [viewing, setViewing] = useState(false)
   return (
     <div className="relative group">
       <div className="aspect-square rounded-md overflow-hidden border border-border bg-background flex items-center justify-center">
         {isImage && att.preview_url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={att.preview_url}
-            alt={att.file_name}
-            className="h-full w-full object-cover"
-          />
+          <button
+            type="button"
+            onClick={() => setViewing(true)}
+            className="h-full w-full cursor-zoom-in"
+            aria-label={`View ${att.file_name} larger`}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={att.preview_url}
+              alt={att.file_name}
+              className="h-full w-full object-cover"
+            />
+          </button>
         ) : (
           <div className="flex flex-col items-center text-muted text-[10px] p-1">
             <FileIcon className="h-6 w-6 mb-1" />
@@ -3024,6 +3116,13 @@ function AttachmentTile({
         disabled={!canEdit}
         className="mt-1 text-[11px] h-9 sm:h-7 px-2"
       />
+      {viewing && att.preview_url && (
+        <Lightbox
+          url={att.preview_url}
+          name={att.file_name}
+          onClose={() => setViewing(false)}
+        />
+      )}
     </div>
   )
 }
@@ -3475,6 +3574,59 @@ function CatalogLinkSearch({
           })}
         </ul>
       )}
+    </div>
+  )
+}
+
+// Full-screen photo viewer for the drawer's image thumbnails. Renders above
+// the drawer dialog (z-50 → z-[70]); click anywhere or Escape closes. The
+// Escape listener runs in the capture phase and stops propagation so the
+// Dialog's own document-level Escape handler doesn't close the whole drawer.
+function Lightbox({
+  url,
+  name,
+  onClose,
+}: {
+  url: string
+  name: string
+  onClose: () => void
+}) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "Escape") return
+      e.stopPropagation()
+      onClose()
+    }
+    document.addEventListener("keydown", onKey, true)
+    return () => document.removeEventListener("keydown", onKey, true)
+  }, [onClose])
+  return (
+    <div
+      role="dialog"
+      aria-label={name}
+      className="fixed inset-0 z-[70] bg-black/80 flex items-center justify-center p-4 sm:p-8 cursor-zoom-out"
+      onClick={(e) => {
+        e.stopPropagation()
+        onClose()
+      }}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={url}
+        alt={name}
+        className="max-h-full max-w-full object-contain rounded-md shadow-2xl"
+      />
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          onClose()
+        }}
+        className="absolute top-3 right-3 rounded-full bg-black/60 text-white p-2 hover:bg-black/80 cursor-pointer"
+        aria-label="Close photo"
+      >
+        <X className="h-5 w-5" />
+      </button>
     </div>
   )
 }
