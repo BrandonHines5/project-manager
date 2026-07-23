@@ -26,7 +26,7 @@ type PoCtx = {
   status: "draft" | "released" | "approved" | "declined" | "void"
   project_id: string
   companies: { name: string } | null
-  projects: { name: string } | null
+  projects: { name: string; org_id: string | null } | null
 }
 
 function parseOrThrow<T>(schema: z.ZodType<T>, input: unknown): T {
@@ -52,7 +52,7 @@ async function poForToken(token: string) {
     .select(
       `id, number, custom_number, title, status, project_id,
        companies:company_id(name),
-       projects:project_id(name)`
+       projects:project_id(name, org_id)`
     )
     .eq("token", token)
     .maybeSingle()
@@ -65,9 +65,13 @@ async function poForToken(token: string) {
   return { admin, po }
 }
 
-/** Same staff fan-out pattern as bid-public.ts: in-app rows + one email. */
+/** Same staff fan-out pattern as bid-public.ts: in-app rows + one email.
+ * Recipients are limited to staff who belong to the PO's org — the admin
+ * client bypasses org RLS, so an unscoped all-staff query would notify every
+ * tenant. A missing org fails CLOSED to nobody. */
 async function notifyStaff(
   admin: AdminClient,
+  orgId: string | null,
   opts: {
     type: string
     title: string
@@ -77,10 +81,15 @@ async function notifyStaff(
     emailText: string
   }
 ) {
+  if (!orgId) {
+    console.warn("[po-public] no org for PO — skipping staff fan-out")
+    return
+  }
   const { data: staff, error } = await admin
     .from("profiles")
-    .select("id, email, notifications_enabled")
+    .select("id, email, notifications_enabled, organization_members!inner(org_id)")
     .eq("role", "staff")
+    .eq("organization_members.org_id", orgId)
   if (error) {
     console.warn("[po-public] staff lookup failed:", error.message)
     return
@@ -156,7 +165,7 @@ export async function approvePoByToken(input: {
   try {
     const companyName = po.companies?.name ?? "The subcontractor"
     const projectName = po.projects?.name ?? "a project"
-    await notifyStaff(admin, {
+    await notifyStaff(admin, po.projects?.org_id ?? null, {
       type: "po_approved",
       title: `PO approved: PO-${po.number} ${po.title}`,
       body: `${companyName} approved with signature`,
@@ -211,7 +220,7 @@ export async function declinePoByToken(input: { token: string; reason: string })
   try {
     const companyName = po.companies?.name ?? "The subcontractor"
     const projectName = po.projects?.name ?? "a project"
-    await notifyStaff(admin, {
+    await notifyStaff(admin, po.projects?.org_id ?? null, {
       type: "po_declined",
       title: `PO declined: PO-${po.number} ${po.title}`,
       body: `${companyName} declined the purchase order`,
@@ -275,6 +284,7 @@ export async function postPoCommentPublic(input: { token: string; body: string }
     authorIsStaff: false,
     body: parsed.body.trim(),
     staffLink,
+    projectId: po.project_id,
   })
 
   return { ok: true as const }

@@ -18,6 +18,12 @@ export const WHATS_NEW: WhatsNewEntry[] = [
   {
     date: "2026-07-23",
     title:
+      "Selection-approval emails now show only the approved choice (and its photos), and notifications about a job only go to that organization's own team.",
+    kind: "fix",
+  },
+  {
+    date: "2026-07-23",
+    title:
       "Fixed: the Gantt chart crashed phone browsers on long schedules — it now loads on mobile.",
     kind: "fix",
   },

@@ -34,7 +34,7 @@ type RecipientCtx = {
     title: string
     status: "draft" | "sent" | "awarded" | "closed"
     flat_fee: boolean
-    projects: { name: string } | null
+    projects: { name: string; org_id: string | null } | null
   } | null
   companies: { name: string } | null
 }
@@ -62,7 +62,7 @@ async function recipientForToken(token: string) {
     .select(
       `id, status, notes, flat_total,
        bid_packages:bid_package_id(id, project_id, title, status, flat_fee,
-         projects:project_id(name)),
+         projects:project_id(name, org_id)),
        companies:company_id(name)`
     )
     .eq("token", token)
@@ -84,6 +84,7 @@ async function recipientForToken(token: string) {
  */
 async function notifyStaff(
   admin: AdminClient,
+  orgId: string | null,
   opts: {
     type: string
     title: string
@@ -93,10 +94,18 @@ async function notifyStaff(
     emailText: string
   }
 ) {
+  // Only staff in the package's org — the admin client bypasses org RLS, so
+  // an unscoped all-staff query would notify every tenant. A missing org
+  // fails CLOSED to nobody.
+  if (!orgId) {
+    console.warn("[bid-public] no org for package — skipping staff fan-out")
+    return
+  }
   const { data: staff, error } = await admin
     .from("profiles")
-    .select("id, email, notifications_enabled")
+    .select("id, email, notifications_enabled, organization_members!inner(org_id)")
     .eq("role", "staff")
+    .eq("organization_members.org_id", orgId)
   if (error) {
     console.warn("[bid-public] staff lookup failed:", error.message)
     return
@@ -277,7 +286,7 @@ export async function submitBidResponse(input: {
   try {
     const companyName = rec.companies?.name ?? "A subcontractor"
     const projectName = pkg.projects?.name ?? "a project"
-    await notifyStaff(admin, {
+    await notifyStaff(admin, pkg.projects?.org_id ?? null, {
       type: "bid_submitted",
       title: `Bid received: ${pkg.title}`,
       body: `${companyName} submitted a bid`,
@@ -329,7 +338,7 @@ export async function declineBid(input: { token: string; reason?: string | null 
   try {
     const companyName = rec.companies?.name ?? "A subcontractor"
     const projectName = pkg.projects?.name ?? "a project"
-    await notifyStaff(admin, {
+    await notifyStaff(admin, pkg.projects?.org_id ?? null, {
       type: "bid_declined",
       title: `Bid declined: ${pkg.title}`,
       body: `${companyName} declined to bid`,
@@ -396,6 +405,7 @@ export async function postBidCommentPublic(input: { token: string; body: string 
     authorIsStaff: false,
     body: parsed.body.trim(),
     staffLink,
+    projectId: pkg.project_id,
   })
 
   return { ok: true as const }

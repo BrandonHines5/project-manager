@@ -1615,6 +1615,7 @@ export async function postScheduleItemComment(input: {
       // Trades can open the project schedule page (only clients can't) —
       // same deep link works for both sides.
       counterpartyLink: `/projects/${parsed.project_id}/schedule?open=${parsed.schedule_item_id}`,
+      projectId: parsed.project_id,
     })
   } catch (e) {
     console.warn("schedule comment notification failed:", e)

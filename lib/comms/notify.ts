@@ -24,6 +24,14 @@ export async function notifyCommentPosted(opts: {
   /** Link + recipients used when a staff member authored the comment. */
   counterpartyProfileIds?: string[]
   counterpartyLink?: string | null
+  /**
+   * The project the commented entity belongs to. When set, the staff fan-out
+   * is limited to members of that project's organization (the admin client
+   * bypasses org RLS, so an unscoped all-staff query would ring every
+   * tenant's bell). Resolution failure fails CLOSED to nobody. Omit only for
+   * entities with genuinely no project.
+   */
+  projectId?: string | null
 }): Promise<void> {
   try {
     const admin = createSupabaseAdminClient()
@@ -44,6 +52,26 @@ export async function notifyCommentPosted(opts: {
         return
       }
       recipientIds = (staff ?? []).map((p) => p.id)
+      if (opts.projectId) {
+        const { data: proj } = await admin
+          .from("projects")
+          .select("org_id")
+          .eq("id", opts.projectId)
+          .maybeSingle()
+        const orgId = proj?.org_id
+        if (!orgId) {
+          console.warn(
+            "[comms] could not resolve the project's org — skipping staff fan-out"
+          )
+          return
+        }
+        const { data: members } = await admin
+          .from("organization_members")
+          .select("profile_id")
+          .eq("org_id", orgId)
+        const memberIds = new Set((members ?? []).map((m) => m.profile_id))
+        recipientIds = recipientIds.filter((id) => memberIds.has(id))
+      }
       linkUrl = opts.staffLink
     }
 

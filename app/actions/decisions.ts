@@ -981,7 +981,7 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
        delay_days, delay_cost_per_day,
        status, due_date, approved_at, selected_choice_id,
        project_id, created_by, approved_by_client_id,
-       projects:project_id (id, name, project_number, address),
+       projects:project_id (id, name, project_number, address, org_id),
        creator:created_by (full_name, email),
        client_approver:approved_by_client_id (full_name, email),
        decision_choices!decision_choices_decision_id_fkey (id, title, description, price_delta, position),
@@ -990,7 +990,7 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
        decision_followup_templates!decision_followup_templates_decision_id_fkey (title, due_offset_days, notes, position,
          assignee:assignee_profile_id (full_name),
          company:assignee_company_id (name)),
-       decision_attachments (file_name, caption)`
+       decision_attachments (file_name, caption, choice_id)`
     )
     .eq("id", decisionId)
     .maybeSingle()
@@ -1003,13 +1003,27 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
   }
   if (!decision) return
 
+  // Recipients are ONLY staff who belong to the project's organization. The
+  // admin client bypasses the org-scoped profiles RLS, and an unscoped
+  // role='staff' query here once emailed every tenant's staff (including the
+  // multi-tenant "isolation test" user) about a Hines approval.
+  const orgId = (
+    decision as { projects?: { org_id?: string | null } | null }
+  ).projects?.org_id
+  if (!orgId) {
+    console.warn(
+      `[approved-decision email] skipped — could not resolve the project's org for decision ${decisionId}`
+    )
+    return
+  }
   const { data: staff } = await admin
     .from("profiles")
-    .select("id, email")
+    .select("id, email, organization_members!inner(org_id)")
     .eq("role", "staff")
     .eq("notifications_enabled", true)
-  const staffWithEmail = (staff ?? []).filter(
-    (p): p is { id: string; email: string } => !!p.email
+    .eq("organization_members.org_id", orgId)
+  const staffWithEmail = (staff ?? []).flatMap((p) =>
+    p.email ? [{ id: p.id, email: p.email }] : []
   )
   // Honor each staffer's client_decisions/email preference.
   const gated = await Promise.all(
@@ -1059,7 +1073,11 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
     assignee: { full_name: string | null } | null
     company: { name: string } | null
   }
-  type Attachment = { file_name: string; caption: string | null }
+  type Attachment = {
+    file_name: string
+    caption: string | null
+    choice_id: string | null
+  }
   type Person = { full_name: string | null; email: string | null } | null
 
   // Build + send inside a try so a formatting edge case in the rich HTML can
@@ -1101,6 +1119,19 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
     d.creator?.full_name || d.creator?.email || "(unknown)"
 
   const choices = [...d.decision_choices].sort((a, b) => a.position - b.position)
+  // Only the approved choice goes in the email — staff don't need the losing
+  // options. Legacy approved selections with no recorded pick fall back to
+  // the full list (with the old SELECTED tag) so information isn't lost.
+  const selectedChoice =
+    choices.find((c) => c.id === d.selected_choice_id) ?? null
+  // Same trim for attachments: keep decision-level files plus the approved
+  // choice's photos; the non-approved choices' photos are noise once a pick
+  // is made.
+  const attachments = selectedChoice
+    ? d.decision_attachments.filter(
+        (a) => a.choice_id == null || a.choice_id === d.selected_choice_id
+      )
+    : d.decision_attachments
   const costItems = [...d.decision_cost_items].sort(
     (a, b) => a.position - b.position
   )
@@ -1141,7 +1172,17 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
     textLines.push("Description:")
     textLines.push(d.description)
   }
-  if (d.kind === "selection" && choices.length) {
+  if (d.kind === "selection" && selectedChoice) {
+    const price =
+      selectedChoice.price_delta != null
+        ? ` (${formatCurrency(selectedChoice.price_delta)})`
+        : ""
+    textLines.push("")
+    textLines.push(`Approved choice: ${selectedChoice.title}${price}`)
+    if (selectedChoice.description) {
+      textLines.push(`  ${selectedChoice.description}`)
+    }
+  } else if (d.kind === "selection" && choices.length) {
     textLines.push("")
     textLines.push("Choices:")
     for (const c of choices) {
@@ -1178,10 +1219,10 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
       if (f.notes) textLines.push(`      ${f.notes}`)
     }
   }
-  if (d.decision_attachments.length) {
+  if (attachments.length) {
     textLines.push("")
     textLines.push("Attachments:")
-    for (const a of d.decision_attachments) {
+    for (const a of attachments) {
       const cap = a.caption ? ` — ${a.caption}` : ""
       textLines.push(`  - ${a.file_name}${cap}`)
     }
@@ -1219,7 +1260,23 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
           d.description
         )}</div>`
       : "",
-    d.kind === "selection" && choices.length
+    d.kind === "selection" && selectedChoice
+      ? `<h3 style="margin:16px 0 4px;font-size:14px">Approved choice</h3><div style="margin:4px 0"><strong style="color:#0a7d32">${escapeHtml(
+          selectedChoice.title
+        )}</strong>${
+          selectedChoice.price_delta != null
+            ? ` <span style="color:#555">(${escapeHtml(
+                formatCurrency(selectedChoice.price_delta)
+              )})</span>`
+            : ""
+        }${
+          selectedChoice.description
+            ? `<div style="color:#555;font-size:13px">${escapeHtml(
+                selectedChoice.description
+              )}</div>`
+            : ""
+        }</div>`
+      : d.kind === "selection" && choices.length
       ? `<h3 style="margin:16px 0 4px;font-size:14px">Choices</h3><ul style="margin:0;padding-left:20px">${choices
           .map((c) => {
             const isSel = c.id === d.selected_choice_id
@@ -1280,8 +1337,8 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
           })
           .join("")}</ul>`
       : "",
-    d.decision_attachments.length
-      ? `<h3 style="margin:16px 0 4px;font-size:14px">Attachments</h3><ul style="margin:0;padding-left:20px">${d.decision_attachments
+    attachments.length
+      ? `<h3 style="margin:16px 0 4px;font-size:14px">Attachments</h3><ul style="margin:0;padding-left:20px">${attachments
           .map((a) => {
             const cap = a.caption
               ? ` <span style="color:#555">— ${escapeHtml(a.caption)}</span>`
@@ -1950,6 +2007,7 @@ export async function postComment({
       staffLink: link,
       counterpartyProfileIds: counterpartyIds,
       counterpartyLink: link,
+      projectId: project_id,
     })
   } catch (e) {
     console.warn("decision comment notification failed:", e)
@@ -2119,10 +2177,23 @@ export async function requestDueDateReset(input: {
       decision.kind === "selection" ? "Selection" : "Change order"
     const title = `${kindLabel} #${decision.number}: due-date reset requested`
     const link = `/projects/${project_id}/decisions?open=${decision_id}`
-    const { data: staff } = await admin
-      .from("profiles")
-      .select("id, email, notifications_enabled")
-      .eq("role", "staff")
+    // Same org scoping as the approval email: only this project's org's
+    // staff — the admin client bypasses org RLS, and an unresolvable org
+    // fails CLOSED to nobody.
+    const { data: proj } = await admin
+      .from("projects")
+      .select("org_id")
+      .eq("id", project_id)
+      .maybeSingle()
+    const { data: staff } = proj?.org_id
+      ? await admin
+          .from("profiles")
+          .select(
+            "id, email, notifications_enabled, organization_members!inner(org_id)"
+          )
+          .eq("role", "staff")
+          .eq("organization_members.org_id", proj.org_id)
+      : { data: [] }
     const recipients = (staff ?? []).filter((s) => s.notifications_enabled)
     if (recipients.length) {
       const { error: nErr } = await admin.from("notifications").insert(
