@@ -53,14 +53,23 @@ export async function POST(req: NextRequest) {
     : false
   if (!verified) {
     try {
+      // Collect EVERY org whose secret verifies: secrets are random, so two
+      // matches means misconfiguration or a copied secret — fail closed and
+      // drop the event rather than stamping whichever row iterated first.
+      const matches = new Set<string>()
       for (const row of await listOrgIntegrationSecrets(admin, "quo")) {
         const secret = row.secrets.webhookSecret
         if (typeof secret !== "string" || !secret) continue
-        if (verifyQuoSignature(rawBody, sigHeader, secret)) {
-          verified = true
-          verifiedOrgId = row.org_id
-          break
-        }
+        if (verifyQuoSignature(rawBody, sigHeader, secret)) matches.add(row.org_id)
+      }
+      if (matches.size === 1) {
+        verified = true
+        verifiedOrgId = [...matches][0]
+      } else if (matches.size > 1) {
+        console.error(
+          "[quo webhook] ambiguous signing secret (multiple orgs match); dropping event"
+        )
+        return NextResponse.json({ ok: true, skipped: "ambiguous-secret" })
       }
     } catch (e) {
       // Can't read the candidate secrets — 500 so OpenPhone retries rather
@@ -91,6 +100,9 @@ export async function POST(req: NextRequest) {
     switch (type) {
       case "message.received":
       case "message.delivered": {
+        // Failures below throw RetryableDbError until the row is stored —
+        // OpenPhone redelivers, and the (source, provider_id) dedup makes
+        // the retry idempotent.
         const inbound = obj.direction === "incoming"
         const counterpartyNumber = inbound ? obj.from : firstTo(obj.to)
         // Which staffer owns the Quo number this text went through — powers
@@ -152,7 +164,7 @@ export async function POST(req: NextRequest) {
           // their richer attribution (sent_by, kind) and skip the insert.
           { onConflict: "source,provider_id", ignoreDuplicates: true }
         )
-        if (error) throw new Error(error.message)
+        if (error) throw new RetryableDbError(error.message)
         if (inbound) {
           await notifyStaffOfInbound({
             kind: "sms",
@@ -239,7 +251,7 @@ export async function POST(req: NextRequest) {
           },
           { onConflict: "source,provider_id", ignoreDuplicates: true }
         )
-        if (error) throw new Error(error.message)
+        if (error) throw new RetryableDbError(error.message)
         if (inbound) {
           await notifyStaffOfInbound({
             kind: "call",
@@ -280,7 +292,7 @@ export async function POST(req: NextRequest) {
           .eq("provider_id", obj.id)
         if (verifiedOrgId) update = update.eq("org_id", verifiedOrgId)
         const { error } = await update
-        if (error) throw new Error(error.message)
+        if (error) throw new RetryableDbError(error.message)
         return NextResponse.json({ ok: true })
       }
 
@@ -288,7 +300,13 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true, skipped: type })
     }
   } catch (e) {
-    // Log and 200 — a bad row must not put OpenPhone into a retry loop.
+    // Transient DB failures before/at the write are retryable — the
+    // (source, provider_id) dedup makes OpenPhone's redelivery idempotent.
+    if (e instanceof RetryableDbError) {
+      console.error(`[quo webhook] ${type} transient failure; requesting retry:`, e.message)
+      return NextResponse.json({ error: "database unavailable" }, { status: 500 })
+    }
+    // Otherwise log and 200 — a poison row must not loop OpenPhone's retries.
     console.error(
       `[quo webhook] ${type} processing failed:`,
       e instanceof Error ? e.message : e
@@ -296,6 +314,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, stored: false })
   }
 }
+
+/** A transient DB failure before (or at) the communications write — the
+ *  route 500s so OpenPhone redelivers, mirroring the Twilio route's 503
+ *  posture; the write paths' (source, provider_id) dedup keeps retries safe. */
+class RetryableDbError extends Error {}
 
 type QuoEvent = {
   id?: string
@@ -370,9 +393,9 @@ async function staffProfileForQuoNumber(
  * the legacy single-workspace path), so a stale number reassigned between
  * workspaces (or a forged event signed with the org's own secret) could
  * otherwise stamp another tenant's profile into this org's rows via sent_by /
- * meta.quoStaffProfileId. A lookup ERROR fails closed to null (drops
- * attribution, keeps the event). Legacy env-verified events pass through
- * unchanged.
+ * meta.quoStaffProfileId. A lookup ERROR is retryable (thrown before the
+ * row is written, so OpenPhone redelivers). Legacy env-verified events pass
+ * through unchanged.
  */
 async function scopeStaffToOrg(
   admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
@@ -387,8 +410,9 @@ async function scopeStaffToOrg(
     .eq("profile_id", staffProfileId)
     .maybeSingle()
   if (error) {
-    console.warn("[quo webhook] staff org-scope lookup failed:", error.message)
-    return null
+    // Pre-write: a transient failure is retryable, not a permanent
+    // attribution drop.
+    throw new RetryableDbError(`staff org-scope lookup failed: ${error.message}`)
   }
   return data ? staffProfileId : null
 }
@@ -396,10 +420,10 @@ async function scopeStaffToOrg(
 /**
  * Tenant attribution for one event. When an ORG'S OWN signing secret verified
  * it, that org is authoritative — stamp it and drop any attribution the
- * global matcher resolved into another tenant (a scope-lookup failure keeps
- * the event but drops links; this route's always-200 contract can't retry
- * without losing it). Env-verified (legacy workspace) events keep the
- * best-effort resolveInboundOrg heuristics, unchanged.
+ * global matcher resolved into another tenant. A scope-lookup FAILURE throws
+ * RetryableDbError (pre-write, so a 500 lets OpenPhone redeliver instead of
+ * storing the event permanently unattributed). Env-verified (legacy
+ * workspace) events keep the best-effort resolveInboundOrg heuristics.
  */
 async function attributeForOrg(
   admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
@@ -409,6 +433,10 @@ async function attributeForOrg(
 ): Promise<{ match: MatchResult; orgId: string | null }> {
   if (verifiedOrgId) {
     const scoped = await scopeMatchToOrg(admin, match, verifiedOrgId)
+    if (scoped.lookupFailed) {
+      // Pre-write: retry beats silently unlinking the attribution.
+      throw new RetryableDbError("org scope lookup failed")
+    }
     return { match: scoped.match, orgId: verifiedOrgId }
   }
   return { match, orgId: await resolveInboundOrg(admin, staffProfileId, match) }

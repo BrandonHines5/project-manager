@@ -121,6 +121,13 @@ export async function sendQuoSms(opts: {
     orgId = resolved.orgId
   }
 
+  // A caller passing BOTH an explicit orgId and a log org must agree —
+  // otherwise the message would send through org A's provider while being
+  // recorded under org B.
+  if (opts.orgId && opts.log?.org_id && opts.orgId !== opts.log.org_id) {
+    return { sent: false, reason: "Conflicting organization ids" }
+  }
+
   const to = normalizeE164(opts.to)
   if (!to) {
     return { sent: false, reason: `Invalid recipient phone number: ${opts.to}` }
@@ -149,10 +156,12 @@ export async function sendQuoSms(opts: {
     if (twilio) {
       // Honor an explicit `from` override (the documented contract) with the
       // org's provisioned number as the fallback sender — but only when it's
-      // E.164: a Quo "PN…" phone-number id is a valid override for the Quo
-      // path below, never a Twilio sender, so it falls back rather than
-      // failing the send at the Twilio API.
-      const twilioFrom = (opts.from && normalizeE164(opts.from)) || twilio.phoneNumber
+      // strictly phone-shaped: a Quo "PN…" id is a valid override for the Quo
+      // path below, never a Twilio sender, and normalizeE164 alone would
+      // launder a digit-heavy id into an apparent number.
+      const twilioFrom =
+        (opts.from && /^[+\d\s().-]+$/.test(opts.from) && normalizeE164(opts.from)) ||
+        twilio.phoneNumber
       const result = await sendTwilioSms({ to, from: twilioFrom, content })
       if (result.sent && opts.log) {
         await logCommunication({
@@ -161,7 +170,7 @@ export async function sendQuoSms(opts: {
           // Fall back to the org we resolved (a raw-number send has no
           // project/company to derive org from), so the row lands on the right
           // tenant instead of the communications bridge default.
-          org_id: opts.log.org_id ?? orgId ?? undefined,
+          org_id: orgId ?? undefined,
           project_id: opts.log.project_id,
           company_id: opts.log.company_id,
           profile_id: opts.log.profile_id,
@@ -201,7 +210,7 @@ export async function sendQuoSms(opts: {
         await logCommunication({
           channel: "sms",
           direction: "outbound",
-          org_id: opts.log.org_id ?? orgId ?? undefined,
+          org_id: orgId ?? undefined,
           project_id: opts.log.project_id,
           company_id: opts.log.company_id,
           profile_id: opts.log.profile_id,
@@ -261,7 +270,7 @@ export async function sendQuoSms(opts: {
         // send to a raw number has no project/company for logCommunication to
         // derive org from, so without this the row would hit the bridge
         // default (Hines) even though it went out on another org's number.
-        org_id: opts.log.org_id ?? orgId ?? undefined,
+        org_id: orgId ?? undefined,
         project_id: opts.log.project_id,
         company_id: opts.log.company_id,
         profile_id: opts.log.profile_id,
