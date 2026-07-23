@@ -1,20 +1,23 @@
 "use client"
 
-import { useState, useTransition } from "react"
+import { useId, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { Plug, MessageSquare, Mail } from "lucide-react"
+import { ChevronRight, Plug, MessageSquare, Mail } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { saveQuoIntegration, saveResendIntegration } from "@/app/actions/org"
 import { provisionTwilioNumber, releaseTwilioNumber } from "@/app/actions/twilio"
 
 /**
- * Org integrations editor (B4). Manages Quo/OpenPhone (texts & calls) and
- * Resend (email); QBO joins here as it gains a per-org editor. Every API key
- * is write-only — the page only ever tells us whether one is stored, never
- * its value, so a stored key can't leak back to the browser. Each card owns
- * its own transition/state so saving one never disables the other.
+ * Org integrations editor (B4). Legacy Hines: bring-your-own Quo/OpenPhone +
+ * Resend cards. Builder orgs: keyless platform Twilio texting + platform
+ * email, with bring-your-own OpenPhone available behind an "Advanced"
+ * disclosure as the upgrade path (full phone app; wins the send dispatch when
+ * connected). QBO joins here as it gains a per-org editor. Every API key is
+ * write-only — the page only ever tells us whether one is stored, never its
+ * value, so a stored key can't leak back to the browser. Each card owns its
+ * own transition/state so saving one never disables the other.
  */
 export function OrganizationIntegrationsClient({
   orgId,
@@ -27,6 +30,8 @@ export function OrganizationIntegrationsClient({
   platformEmailError,
   quoConnected,
   quoSharedFrom,
+  quoWebhookConnected,
+  quoWebhookUrl,
   quoError,
   quoEnvFallback,
   resendConnected,
@@ -55,6 +60,10 @@ export function OrganizationIntegrationsClient({
   platformEmailError: boolean
   quoConnected: boolean
   quoSharedFrom: string
+  /** Whether an OpenPhone webhook signing secret is stored (write-only). */
+  quoWebhookConnected: boolean
+  /** The inbound endpoint an OpenPhone workspace's webhook must point at. */
+  quoWebhookUrl: string
   quoError: boolean
   /** Legacy org runs off env QUO_API_KEY even with no stored row. */
   quoEnvFallback: boolean
@@ -81,17 +90,43 @@ export function OrganizationIntegrationsClient({
       {isLegacy ? (
         <QuoIntegrationCard
           orgId={orgId}
+          isLegacy
           connected={quoConnected}
           sharedFrom={quoSharedFrom}
+          webhookConnected={quoWebhookConnected}
+          webhookUrl={quoWebhookUrl}
           error={quoError}
           envFallback={quoEnvFallback}
         />
       ) : (
-        <TwilioSmsCard
-          orgId={orgId}
-          configured={twilioConfigured}
-          number={twilioNumber}
-        />
+        <>
+          <TwilioSmsCard
+            orgId={orgId}
+            configured={twilioConfigured}
+            number={twilioNumber}
+            openPhoneActive={quoConnected}
+          />
+          {/* Bring-your-own OpenPhone — the upgrade path for teams that want a
+              full phone app (calls + texts from an app on everyone's phone,
+              mirrored here). Collapsed so the default keyless setup stays
+              simple; auto-open when connected or erroring so its state is
+              never hidden. */}
+          <AdvancedDisclosure
+            label="Using OpenPhone? Connect your own account"
+            defaultOpen={quoConnected || quoWebhookConnected || quoError}
+          >
+            <QuoIntegrationCard
+              orgId={orgId}
+              isLegacy={false}
+              connected={quoConnected}
+              sharedFrom={quoSharedFrom}
+              webhookConnected={quoWebhookConnected}
+              webhookUrl={quoWebhookUrl}
+              error={quoError}
+              envFallback={quoEnvFallback}
+            />
+          </AdvancedDisclosure>
+        </>
       )}
       {isLegacy ? (
         <ResendIntegrationCard
@@ -181,18 +216,58 @@ function PlatformEmailCard({
   )
 }
 
+/** Collapsed-by-default wrapper for advanced/optional setup. */
+function AdvancedDisclosure({
+  label,
+  defaultOpen,
+  children,
+}: {
+  label: string
+  defaultOpen: boolean
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  const contentId = useId()
+  return (
+    <div className="space-y-2">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-controls={contentId}
+        className="flex items-center gap-1 text-xs text-muted hover:text-foreground transition-colors"
+      >
+        <ChevronRight
+          className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-90" : ""}`}
+        />
+        {label}
+      </button>
+      <div id={contentId} hidden={!open}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
 /**
  * Platform-managed text messaging (Twilio) for builder orgs — no API key. The
  * org provisions a dedicated number in one click; releasing it stops billing.
+ * Texting ONLY — the number takes no voice calls (calls stay on personal
+ * phones, or on OpenPhone once the org upgrades). When the org has its own
+ * OpenPhone account connected, that wins the send dispatch and this number
+ * sits on standby.
  */
 function TwilioSmsCard({
   orgId,
   configured,
   number,
+  openPhoneActive,
 }: {
   orgId: string
   configured: boolean
   number: string | null
+  /** The org's own OpenPhone account is connected and handles texting. */
+  openPhoneActive: boolean
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
@@ -231,26 +306,45 @@ function TwilioSmsCard({
         </div>
         <span
           className={
-            number ? "text-xs text-brand-600" : "text-xs text-muted"
+            number && !openPhoneActive
+              ? "text-xs text-brand-600"
+              : "text-xs text-muted"
           }
         >
-          {number ? "Active" : "Not set up"}
+          {number ? (openPhoneActive ? "On standby" : "Active") : "Not set up"}
         </span>
       </div>
 
-      {!configured ? (
+      {openPhoneActive && !number ? (
+        <p className="text-xs text-muted">
+          Your OpenPhone account is connected and handles texting, so
+          there&rsquo;s nothing to set up here.
+        </p>
+      ) : !configured ? (
         <p className="text-xs text-muted">
           Text messaging isn&rsquo;t available yet. It&rsquo;ll appear here once
           it&rsquo;s switched on for your account.
         </p>
       ) : number ? (
         <div className="space-y-3">
-          <p className="text-sm">
-            Your texting number is{" "}
-            <span className="font-medium">{number}</span>. Texts you send to
-            subs and clients go out from here, and replies land in your
-            Communications feed.
-          </p>
+          {openPhoneActive ? (
+            <p className="text-sm">
+              Your OpenPhone account is connected, so texting goes through
+              OpenPhone. Your BuildFox number{" "}
+              <span className="font-medium">{number}</span> is on standby — you
+              can release it if you no longer need it, or keep it as a
+              fallback.
+            </p>
+          ) : (
+            <p className="text-sm">
+              Your texting number is{" "}
+              <span className="font-medium">{number}</span>. Texts you send to
+              subs and clients go out from here, and replies land in your
+              Communications feed. This number is for text messages only — it
+              doesn&rsquo;t take voice calls, so phone calls stay on your
+              regular phone.
+            </p>
+          )}
           <Button
             size="sm"
             variant="ghost"
@@ -264,7 +358,8 @@ function TwilioSmsCard({
         <div className="space-y-3">
           <p className="text-xs text-muted">
             Get a dedicated phone number for texting subs and clients. No setup
-            or accounts to create — we handle it. Optionally pick an area code.
+            or accounts to create — we handle it. Texting only (the number
+            doesn&rsquo;t take voice calls). Optionally pick an area code.
           </p>
           <div className="flex items-center gap-2">
             <Input
@@ -321,17 +416,28 @@ function StatusBadge({
 /**
  * Quo/OpenPhone credentials card: a write-only API key + the shared fallback
  * sending number. `save(true)` disconnects (clears the stored key).
+ *
+ * Non-legacy (builder) orgs see this inside the "Advanced" disclosure as the
+ * bring-your-own upgrade path from the keyless Twilio number, with an extra
+ * write-only webhook signing secret so THEIR workspace's replies and Quo-app
+ * texts/calls mirror into the feed (legacy Hines' webhook secret stays env).
  */
 function QuoIntegrationCard({
   orgId,
+  isLegacy,
   connected,
   sharedFrom: initialSharedFrom,
+  webhookConnected,
+  webhookUrl,
   error,
   envFallback,
 }: {
   orgId: string
+  isLegacy: boolean
   connected: boolean
   sharedFrom: string
+  webhookConnected: boolean
+  webhookUrl: string
   error: boolean
   envFallback: boolean
 }) {
@@ -339,6 +445,7 @@ function QuoIntegrationCard({
   const [pending, startTransition] = useTransition()
   const [apiKey, setApiKey] = useState("")
   const [sharedFrom, setSharedFrom] = useState(initialSharedFrom)
+  const [webhookSecret, setWebhookSecret] = useState("")
 
   function save(disconnect: boolean) {
     startTransition(async () => {
@@ -346,11 +453,15 @@ function QuoIntegrationCard({
         orgId,
         apiKey: disconnect ? undefined : apiKey.trim() || undefined,
         sharedFromNumber: disconnect ? undefined : sharedFrom.trim(),
+        webhookSecret: disconnect ? undefined : webhookSecret.trim() || undefined,
         disconnect,
       })
       if (result.ok) {
-        toast.success(disconnect ? "Quo disconnected" : "Quo settings saved")
+        toast.success(
+          disconnect ? "OpenPhone disconnected" : "OpenPhone settings saved"
+        )
         setApiKey("")
+        setWebhookSecret("")
         // router.refresh() re-renders with fresh props but doesn't reset local
         // state, so clear the disconnected field ourselves — otherwise a stale
         // number lingers in the input and could be re-submitted on a later save.
@@ -365,13 +476,28 @@ function QuoIntegrationCard({
   return (
     <div className="rounded-md border border-border p-4 space-y-3">
       <div className="flex items-center justify-between">
-        <div className="text-sm font-medium">Quo / OpenPhone (texts &amp; calls)</div>
+        <div className="text-sm font-medium">
+          {isLegacy
+            ? "Quo / OpenPhone (texts & calls)"
+            : "OpenPhone (bring your own account)"}
+        </div>
         <StatusBadge error={error} connected={connected} envFallback={envFallback} />
       </div>
+      {!isLegacy && (
+        <p className="text-xs text-muted">
+          For teams that want a full phone app — everyone texting and calling
+          from business numbers in the OpenPhone app, with everything mirrored
+          into your Communications feed. Connecting takes over texting from
+          your BuildFox number, and you can port that number into OpenPhone so
+          contacts stay the same. Assign each person their own OpenPhone number
+          on the Team page.
+        </p>
+      )}
       {error && (
         <p className="text-xs text-danger">
           The stored key couldn&rsquo;t be read (the encryption key may be
-          misconfigured). Re-enter the API key to reset it.
+          misconfigured). Re-enter the API key — and the webhook signing
+          secret, if you use one — to reset it.
         </p>
       )}
 
@@ -404,16 +530,49 @@ function QuoIntegrationCard({
           maxLength={40}
         />
         <p className="text-xs text-muted">
-          The fallback number for staff who don&rsquo;t have their own Quo
-          number assigned. E.164 (+1…) or an OpenPhone number id.
+          The fallback number for staff who don&rsquo;t have their own
+          OpenPhone number assigned. E.164 (+1…) or an OpenPhone number id.
         </p>
+        {!isLegacy && connected && !initialSharedFrom.trim() && (
+          <p className="text-xs text-warning">
+            No sending number yet — texts go out from your BuildFox texting
+            number until you set a shared number here or assign per-user
+            numbers on the Team page.
+          </p>
+        )}
       </div>
+
+      {!isLegacy && (
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-muted">
+            Webhook signing secret
+          </label>
+          <Input
+            type="password"
+            value={webhookSecret}
+            onChange={(e) => setWebhookSecret(e.target.value)}
+            placeholder={
+              webhookConnected
+                ? "•••••••• (leave blank to keep)"
+                : "OpenPhone webhook signing secret"
+            }
+            autoComplete="off"
+            maxLength={300}
+          />
+          <p className="text-xs text-muted break-all">
+            In OpenPhone, add a webhook for message and call events pointing at{" "}
+            <span className="font-medium">{webhookUrl}</span>, then paste its
+            signing secret here. That&rsquo;s how replies and texts or calls
+            made in the OpenPhone app show up in your Communications feed.
+          </p>
+        </div>
+      )}
 
       <div className="flex items-center gap-2">
         <Button size="sm" onClick={() => save(false)} disabled={pending}>
           {pending ? "Saving…" : "Save"}
         </Button>
-        {connected && (
+        {(connected || webhookConnected) && (
           <Button
             size="sm"
             variant="ghost"

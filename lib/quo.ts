@@ -121,6 +121,13 @@ export async function sendQuoSms(opts: {
     orgId = resolved.orgId
   }
 
+  // A caller passing BOTH an explicit orgId and a log org must agree —
+  // otherwise the message would send through org A's provider while being
+  // recorded under org B.
+  if (opts.orgId && opts.log?.org_id && opts.orgId !== opts.log.org_id) {
+    return { sent: false, reason: "Conflicting organization ids" }
+  }
+
   const to = normalizeE164(opts.to)
   if (!to) {
     return { sent: false, reason: `Invalid recipient phone number: ${opts.to}` }
@@ -133,45 +140,56 @@ export async function sendQuoSms(opts: {
     return { sent: false, reason: "Message exceeds 1600-character limit" }
   }
 
-  // Provider dispatch: a platform-managed Twilio number (builder orgs) wins
-  // when present; otherwise the org's own OpenPhone/Quo account — the legacy
-  // Hines path, unchanged (per-user numbers, shared number, env fallback).
-  const twilio = await resolveTwilioConfig(orgId)
-  if (twilio) {
-    // Honor an explicit `from` override (the documented contract) with the
-    // org's provisioned number as the fallback sender.
-    const twilioFrom = opts.from ?? twilio.phoneNumber
-    const result = await sendTwilioSms({ to, from: twilioFrom, content })
-    if (result.sent && opts.log) {
-      await logCommunication({
-        channel: "sms",
-        direction: "outbound",
-        // Fall back to the org we resolved (a raw-number send has no
-        // project/company to derive org from), so the row lands on the right
-        // tenant instead of the communications bridge default.
-        org_id: opts.log.org_id ?? orgId ?? undefined,
-        project_id: opts.log.project_id,
-        company_id: opts.log.company_id,
-        profile_id: opts.log.profile_id,
-        sent_by: opts.log.sent_by,
-        from_address: twilioFrom,
-        to_address: to,
-        counterparty_name: opts.log.counterparty_name,
-        body: content,
-        source: "twilio",
-        source_kind: opts.log.kind,
-        provider_id: result.providerId ?? null,
-      })
-    }
-    return result
-  }
-
-  // --- OpenPhone / Quo path (legacy Hines + any bring-your-own-key org) -----
+  // Provider dispatch: the org's OWN OpenPhone/Quo account wins when
+  // connected — bring-your-own beats platform-managed, matching email's
+  // Resend precedence — so a builder that upgrades to OpenPhone takes over
+  // texting the moment they connect. Otherwise the org's platform Twilio
+  // number, else "not connected". Legacy Hines resolves its env Quo key
+  // here, so its path is unchanged (per-user numbers, shared number).
+  // A non-legacy org whose stored Quo key won't decrypt reads as "no key"
+  // (resolveQuoConfig fails closed) and degrades to its own Twilio number —
+  // same-tenant, so texts keep flowing while the badge shows the error.
   const cfg = await resolveQuoConfig(orgId)
   const key = cfg.apiKey
   if (!key) {
+    const twilio = await resolveTwilioConfig(orgId)
+    if (twilio) {
+      // Honor an explicit `from` override (the documented contract) with the
+      // org's provisioned number as the fallback sender — but only when it's
+      // strictly phone-shaped: a Quo "PN…" id is a valid override for the Quo
+      // path below, never a Twilio sender, and normalizeE164 alone would
+      // launder a digit-heavy id into an apparent number.
+      const twilioFrom =
+        (opts.from && /^[+\d\s().-]+$/.test(opts.from) && normalizeE164(opts.from)) ||
+        twilio.phoneNumber
+      const result = await sendTwilioSms({ to, from: twilioFrom, content })
+      if (result.sent && opts.log) {
+        await logCommunication({
+          channel: "sms",
+          direction: "outbound",
+          // Fall back to the org we resolved (a raw-number send has no
+          // project/company to derive org from), so the row lands on the right
+          // tenant instead of the communications bridge default.
+          org_id: orgId ?? undefined,
+          project_id: opts.log.project_id,
+          company_id: opts.log.company_id,
+          profile_id: opts.log.profile_id,
+          sent_by: opts.log.sent_by,
+          from_address: twilioFrom,
+          to_address: to,
+          counterparty_name: opts.log.counterparty_name,
+          body: content,
+          source: "twilio",
+          source_kind: opts.log.kind,
+          provider_id: result.providerId ?? null,
+        })
+      }
+      return result
+    }
     return { sent: false, reason: "SMS is not connected for this organization" }
   }
+
+  // --- OpenPhone / Quo path (legacy Hines + any bring-your-own-key org) -----
 
   // Resolve the sending number: explicit override → the acting staffer's own
   // Quo number → the org's shared default. Never throws; falls back on any miss.
@@ -181,6 +199,33 @@ export async function sendQuoSms(opts: {
     cfg.sharedFrom ??
     undefined
   if (!from) {
+    // An OpenPhone key with no resolvable sending number (no shared number,
+    // sender has none assigned) must not strand the text when the org still
+    // holds a platform Twilio number — same-tenant degradation, matching the
+    // decrypt-failure posture above.
+    const twilio = await resolveTwilioConfig(orgId)
+    if (twilio) {
+      const result = await sendTwilioSms({ to, from: twilio.phoneNumber, content })
+      if (result.sent && opts.log) {
+        await logCommunication({
+          channel: "sms",
+          direction: "outbound",
+          org_id: orgId ?? undefined,
+          project_id: opts.log.project_id,
+          company_id: opts.log.company_id,
+          profile_id: opts.log.profile_id,
+          sent_by: opts.log.sent_by,
+          from_address: twilio.phoneNumber,
+          to_address: to,
+          counterparty_name: opts.log.counterparty_name,
+          body: content,
+          source: "twilio",
+          source_kind: opts.log.kind,
+          provider_id: result.providerId ?? null,
+        })
+      }
+      return result
+    }
     return {
       sent: false,
       reason:
@@ -225,7 +270,7 @@ export async function sendQuoSms(opts: {
         // send to a raw number has no project/company for logCommunication to
         // derive org from, so without this the row would hit the bridge
         // default (Hines) even though it went out on another org's number.
-        org_id: opts.log.org_id ?? orgId ?? undefined,
+        org_id: orgId ?? undefined,
         project_id: opts.log.project_id,
         company_id: opts.log.company_id,
         profile_id: opts.log.profile_id,

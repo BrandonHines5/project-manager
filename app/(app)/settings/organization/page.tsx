@@ -4,7 +4,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { getActiveOrgId, LEGACY_ORG_ID } from "@/lib/org"
 import { getOrgIntegration } from "@/lib/integrations/org"
 import { twilioConfigured, resolveTwilioConfig } from "@/lib/twilio"
-import { platformEmailConfigured, platformSenderAddress } from "@/lib/email"
+import { appUrl, platformEmailConfigured, platformSenderAddress } from "@/lib/email"
 import { parseBrandConfig } from "@/lib/brand"
 import { OrganizationSettingsClient } from "./organization-settings-client"
 import {
@@ -70,6 +70,7 @@ export default async function OrganizationSettingsPage() {
   // A decrypt failure surfaces as an error banner, never a crash.
   let quoConnected = false
   let quoSharedFrom = ""
+  let quoWebhookConnected = false
   let quoError = false
   let resendConnected = false
   let resendFromEmail = ""
@@ -80,6 +81,7 @@ export default async function OrganizationSettingsPage() {
     try {
       const integ = await getOrgIntegration(admin, orgId, "quo")
       quoConnected = Boolean(integ?.enabled && integ.secrets?.apiKey)
+      quoWebhookConnected = Boolean(integ?.enabled && integ.secrets?.webhookSecret)
       const sf = integ?.config?.sharedFromNumber
       quoSharedFrom = typeof sf === "string" ? sf : ""
     } catch {
@@ -184,6 +186,8 @@ export default async function OrganizationSettingsPage() {
           platformEmailError={emailError}
           quoConnected={quoConnected}
           quoSharedFrom={quoSharedFrom}
+          quoWebhookConnected={quoWebhookConnected}
+          quoWebhookUrl={appUrl("/api/inbound/quo")}
           quoError={quoError}
           quoEnvFallback={quoEnvFallback}
           resendConnected={resendConnected}

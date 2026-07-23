@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { verifyQuoSignature } from "@/lib/comms/quo-verify"
-import { matchCounterparty } from "@/lib/comms/match"
+import { matchCounterparty, scopeMatchToOrg, type MatchResult } from "@/lib/comms/match"
 import { notifyStaffOfInbound } from "@/lib/comms/notify"
+import { listOrgIntegrationSecrets } from "@/lib/integrations/org"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -22,23 +23,67 @@ export const maxDuration = 60
  *
  * Always 200 after signature verification (OpenPhone retries on non-2xx and
  * a poison event must not retry forever) — insurance-webhook convention.
+ *
+ * Multi-workspace: one endpoint serves EVERY OpenPhone workspace. The legacy
+ * env `QUO_WEBHOOK_SECRET` (Hines' workspace) is tried first — zero change
+ * for the common case — then each org's stored signing secret (builder orgs
+ * that connected their own OpenPhone account). Whichever org's secret
+ * verifies the event tells us, cryptographically, which tenant it belongs
+ * to: that org is stamped directly and the counterparty match is scoped to
+ * it, so a bring-your-own workspace can never file traffic onto another
+ * tenant. Env-verified events keep the legacy best-effort org resolution.
  */
 export async function POST(req: NextRequest) {
-  const secret = process.env.QUO_WEBHOOK_SECRET
-  if (!secret) {
-    console.error("[quo webhook] QUO_WEBHOOK_SECRET not configured")
-    return NextResponse.json({ error: "Not configured" }, { status: 500 })
-  }
-
   const rawBody = await req.text()
-  if (!verifyQuoSignature(rawBody, req.headers.get("openphone-signature"), secret)) {
-    return NextResponse.json({ error: "Invalid signature" }, { status: 401 })
-  }
+  const sigHeader = req.headers.get("openphone-signature")
 
   const admin = createSupabaseAdminClient()
   if (!admin) {
     console.error("[quo webhook] admin client unavailable")
     return NextResponse.json({ error: "Not configured" }, { status: 500 })
+  }
+
+  const envSecret = process.env.QUO_WEBHOOK_SECRET
+  // Which org's stored secret verified the event; null = the legacy env
+  // workspace (or an org that pasted the same secret — impossible to mint
+  // by accident, and env-first only ever widens to legacy behavior).
+  let verifiedOrgId: string | null = null
+  let verified = envSecret
+    ? verifyQuoSignature(rawBody, sigHeader, envSecret)
+    : false
+  if (!verified) {
+    try {
+      // Collect EVERY org whose secret verifies: secrets are random, so two
+      // matches means misconfiguration or a copied secret — fail closed and
+      // drop the event rather than stamping whichever row iterated first.
+      const matches = new Set<string>()
+      for (const row of await listOrgIntegrationSecrets(admin, "quo")) {
+        const secret = row.secrets.webhookSecret
+        if (typeof secret !== "string" || !secret) continue
+        if (verifyQuoSignature(rawBody, sigHeader, secret)) matches.add(row.org_id)
+      }
+      if (matches.size === 1) {
+        verified = true
+        verifiedOrgId = [...matches][0]
+      } else if (matches.size > 1) {
+        console.error(
+          "[quo webhook] ambiguous signing secret (multiple orgs match); dropping event"
+        )
+        return NextResponse.json({ ok: true, skipped: "ambiguous-secret" })
+      }
+    } catch (e) {
+      // Can't read the candidate secrets — 500 so OpenPhone retries rather
+      // than dropping a legitimate event on a transient DB error.
+      console.error(
+        "[quo webhook] org secret lookup failed:",
+        e instanceof Error ? e.message : e
+      )
+      return NextResponse.json({ error: "Verification unavailable" }, { status: 500 })
+    }
+  }
+  if (!verified) {
+    if (!envSecret) console.error("[quo webhook] QUO_WEBHOOK_SECRET not configured")
+    return NextResponse.json({ error: "Invalid signature" }, { status: 401 })
   }
 
   let event: QuoEvent
@@ -55,18 +100,29 @@ export async function POST(req: NextRequest) {
     switch (type) {
       case "message.received":
       case "message.delivered": {
+        // Failures below throw RetryableDbError until the row is stored —
+        // OpenPhone redelivers, and the (source, provider_id) dedup makes
+        // the retry idempotent.
         const inbound = obj.direction === "incoming"
         const counterpartyNumber = inbound ? obj.from : firstTo(obj.to)
-        const match = await matchCounterparty(admin, { phone: counterpartyNumber })
         // Which staffer owns the Quo number this text went through — powers
         // per-user attribution for texts typed directly in the Quo app (app-sent
         // texts already carry sent_by and win the ON CONFLICT below).
-        const staffProfileId = await staffProfileForQuoNumber(
+        const staffProfileId = await scopeStaffToOrg(
           admin,
-          obj.phoneNumberId,
-          inbound ? firstTo(obj.to) : (obj.from ?? null)
+          await staffProfileForQuoNumber(
+            admin,
+            obj.phoneNumberId,
+            inbound ? firstTo(obj.to) : (obj.from ?? null)
+          ),
+          verifiedOrgId
         )
-        const orgId = await resolveInboundOrg(admin, staffProfileId, match)
+        const { match, orgId } = await attributeForOrg(
+          admin,
+          verifiedOrgId,
+          staffProfileId,
+          await matchCounterparty(admin, { phone: counterpartyNumber })
+        )
         const { error } = await admin.from("communications").upsert(
           {
             channel: "sms",
@@ -108,7 +164,7 @@ export async function POST(req: NextRequest) {
           // their richer attribution (sent_by, kind) and skip the insert.
           { onConflict: "source,provider_id", ignoreDuplicates: true }
         )
-        if (error) throw new Error(error.message)
+        if (error) throw new RetryableDbError(error.message)
         if (inbound) {
           await notifyStaffOfInbound({
             kind: "sms",
@@ -116,6 +172,11 @@ export async function POST(req: NextRequest) {
             preview: obj.body ?? obj.text ?? "",
             projectId: match.project_id,
             projectName: await projectName(admin, match.project_id),
+            // Ring only the resolved org's staff — the verified org, or the
+            // legacy path's best-effort resolution (which also stamps the
+            // row, so the bell and the row's visibility agree). Null = truly
+            // unattributed → the legacy all-staff fan-out.
+            orgId,
           })
         }
         return NextResponse.json({ ok: true })
@@ -124,13 +185,21 @@ export async function POST(req: NextRequest) {
       case "call.completed": {
         const inbound = obj.direction === "incoming"
         const counterpartyNumber = inbound ? obj.from : firstTo(obj.to)
-        const match = await matchCounterparty(admin, { phone: counterpartyNumber })
-        const staffProfileId = await staffProfileForQuoNumber(
+        const staffProfileId = await scopeStaffToOrg(
           admin,
-          obj.phoneNumberId,
-          inbound ? firstTo(obj.to) : (obj.from ?? null)
+          await staffProfileForQuoNumber(
+            admin,
+            obj.phoneNumberId,
+            inbound ? firstTo(obj.to) : (obj.from ?? null)
+          ),
+          verifiedOrgId
         )
-        const orgId = await resolveInboundOrg(admin, staffProfileId, match)
+        const { match, orgId } = await attributeForOrg(
+          admin,
+          verifiedOrgId,
+          staffProfileId,
+          await matchCounterparty(admin, { phone: counterpartyNumber })
+        )
         const durationSeconds =
           obj.answeredAt && obj.completedAt
             ? Math.max(
@@ -182,7 +251,7 @@ export async function POST(req: NextRequest) {
           },
           { onConflict: "source,provider_id", ignoreDuplicates: true }
         )
-        if (error) throw new Error(error.message)
+        if (error) throw new RetryableDbError(error.message)
         if (inbound) {
           await notifyStaffOfInbound({
             kind: "call",
@@ -196,6 +265,11 @@ export async function POST(req: NextRequest) {
                   : "Call",
             projectId: match.project_id,
             projectName: await projectName(admin, match.project_id),
+            // Ring only the resolved org's staff — the verified org, or the
+            // legacy path's best-effort resolution (which also stamps the
+            // row, so the bell and the row's visibility agree). Null = truly
+            // unattributed → the legacy all-staff fan-out.
+            orgId,
           })
         }
         return NextResponse.json({ ok: true })
@@ -206,12 +280,19 @@ export async function POST(req: NextRequest) {
         // existing call row. media shape: [{ url, type }]
         const url = obj.media?.[0]?.url ?? null
         if (!url) return NextResponse.json({ ok: true, skipped: "no-recording-url" })
-        const { error } = await admin
+        // Org-verified events may only touch THEIR tenant's rows —
+        // provider_id comes from the event body, so without this an event
+        // signed with one org's secret could stamp a recording URL onto
+        // another tenant's call row. Legacy env-verified events keep the
+        // unscoped match (their rows may carry heuristic org stamps).
+        let update = admin
           .from("communications")
           .update({ call_recording_url: url })
           .eq("source", "quo")
           .eq("provider_id", obj.id)
-        if (error) throw new Error(error.message)
+        if (verifiedOrgId) update = update.eq("org_id", verifiedOrgId)
+        const { error } = await update
+        if (error) throw new RetryableDbError(error.message)
         return NextResponse.json({ ok: true })
       }
 
@@ -219,7 +300,13 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true, skipped: type })
     }
   } catch (e) {
-    // Log and 200 — a bad row must not put OpenPhone into a retry loop.
+    // Transient DB failures before/at the write are retryable — the
+    // (source, provider_id) dedup makes OpenPhone's redelivery idempotent.
+    if (e instanceof RetryableDbError) {
+      console.error(`[quo webhook] ${type} transient failure; requesting retry:`, e.message)
+      return NextResponse.json({ error: "database unavailable" }, { status: 500 })
+    }
+    // Otherwise log and 200 — a poison row must not loop OpenPhone's retries.
     console.error(
       `[quo webhook] ${type} processing failed:`,
       e instanceof Error ? e.message : e
@@ -227,6 +314,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, stored: false })
   }
 }
+
+/** A transient DB failure before (or at) the communications write — the
+ *  route 500s so OpenPhone redelivers, mirroring the Twilio route's 503
+ *  posture; the write paths' (source, provider_id) dedup keeps retries safe. */
+class RetryableDbError extends Error {}
 
 type QuoEvent = {
   id?: string
@@ -293,6 +385,61 @@ async function staffProfileForQuoNumber(
     if (data?.id) return data.id
   }
   return null
+}
+
+/**
+ * For org-verified events, a staff-number match must belong to that org —
+ * staffProfileForQuoNumber matches quo numbers across ALL tenants (fine for
+ * the legacy single-workspace path), so a stale number reassigned between
+ * workspaces (or a forged event signed with the org's own secret) could
+ * otherwise stamp another tenant's profile into this org's rows via sent_by /
+ * meta.quoStaffProfileId. A lookup ERROR is retryable (thrown before the
+ * row is written, so OpenPhone redelivers). Legacy env-verified events pass
+ * through unchanged.
+ */
+async function scopeStaffToOrg(
+  admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
+  staffProfileId: string | null,
+  verifiedOrgId: string | null
+): Promise<string | null> {
+  if (!staffProfileId || !verifiedOrgId) return staffProfileId
+  const { data, error } = await admin
+    .from("organization_members")
+    .select("profile_id")
+    .eq("org_id", verifiedOrgId)
+    .eq("profile_id", staffProfileId)
+    .maybeSingle()
+  if (error) {
+    // Pre-write: a transient failure is retryable, not a permanent
+    // attribution drop.
+    throw new RetryableDbError(`staff org-scope lookup failed: ${error.message}`)
+  }
+  return data ? staffProfileId : null
+}
+
+/**
+ * Tenant attribution for one event. When an ORG'S OWN signing secret verified
+ * it, that org is authoritative — stamp it and drop any attribution the
+ * global matcher resolved into another tenant. A scope-lookup FAILURE throws
+ * RetryableDbError (pre-write, so a 500 lets OpenPhone redeliver instead of
+ * storing the event permanently unattributed). Env-verified (legacy
+ * workspace) events keep the best-effort resolveInboundOrg heuristics.
+ */
+async function attributeForOrg(
+  admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
+  verifiedOrgId: string | null,
+  staffProfileId: string | null,
+  match: MatchResult
+): Promise<{ match: MatchResult; orgId: string | null }> {
+  if (verifiedOrgId) {
+    const scoped = await scopeMatchToOrg(admin, match, verifiedOrgId)
+    if (scoped.lookupFailed) {
+      // Pre-write: retry beats silently unlinking the attribution.
+      throw new RetryableDbError("org scope lookup failed")
+    }
+    return { match: scoped.match, orgId: verifiedOrgId }
+  }
+  return { match, orgId: await resolveInboundOrg(admin, staffProfileId, match) }
 }
 
 /**

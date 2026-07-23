@@ -3,7 +3,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { appUrl } from "@/lib/email"
 import { verifyTwilioSignature } from "@/lib/comms/twilio-verify"
 import { orgForTwilioNumber } from "@/lib/twilio"
-import { matchCounterparty, type MatchResult } from "@/lib/comms/match"
+import { matchCounterparty, scopeMatchToOrg } from "@/lib/comms/match"
 import { notifyStaffOfInbound } from "@/lib/comms/notify"
 
 export const runtime = "nodejs"
@@ -80,12 +80,15 @@ export async function POST(req: NextRequest) {
     // matchCounterparty is global (a sub's phone can appear in several orgs'
     // directories), so scope the result to THIS number's org — cross-org
     // project/company/profile links are dropped, keeping the message logged
-    // under the right tenant, just unattributed.
-    const match = await scopeMatchToOrg(
+    // under the right tenant, just unattributed. A scope-lookup FAILURE is
+    // retryable (throw → 503) — a transient error must not silently unlink.
+    const scoped = await scopeMatchToOrg(
       admin,
       await matchCounterparty(admin, { phone: from }),
       orgId
     )
+    if (scoped.lookupFailed) throw new RetryableDbError("org scope lookup failed")
+    const match = scoped.match
     const numMedia = parseInt(params.NumMedia || "0", 10) || 0
     const body = params.Body?.trim() || (numMedia > 0 ? "[media]" : "")
 
@@ -143,63 +146,11 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/**
- * Discards attribution that resolved into a different org than the one that
- * owns this Twilio number. Verifies the matched project and company are
- * in-org; if either isn't, drops project/company/profile (keeping the display
- * name) so a cross-tenant contact can never file a message onto another org's
- * job. No-op when the match had no project/company to begin with.
- */
 /** A transient DB failure (scope lookup OR the communications write) — the
  *  route returns a retryable 503 for these rather than dropping/losing the
- *  message and 200-ing (no retry). Genuine no-match / poison rows still 200. */
+ *  message and 200-ing (no retry). Genuine no-match / poison rows still 200.
+ *  (The org-scoping itself is the shared lib/comms/match.ts:scopeMatchToOrg.) */
 class RetryableDbError extends Error {}
-
-async function scopeMatchToOrg(
-  admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
-  match: MatchResult,
-  orgId: string
-): Promise<MatchResult> {
-  const unlinked: MatchResult = {
-    ...match,
-    project_id: null,
-    company_id: null,
-    profile_id: null,
-  }
-  if (match.project_id) {
-    const { data, error } = await admin
-      .from("projects")
-      .select("org_id")
-      .eq("id", match.project_id)
-      .maybeSingle()
-    if (error) throw new RetryableDbError(error.message)
-    if (!data || data.org_id !== orgId) return unlinked
-  }
-  if (match.company_id) {
-    const { data, error } = await admin
-      .from("companies")
-      .select("org_id")
-      .eq("id", match.company_id)
-      .maybeSingle()
-    if (error) throw new RetryableDbError(error.message)
-    if (!data || data.org_id !== orgId) return unlinked
-  }
-  if (match.profile_id) {
-    // A profile belongs to an org through organization_members — a standalone
-    // profile match can otherwise carry a same-number person from another
-    // tenant. Drop attribution unless they're a member here. A LOOKUP error is
-    // NOT a miss — throw so the webhook retries instead of silently unlinking.
-    const { data, error } = await admin
-      .from("organization_members")
-      .select("profile_id")
-      .eq("org_id", orgId)
-      .eq("profile_id", match.profile_id)
-      .maybeSingle()
-    if (error) throw new RetryableDbError(error.message)
-    if (!data) return unlinked
-  }
-  return match
-}
 
 async function projectName(
   admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
