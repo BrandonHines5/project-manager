@@ -48,6 +48,22 @@ export function GanttView({
 
   const [showCritical, setShowCritical] = useState(true)
   const [condensed, setCondensed] = useState(false)
+  // The print rendition (a second full-timeline SVG) is heavy, so it mounts
+  // only for the duration of printing instead of on every Gantt visit —
+  // keeping it out of the DOM is part of what lets long schedules open on
+  // phones at all.
+  const [printing, setPrinting] = useState(false)
+  useEffect(() => {
+    if (!printing) return
+    // Two frames so the print DOM is laid out before the dialog snapshots it.
+    const raf = requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        window.print()
+        setPrinting(false)
+      })
+    )
+    return () => cancelAnimationFrame(raf)
+  }, [printing])
   const { DAY_PX, ROW_PX, HEADER_PX, LABEL_PX } =
     condensed ? DENSITY.condensed : DENSITY.comfortable
   const analysis = useMemo(
@@ -306,8 +322,9 @@ export function GanttView({
         </label>
         <button
           type="button"
-          onClick={() => window.print()}
-          className="inline-flex items-center gap-1.5 cursor-pointer select-none text-muted hover:text-foreground"
+          onClick={() => setPrinting(true)}
+          disabled={printing}
+          className="inline-flex items-center gap-1.5 cursor-pointer select-none text-muted hover:text-foreground disabled:opacity-50"
           title="Print the Gantt chart / save it as a PDF"
         >
           <Printer className="h-3.5 w-3.5" />
@@ -390,6 +407,25 @@ export function GanttView({
           />
         )}
 
+        {/* Weekend stripes — ONE full-height column per weekend day. These
+            used to render per day PER ROW, which built a five-figure DOM on
+            long schedules (rows × days) and crashed mobile browsers outright
+            (iOS kills the tab on memory pressure → "Can't open this page"). */}
+        {days.map((d, di) =>
+          isWeekend(d) ? (
+            <div
+              key={di}
+              className="absolute pointer-events-none bg-zinc-100/60"
+              style={{
+                left: LABEL_PX + di * DAY_PX,
+                top: HEADER_PX,
+                width: DAY_PX,
+                height: totalHeight - HEADER_PX,
+              }}
+            />
+          ) : null
+        )}
+
         {/* Rows */}
         {sortedItems.map((item, i) => {
           const start = parseISO(item.start_date!)
@@ -425,21 +461,6 @@ export function GanttView({
                   height: ROW_PX,
                 }}
               />
-              {/* Weekend stripes on row */}
-              {days.map((d, di) =>
-                isWeekend(d) ? (
-                  <div
-                    key={di}
-                    className="absolute pointer-events-none bg-zinc-100/60"
-                    style={{
-                      left: LABEL_PX + di * DAY_PX,
-                      top: y,
-                      width: DAY_PX,
-                      height: ROW_PX,
-                    }}
-                  />
-                ) : null
-              )}
               {/* Label */}
               <div
                 className={cn(
@@ -586,18 +607,20 @@ export function GanttView({
         onCancel={() => setPendingMove(null)}
       />
     )}
-    <GanttPrintDocument
-      data={data}
-      sortedItems={sortedItems}
-      days={days}
-      minDate={minDate}
-      monthGroups={monthGroups}
-      criticalIds={criticalIds}
-      showCritical={showCritical}
-      arrows={arrows}
-      rowIndex={rowIndex}
-      projectFinishLabel={projectFinishLabel}
-    />
+    {printing && (
+      <GanttPrintDocument
+        data={data}
+        sortedItems={sortedItems}
+        days={days}
+        minDate={minDate}
+        monthGroups={monthGroups}
+        criticalIds={criticalIds}
+        showCritical={showCritical}
+        arrows={arrows}
+        rowIndex={rowIndex}
+        projectFinishLabel={projectFinishLabel}
+      />
+    )}
     </div>
   )
 }
