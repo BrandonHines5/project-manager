@@ -2,7 +2,11 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireSession } from "@/lib/auth"
 import { resolveAllScope, scopeLabel } from "../scope"
 import { EmptyScope } from "../empty-scope"
-import { AllDailyLogsList, type DailyLogRow } from "./all-daily-logs-list"
+import {
+  AllDailyLogsList,
+  type CreateLogData,
+  type DailyLogRow,
+} from "./all-daily-logs-list"
 import type { Tables } from "@/lib/db/types"
 
 export const metadata = { title: "Job Logs (all jobs) — BuildFox" }
@@ -57,6 +61,41 @@ export default async function AggregateDailyLogsPage({
       ? "Question or note for the builder…"
       : "Reply to client / leave a note"
 
+  // Staff can create a log straight from this aggregate view — a picker
+  // dialog asks which job it belongs to, then the regular drawer opens.
+  // The drawer needs each candidate job's cost_plus flag (hours field) plus
+  // the org-wide people/company lists for to-dos and subs-on-site.
+  let create: CreateLogData | null = null
+  if (profile.role === "staff") {
+    const [{ data: costPlusRows }, { data: profiles }, { data: companies }] =
+      await Promise.all([
+        supabase.from("projects").select("id, cost_plus").in("id", projectIds),
+        supabase
+          .from("profiles")
+          .select("id, full_name, email")
+          .order("full_name"),
+        supabase
+          .from("companies")
+          .select("id, name, type, trade_category")
+          .neq("type", "client")
+          .order("name"),
+      ])
+    const costPlus = new Map(
+      (costPlusRows ?? []).map((r) => [r.id, r.cost_plus] as const)
+    )
+    create = {
+      meName,
+      projects: scope.projects.map((p) => ({
+        id: p.id,
+        name: p.name,
+        project_number: p.project_number,
+        cost_plus: costPlus.get(p.id) ?? false,
+      })),
+      profiles: profiles ?? [],
+      companies: companies ?? [],
+    }
+  }
+
   const rows: DailyLogRow[] = logs.map((log) => {
     const project = projectMap.get(log.project_id)
     return {
@@ -87,6 +126,7 @@ export default async function AggregateDailyLogsPage({
       truncated={logs.length === 200}
       meName={meName}
       placeholder={placeholder}
+      create={create}
     />
   )
 }

@@ -24,6 +24,12 @@ export const WHATS_NEW: WhatsNewEntry[] = [
   {
     date: "2026-07-23",
     title:
+      "You can now add a job log straight from the all-jobs Job Logs view — a picker asks which job it belongs to, then the usual editor opens.",
+    kind: "feature",
+  },
+  {
+    date: "2026-07-23",
+    title:
       "Fixed large-file uploads: files over 6 MB (plans, videos) failed with an authorization error — they upload normally now.",
     kind: "fix",
   },
