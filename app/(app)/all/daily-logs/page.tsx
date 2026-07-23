@@ -63,13 +63,19 @@ export default async function AggregateDailyLogsPage({
 
   // Staff can create a log straight from this aggregate view — a picker
   // dialog asks which job it belongs to, then the regular drawer opens.
-  // The drawer needs each candidate job's cost_plus flag (hours field) plus
-  // the org-wide people/company lists for to-dos and subs-on-site.
+  // The picker deliberately offers EVERY job (any status — Complete and
+  // Warranty included), not just the page's scope: a log often lands on a
+  // job that isn't open anymore. The drawer needs each candidate job's
+  // cost_plus flag (hours field) plus the org-wide people/company lists
+  // for to-dos and subs-on-site.
   let create: CreateLogData | null = null
   if (profile.role === "staff") {
-    const [{ data: costPlusRows }, { data: profiles }, { data: companies }] =
+    const [{ data: allProjects }, { data: profiles }, { data: companies }] =
       await Promise.all([
-        supabase.from("projects").select("id, cost_plus").in("id", projectIds),
+        supabase
+          .from("projects")
+          .select("id, name, project_number, cost_plus, status, is_template")
+          .order("project_number", { ascending: false }),
         supabase
           .from("profiles")
           .select("id, full_name, email")
@@ -80,17 +86,22 @@ export default async function AggregateDailyLogsPage({
           .neq("type", "client")
           .order("name"),
       ])
-    const costPlus = new Map(
-      (costPlusRows ?? []).map((r) => [r.id, r.cost_plus] as const)
-    )
     create = {
       meName,
-      projects: scope.projects.map((p) => ({
-        id: p.id,
-        name: p.name,
-        project_number: p.project_number,
-        cost_plus: costPlus.get(p.id) ?? false,
-      })),
+      // Templates aren't real jobs — same double filter as resolveAllScope.
+      projects: (allProjects ?? [])
+        .filter(
+          (p) =>
+            !p.is_template &&
+            !p.project_number.toUpperCase().startsWith("TEMPLATE")
+        )
+        .map((p) => ({
+          id: p.id,
+          name: p.name,
+          project_number: p.project_number,
+          cost_plus: p.cost_plus,
+          status: p.status,
+        })),
       profiles: profiles ?? [],
       companies: companies ?? [],
     }

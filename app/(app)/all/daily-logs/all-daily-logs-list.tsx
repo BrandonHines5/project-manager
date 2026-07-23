@@ -17,9 +17,11 @@ import {
 import { Field } from "@/components/ui/input"
 import { SearchableSelect } from "@/components/ui/searchable-select"
 import { formatDate } from "@/lib/utils"
+import { STATUS_FILTER_LABEL } from "@/lib/project-status"
 import { LogCommentsToggle } from "@/components/daily-logs/log-comments-toggle"
 import { DailyLogDrawer } from "@/components/daily-logs/daily-log-drawer"
 import type { DailyLogsData } from "@/app/(app)/projects/[id]/daily-logs/daily-logs-client"
+import type { Enums } from "@/lib/db/types"
 
 type LogComment = {
   id: string
@@ -41,7 +43,8 @@ export type DailyLogRow = {
 }
 
 // Everything the staff-only create flow needs: the jobs the picker offers
-// (with cost_plus so the drawer knows to show the hours field) and the
+// (EVERY job regardless of status — with cost_plus so the drawer knows to
+// show the hours field, and status so closed jobs are recognizable) and the
 // org-wide lists the drawer's to-do/subs editors use. Null for non-staff.
 export type CreateLogData = {
   meName: string
@@ -50,6 +53,7 @@ export type CreateLogData = {
     name: string
     project_number: string
     cost_plus: boolean
+    status: Enums<"project_status">
   }[]
   profiles: DailyLogsData["profiles"]
   companies: DailyLogsData["companies"]
@@ -222,7 +226,9 @@ export function AllDailyLogsList({
                   options={create.projects.map((p) => ({
                     value: p.id,
                     label: p.name,
-                    hint: p.project_number,
+                    // Status rides in the hint so Complete/Warranty jobs
+                    // read as such — and it's searchable ("warranty").
+                    hint: `${p.project_number} · ${STATUS_FILTER_LABEL[p.status]}`,
                   }))}
                   placeholder="Select a job…"
                   ariaLabel="Job for the new log"
