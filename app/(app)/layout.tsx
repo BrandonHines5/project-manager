@@ -7,6 +7,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { brandForProjectTypes } from "@/lib/brand"
 import { getBrandConfig } from "@/lib/org-brand"
 import { getOrgMemberships, resolveActiveOrgId, LEGACY_ORG_ID } from "@/lib/org"
+import { getOrgFeatures } from "@/lib/features"
 import { resolveOrgLifecycle } from "@/lib/sandbox"
 import { SandboxPaywall } from "@/components/layout/sandbox-paywall"
 
@@ -98,7 +99,13 @@ export default async function AppLayout({
   // Sandbox/trial lifecycle (S1): an org whose trial has lapsed is frozen
   // behind the paywall. Lazy-flips sandbox_active→sandbox_expired on read and
   // fails open, so the ~everyone case (active_subscriber) is untouched.
-  const orgLifecycle = await resolveOrgLifecycle(supabase, activeOrgId)
+  // Feature gating (0122) resolves alongside — both are independent org reads.
+  const [orgLifecycle, orgFeatures] = await Promise.all([
+    resolveOrgLifecycle(supabase, activeOrgId),
+    getOrgFeatures(supabase, activeOrgId),
+  ])
+  // Client components need a serializable prop, not a Set.
+  const features = [...orgFeatures]
 
   // Buildertrend-style shell: dark menu bar on top, section tabs under it,
   // jobs list on the left, and the page content scrolling on its own inside
@@ -129,6 +136,7 @@ export default async function AppLayout({
         activeOrgId={activeOrgId}
         orgAdmin={orgAdmin}
         platformAdmin={platformAdmin}
+        features={features}
         // The jobs-list sidebar is desktop-only; the topbar hands the same
         // list to the mobile drawer so phones can switch jobs too.
         projects={projects ?? []}
@@ -136,6 +144,7 @@ export default async function AppLayout({
       <SectionTabs
         role={profile.role}
         financialAccess={profile.role === "staff" && !!profile.financial_access}
+        features={features}
       />
       <ProjectContextShell
         sidebar={

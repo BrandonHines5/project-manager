@@ -5,6 +5,7 @@ import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
 import { assertActiveOrgWritable } from "@/lib/sandbox"
+import { requireOrgFeature } from "@/lib/feature-gate"
 import { sendEmail, appUrl } from "@/lib/email"
 import { sendQuoSms, normalizeE164 } from "@/lib/quo"
 import { generateAccessToken } from "@/lib/tokens"
@@ -202,8 +203,11 @@ async function reconcileAttachments(
 
 export async function saveBidPackage(input: BidPackageInputT) {
   const profile = await requireStaff()
-  await assertActiveOrgWritable()
   const parsed = parseOrThrow(BidPackageInput, input)
+  // Gate CREATION only — an existing draft stays editable after a plan
+  // downgrade (send/copy stay gated; they mint new outbound artifacts).
+  if (!parsed.id) await requireOrgFeature("bid_requests")
+  await assertActiveOrgWritable()
   const supabase = await createSupabaseServerClient()
 
   let id = nz(parsed.id)
@@ -297,6 +301,7 @@ const CopyBidPackageInput = z.object({
 export async function copyBidPackage(input: z.infer<typeof CopyBidPackageInput>) {
   const { id, target_project_id } = CopyBidPackageInput.parse(input)
   const profile = await requireStaff()
+  await requireOrgFeature("bid_requests")
   const supabase = await createSupabaseServerClient()
 
   const { data: src, error: srcErr } = await supabase
@@ -460,6 +465,7 @@ export async function sendBidPackage(input: {
   company_ids: string[]
 }) {
   const profile = await requireStaff()
+  await requireOrgFeature("bid_requests")
   // Caller-supplied project_id is accepted for shape only — the package's
   // STORED project drives comms logging and revalidation below (same rule
   // as reopenBidPackage), so a mismatched id can't misfile audit rows.
