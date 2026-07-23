@@ -10,6 +10,7 @@ import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { EmptyState } from "@/components/ui/empty"
 import { Field, Input, Select, Textarea } from "@/components/ui/input"
+import { SearchableSelect } from "@/components/ui/searchable-select"
 import {
   saveUtilityDrafts,
   generateUtilityPdfs,
@@ -678,22 +679,27 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
                   : "CRM not connected — showing this app's projects. Picking one pre-fills the property details."
               }
             >
-              <Select value={jobKey} onChange={(e) => onSelectJob(e.target.value)}>
-                <option value="">Choose a job…</option>
-                {data.jobsSource === "crm" ? (
-                  <>
-                    <JobGroup label="In Work" jobs={data.jobs.filter((j) => j.crm_status === "In Work")} />
-                    <JobGroup label="Upcoming" jobs={data.jobs.filter((j) => j.crm_status === "Upcoming")} />
-                    <JobGroup label="Other" jobs={data.jobs.filter((j) => j.crm_status === null)} />
-                  </>
-                ) : (
-                  data.jobs.map((j) => (
-                    <option key={j.key} value={j.key}>
-                      {j.label}
-                    </option>
-                  ))
-                )}
-              </Select>
+              <SearchableSelect
+                value={jobKey}
+                onChange={onSelectJob}
+                options={
+                  data.jobsSource === "crm"
+                    ? // Grouped by CRM status — flattened in group order with
+                      // the group label carried as each option's hint.
+                      (["In Work", "Upcoming", null] as const).flatMap((status) =>
+                        data.jobs
+                          .filter((j) => j.crm_status === status)
+                          .map((j) => ({
+                            value: j.key,
+                            label: j.label,
+                            hint: status ?? "Other",
+                          }))
+                      )
+                    : data.jobs.map((j) => ({ value: j.key, label: j.label }))
+                }
+                placeholder="Choose a job…"
+                ariaLabel="Job"
+              />
             </Field>
           </div>
 
@@ -981,20 +987,6 @@ export function UtilitiesClient({ data }: { data: UtilitiesData }) {
         </div>
       )}
     </div>
-  )
-}
-
-/** One <optgroup> of jobs; renders nothing when the group is empty. */
-function JobGroup({ label, jobs }: { label: string; jobs: UtilityJob[] }) {
-  if (jobs.length === 0) return null
-  return (
-    <optgroup label={label}>
-      {jobs.map((j) => (
-        <option key={j.key} value={j.key}>
-          {j.label}
-        </option>
-      ))}
-    </optgroup>
   )
 }
 

@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { EmptyState } from "@/components/ui/empty"
 import { Field, Input, Select } from "@/components/ui/input"
+import { SearchableSelect } from "@/components/ui/searchable-select"
 import { Avatar } from "@/components/ui/avatar"
 import {
   Dialog,
@@ -398,18 +399,17 @@ function EditDialog({
             </Select>
           </Field>
           <Field label="Company">
-            <Select
+            <SearchableSelect
               value={companyId}
-              onChange={(e) => setCompanyId(e.target.value)}
-            >
-              <option value="">— none —</option>
-              {companies.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} · {c.type}
-                  {c.trade_category ? ` (${c.trade_category})` : ""}
-                </option>
-              ))}
-            </Select>
+              onChange={setCompanyId}
+              options={companies.map((c) => ({
+                value: c.id,
+                label: c.name,
+                hint: `${c.type}${c.trade_category ? ` (${c.trade_category})` : ""}`,
+              }))}
+              placeholder="— none —"
+              ariaLabel="Company"
+            />
             {role === "trade" && (
               <p className="text-xs text-muted mt-1">
                 Linking a trade user to a sub/vendor company lets them see

@@ -15,7 +15,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { EmptyState } from "@/components/ui/empty"
-import { Select } from "@/components/ui/input"
+import { SearchableSelect } from "@/components/ui/searchable-select"
 import {
   Dialog,
   DialogContent,
@@ -193,12 +193,11 @@ export function BudgetClient({
             </Button>
           )}
           {canEdit && availableCodes.length > 0 && (
-            <Select
-              className="w-44 h-8 text-xs"
+            <SearchableSelect
+              className="w-44"
               value=""
-              aria-label="Add cost code"
-              onChange={(e) => {
-                const id = e.target.value
+              ariaLabel="Add cost code"
+              onChange={(id) => {
                 if (!id) return
                 run(
                   () =>
@@ -209,14 +208,13 @@ export function BudgetClient({
                     })
                 )
               }}
-            >
-              <option value="">Add cost code…</option>
-              {availableCodes.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.code} — {c.name}
-                </option>
-              ))}
-            </Select>
+              options={availableCodes.map((c) => ({
+                value: c.id,
+                label: c.code,
+                hint: c.name,
+              }))}
+              placeholder="Add cost code…"
+            />
           )}
         </div>
       </div>

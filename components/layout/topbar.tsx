@@ -70,6 +70,7 @@ function menusFor(role: UserRole): MenuEntry[] {
         ],
       },
       { label: "Reports", href: "/reports" },
+      { label: "What's New", href: "/whats-new" },
     ]
   }
   if (role === "trade") {

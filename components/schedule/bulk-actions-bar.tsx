@@ -14,6 +14,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input, Select } from "@/components/ui/input"
+import { SearchableSelect } from "@/components/ui/searchable-select"
 import {
   bulkSetScheduleStatus,
   bulkShiftScheduleDates,
@@ -260,40 +261,32 @@ export function BulkActionsBar({
     })
   }
 
+  // People then roles, one flat list (the old optgroups become hints). No
+  // empty state: `assignee` starts on the first option, so clearable is off
+  // and the placeholder only ever shows when both lists are empty.
   const assigneePicker = (
-    <Select
+    <SearchableSelect
       value={assignee}
-      onChange={(e) => setAssignee(e.target.value)}
-      className="h-7 w-52 bg-surface text-foreground"
-      aria-label={
+      onChange={setAssignee}
+      options={[
+        ...profiles.map((p) => ({
+          value: `p:${p.id}`,
+          label: p.full_name || p.email || p.id.slice(0, 8),
+          hint: "Person",
+        })),
+        ...roles.map((r) => ({
+          value: `r:${r.id}`,
+          label: r.label,
+          hint: "Role",
+        })),
+      ]}
+      placeholder="(no people or roles)"
+      clearable={false}
+      className="w-52 text-foreground"
+      ariaLabel={
         mode === "assign" ? "Person or role to assign" : "Person or role to unassign"
       }
-    >
-      {profiles.length === 0 && roles.length === 0 ? (
-        <option value="">(no people or roles)</option>
-      ) : (
-        <>
-          {profiles.length > 0 && (
-            <optgroup label="People">
-              {profiles.map((p) => (
-                <option key={p.id} value={`p:${p.id}`}>
-                  {p.full_name || p.email || p.id.slice(0, 8)}
-                </option>
-              ))}
-            </optgroup>
-          )}
-          {roles.length > 0 && (
-            <optgroup label="Roles">
-              {roles.map((r) => (
-                <option key={r.id} value={`r:${r.id}`}>
-                  {r.label}
-                </option>
-              ))}
-            </optgroup>
-          )}
-        </>
-      )}
-    </Select>
+    />
   )
 
   return (
@@ -418,22 +411,17 @@ export function BulkActionsBar({
           </div>
         ) : mode === "copy" ? (
           <div className="flex items-center gap-1">
-            <Select
+            {/* Defaults to the first job (no empty state), so clearable is
+                off — the placeholder only shows when there are no other jobs. */}
+            <SearchableSelect
               value={targetProjectId}
-              onChange={(e) => setTargetProjectId(e.target.value)}
-              className="h-7 w-56 bg-surface text-foreground"
-              aria-label="Job to copy into"
-            >
-              {projects.length === 0 ? (
-                <option value="">(no other jobs)</option>
-              ) : (
-                projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label}
-                  </option>
-                ))
-              )}
-            </Select>
+              onChange={setTargetProjectId}
+              options={projects.map((p) => ({ value: p.id, label: p.label }))}
+              placeholder="(no other jobs)"
+              clearable={false}
+              className="w-56 text-foreground"
+              ariaLabel="Job to copy into"
+            />
             <Button
               size="sm"
               onClick={runCopy}

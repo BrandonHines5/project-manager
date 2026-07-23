@@ -17,6 +17,7 @@ import {
   Gavel,
   FileCheck2,
   FileBadge,
+  Sparkles,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { BrandTile } from "@/components/layout/brand-tile"
@@ -68,6 +69,7 @@ const ITEMS: Item[] = [
     roles: ["staff"],
   },
   { href: "/reports", label: "Reports", icon: BarChart3, roles: ["staff"] },
+  { href: "/whats-new", label: "What's New", icon: Sparkles, roles: ["staff"] },
   { href: "/feedback", label: "Feedback", icon: MessageSquarePlus },
 ]
 

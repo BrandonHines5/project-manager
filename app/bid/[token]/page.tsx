@@ -6,6 +6,7 @@ import { brandForProjectType } from "@/lib/brand"
 import { getBrandConfig } from "@/lib/org-brand"
 import type { Enums } from "@/lib/db/types"
 import { Badge } from "@/components/ui/badge"
+import { ScopeText } from "@/components/purchasing/scope-text"
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card"
 import { formatDate } from "@/lib/utils"
 import { BidResponseForm } from "./bid-response-form"
@@ -238,7 +239,7 @@ export default async function BidTokenPage({
               <h2 className="text-xs font-medium text-muted uppercase tracking-wide mb-1">
                 Scope of work
               </h2>
-              <p className="text-sm whitespace-pre-wrap">{pkg.scope}</p>
+              <ScopeText text={pkg.scope} className="text-sm" />
             </div>
           )}
           {attachments.length > 0 && (

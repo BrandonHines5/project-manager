@@ -22,6 +22,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input, Select } from "@/components/ui/input"
+import { SearchableSelect } from "@/components/ui/searchable-select"
 import { EmptyState } from "@/components/ui/empty"
 import { formatCurrency, formatDate, cn } from "@/lib/utils"
 import type { Tables, Enums } from "@/lib/db/types"
@@ -608,23 +609,19 @@ function BulkCopyBar({
         </button>
         <div className="h-5 w-px bg-surface/20 mx-1" />
         <Copy className="h-3.5 w-3.5 text-surface/80" />
-        <Select
+        <SearchableSelect
           value={targetProjectId}
-          onChange={(e) => setTargetProjectId(e.target.value)}
-          className="h-7 w-56 bg-surface text-foreground"
-          aria-label="Job to copy into"
-        >
-          {projects.length === 0 ? (
-            <option value="">(no other jobs)</option>
-          ) : (
-            projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.project_number != null ? `${p.project_number} — ` : ""}
-                {p.name ?? "Untitled"}
-              </option>
-            ))
-          )}
-        </Select>
+          onChange={setTargetProjectId}
+          options={projects.map((p) => ({
+            value: p.id,
+            label: `${p.project_number != null ? `${p.project_number} — ` : ""}${p.name ?? "Untitled"}`,
+          }))}
+          placeholder="(no other jobs)"
+          clearable={false}
+          disabled={projects.length === 0}
+          className="w-56 text-foreground"
+          ariaLabel="Job to copy into"
+        />
         <Button
           size="sm"
           variant="primary"

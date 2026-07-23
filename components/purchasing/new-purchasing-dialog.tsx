@@ -13,7 +13,9 @@ import {
   DialogBody,
   DialogFooter,
 } from "@/components/ui/dialog"
-import { Field, Input, Textarea, Select, Label } from "@/components/ui/input"
+import { Field, Input, Select, Label } from "@/components/ui/input"
+import { SearchableSelect } from "@/components/ui/searchable-select"
+import { ScopeEditor } from "@/components/purchasing/scope-editor"
 import { Button } from "@/components/ui/button"
 import { cn, formatCurrency } from "@/lib/utils"
 import { saveBidPackage } from "@/app/actions/bids"
@@ -300,9 +302,9 @@ export function NewPurchasingDialog({
             />
           </Field>
           <Field label="Scope">
-            <Textarea
+            <ScopeEditor
               value={scope}
-              onChange={(e) => setScope(e.target.value)}
+              onChange={setScope}
               rows={4}
               placeholder="What's included, exclusions, site conditions, timing."
             />
@@ -322,17 +324,16 @@ export function NewPurchasingDialog({
             <>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Field label="Sub / vendor">
-                  <Select
+                  <SearchableSelect
                     value={companyId}
-                    onChange={(e) => setCompanyId(e.target.value)}
-                  >
-                    <option value="">— Select —</option>
-                    {companies.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </Select>
+                    onChange={setCompanyId}
+                    options={companies.map((c) => ({
+                      value: c.id,
+                      label: c.name,
+                    }))}
+                    placeholder="— Select —"
+                    ariaLabel="Sub / vendor"
+                  />
                 </Field>
                 <Field
                   label="Custom PO #"
@@ -521,23 +522,24 @@ function SharedLinesEditor({
               {lines.map((li, i) => (
                 <tr key={`line-${i}`} className="align-top">
                   <td className="pr-1.5 pb-1.5">
-                    <Select
+                    <SearchableSelect
                       value={li.cost_code_id ?? ""}
-                      onChange={(e) =>
-                        update(i, { cost_code_id: e.target.value || null })
-                      }
-                    >
-                      <option value="">— Select —</option>
-                      {li.cost_code_id &&
-                        !costCodes.some((c) => c.id === li.cost_code_id) && (
-                          <option value={li.cost_code_id}>(inactive code)</option>
-                        )}
-                      {costCodes.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </Select>
+                      onChange={(v) => update(i, { cost_code_id: v || null })}
+                      // Keep a stale (inactive) selection representable so the
+                      // controlled picker doesn't silently drop it on save.
+                      options={[
+                        ...(li.cost_code_id &&
+                        !costCodes.some((c) => c.id === li.cost_code_id)
+                          ? [{ value: li.cost_code_id, label: "(inactive code)" }]
+                          : []),
+                        ...costCodes.map((c) => ({
+                          value: c.id,
+                          label: c.name,
+                        })),
+                      ]}
+                      placeholder="— Select —"
+                      ariaLabel="Cost code"
+                    />
                   </td>
                   <td className="pr-1.5 pb-1.5">
                     <Input
