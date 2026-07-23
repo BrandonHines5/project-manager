@@ -699,6 +699,13 @@ async function notifyScheduleAssignees(
   senderProfileId?: string
 ) {
   const supabase = await createSupabaseServerClient()
+  // Notifications writes go through the ADMIN client: the SELECT policy on
+  // notifications is recipient-only, and INSERT ... RETURNING (what
+  // .select("id") issues) requires the inserted row to be SELECT-visible to
+  // the inserter — so a session-client insert for ANOTHER user's bell is
+  // rejected wholesale (42501) and the assignee never gets the in-app row.
+  // The mute/master-switch trigger still applies; it fires for every role.
+  const admin = createSupabaseAdminClient()
   const profileIds = rows.map((r) => r.profile_id).filter(Boolean) as string[]
   const companyIds = rows.map((r) => r.company_id).filter(Boolean) as string[]
 
@@ -707,21 +714,35 @@ async function notifyScheduleAssignees(
   // that keeps the digest cron from re-emailing rows we already covered.
   const insertedNotifIds: string[] = []
   if (profileIds.length) {
-    const { data: insertedRows } = await supabase
-      .from("notifications")
-      .insert(
-        profileIds.map((id) => ({
-          recipient_id: id,
-          type: "schedule_assignment",
-          title: `Assigned: ${title}`,
-          body: "You were assigned to a schedule item",
-          link_url: `/projects/${projectId}/schedule`,
-          // Lets the notifications trigger honor per-job mutes (0121).
-          project_id: projectId,
-        }))
-      )
-      .select("id")
-    for (const r of insertedRows ?? []) insertedNotifIds.push(r.id)
+    const notifRows = profileIds.map((id) => ({
+      recipient_id: id,
+      type: "schedule_assignment",
+      title: `Assigned: ${title}`,
+      body: "You were assigned to a schedule item",
+      link_url: `/projects/${projectId}/schedule`,
+      // Lets the notifications trigger honor per-job mutes (0121).
+      project_id: projectId,
+    }))
+    if (admin) {
+      const { data: insertedRows, error: notifErr } = await admin
+        .from("notifications")
+        .insert(notifRows)
+        .select("id")
+      if (notifErr) {
+        console.warn("[assignment notify] insert failed:", notifErr.message)
+      }
+      for (const r of insertedRows ?? []) insertedNotifIds.push(r.id)
+    } else {
+      // No service key (local edge case): a plain session insert still passes
+      // the staff INSERT policy — just skip RETURNING, so this run can't
+      // stamp email_sent_at and the digest may re-mention these rows.
+      const { error: notifErr } = await supabase
+        .from("notifications")
+        .insert(notifRows)
+      if (notifErr) {
+        console.warn("[assignment notify] insert failed:", notifErr.message)
+      }
+    }
   }
 
   // Email + SMS — best-effort, never blocks save. Profiles with
@@ -749,10 +770,9 @@ async function notifyScheduleAssignees(
       // this immediate email is not. Owner-only RLS on the mutes table means
       // the ADMIN client is required to see the assignees' mutes — the
       // session client would always read an empty set.
-      const adminForMutes = createSupabaseAdminClient()
-      const mutedForJob = adminForMutes
+      const mutedForJob = admin
         ? await mutedProfileIdsForProject(
-            adminForMutes,
+            admin,
             (profs ?? []).map((p) => p.id),
             projectId
           )
@@ -802,8 +822,11 @@ async function notifyScheduleAssignees(
             // immediate email so the daily digest doesn't re-include them.
             // We only stamp on a successful send so a transient Resend
             // failure leaves them eligible for the next cron run.
-            if (res.sent && immediateProfileIds.length) {
-              const { error: stampErr } = await supabase
+            if (res.sent && immediateProfileIds.length && admin) {
+              // Admin client here too: the UPDATE policy is recipient-only,
+              // so a session-client stamp on someone else's row silently
+              // matches zero rows.
+              const { error: stampErr } = await admin
                 .from("notifications")
                 .update({ email_sent_at: new Date().toISOString() })
                 .in("recipient_id", immediateProfileIds)
