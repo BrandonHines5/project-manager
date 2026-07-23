@@ -28,9 +28,25 @@ export async function assignCommunication(input: {
   await requireStaff()
   const parsed = AssignInput.parse(input)
   const supabase = await createSupabaseServerClient()
+  // meta.job_match='manual' marks a human filing decision — the outlook-sync
+  // AI sweep only touches rows with no job_match, so a staff filing (or
+  // re-filing) is final. Read-merge because a jsonb update replaces the
+  // whole column — and the read must fail LOUDLY: merging onto {} after a
+  // transient read error would silently wipe the row's other meta keys
+  // (quo attribution, mailbox_folder, suggested_project).
+  const { data: existing, error: readErr } = await supabase
+    .from("communications")
+    .select("meta")
+    .eq("id", parsed.communication_id)
+    .maybeSingle()
+  if (readErr) throw new Error(readErr.message)
+  const meta = {
+    ...((existing?.meta ?? {}) as Record<string, unknown>),
+    job_match: "manual",
+  }
   const { error } = await supabase
     .from("communications")
-    .update({ project_id: parsed.project_id, status: "logged" })
+    .update({ project_id: parsed.project_id, status: "logged", meta })
     .eq("id", parsed.communication_id)
   if (error) throw new Error(error.message)
   revalidatePath("/communications")
