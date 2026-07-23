@@ -16,6 +16,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { SearchableSelect } from "@/components/ui/searchable-select"
 import { Badge } from "@/components/ui/badge"
 import { EmptyState } from "@/components/ui/empty"
 import {
@@ -1004,21 +1005,20 @@ function ReviewCard({
               </option>
             ))}
           </select>
-          <select
-            className="h-8 rounded-md border border-border-strong bg-surface px-2 text-sm"
+          <SearchableSelect
+            className="w-56"
             value={companyId}
-            onChange={(e) => setCompanyId(e.target.value)}
-          >
-            <option value="">Assign to company…</option>
-            {companies
+            onChange={setCompanyId}
+            options={companies
               .filter((c) => c.type !== "client")
-              .map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                  {c.aka ? ` (AKA ${c.aka})` : ""}
-                </option>
-              ))}
-          </select>
+              .map((c) => ({
+                value: c.id,
+                label: c.name,
+                hint: c.aka ? `AKA ${c.aka}` : undefined,
+              }))}
+            placeholder="Assign to company…"
+            ariaLabel="Assign to company"
+          />
           <Button
             size="sm"
             disabled={!companyId || busy || pending}
@@ -1305,21 +1305,20 @@ function UploadDialog({
                 Company (optional — leave blank to auto-match from the
                 document)
               </label>
-              <select
-                className="mt-1 h-9 w-full rounded-md border border-border-strong bg-surface px-2 text-sm"
+              <SearchableSelect
+                className="mt-1"
                 value={companyId}
-                onChange={(e) => setCompanyId(e.target.value)}
-              >
-                <option value="">Auto-match</option>
-                {companies
+                onChange={setCompanyId}
+                options={companies
                   .filter((c) => c.type !== "client")
-                  .map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                      {c.aka ? ` (AKA ${c.aka})` : ""}
-                    </option>
-                  ))}
-              </select>
+                  .map((c) => ({
+                    value: c.id,
+                    label: c.name,
+                    hint: c.aka ? `AKA ${c.aka}` : undefined,
+                  }))}
+                placeholder="Auto-match"
+                ariaLabel="Company to file this batch to"
+              />
             </div>
             {busy && progress && (
               <p className="text-xs text-muted-foreground">{progress}</p>

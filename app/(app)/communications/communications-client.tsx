@@ -7,7 +7,8 @@ import { FolderOpen, MessagesSquare, Search } from "lucide-react"
 import { toast } from "sonner"
 import { toastActionError } from "@/lib/action-error"
 import { Button } from "@/components/ui/button"
-import { Input, Select } from "@/components/ui/input"
+import { Input } from "@/components/ui/input"
+import { SearchableSelect } from "@/components/ui/searchable-select"
 import { EmptyState } from "@/components/ui/empty"
 import { cn } from "@/lib/utils"
 import type { FeedItem } from "@/lib/comms/feed"
@@ -275,19 +276,17 @@ function UnfiledActions({
 
   return (
     <div className="flex items-center gap-2 flex-wrap pl-1">
-      <Select
+      <SearchableSelect
         value={projectId}
-        onChange={(e) => setProjectId(e.target.value)}
-        className="max-w-xs text-sm"
-      >
-        <option value="">Choose a job…</option>
-        {projects.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.project_number ? `#${p.project_number} — ` : ""}
-            {p.name}
-          </option>
-        ))}
-      </Select>
+        onChange={setProjectId}
+        options={projects.map((p) => ({
+          value: p.id,
+          label: `${p.project_number ? `#${p.project_number} — ` : ""}${p.name}`,
+        }))}
+        placeholder="Choose a job…"
+        className="w-64 max-w-full"
+        ariaLabel="Job to file to"
+      />
       <Button size="sm" onClick={file} disabled={pending || !projectId}>
         {filed ? "Re-file" : "File"}
       </Button>

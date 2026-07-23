@@ -15,6 +15,10 @@ import { AssigneeChips } from "./assignee-chips"
 import { EmptyState } from "@/components/ui/empty"
 import { Button } from "@/components/ui/button"
 import { Select } from "@/components/ui/input"
+import {
+  SearchableSelect,
+  type SearchableOption,
+} from "@/components/ui/searchable-select"
 import { StatusBadge } from "./status-badge"
 import { PriorityBadge } from "./priority-badge"
 import { assigneeNamesFor, checklistFor } from "./helpers"
@@ -156,15 +160,16 @@ export function TodosView({
   ])
 
   const assigneeOptions = useMemo(() => {
-    const opts: { value: string; label: string }[] = []
+    const opts: SearchableOption[] = []
     for (const p of data.profiles)
       opts.push({
         value: p.id,
-        label: `${p.full_name || p.email} · ${roleLabel(p.role)}`,
+        label: p.full_name || p.email || "",
+        hint: roleLabel(p.role),
       })
     for (const c of data.companies)
       if (c.type !== "client")
-        opts.push({ value: c.id, label: `${c.name} (company)` })
+        opts.push({ value: c.id, label: c.name, hint: "company" })
     return opts
   }, [data.profiles, data.companies])
 
@@ -211,17 +216,16 @@ export function TodosView({
             </Select>
           </FilterField>
           <FilterField label="Assignee">
-            <Select
-              value={assigneeFilter}
-              onChange={(e) => setAssigneeFilter(e.target.value)}
-            >
-              <option value="all">Anyone</option>
-              {assigneeOptions.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </Select>
+            {/* State keeps "all" for Anyone; the picker's "" empty value
+                maps to/from it so clearing lands back on Anyone. */}
+            <SearchableSelect
+              value={assigneeFilter === "all" ? "" : assigneeFilter}
+              onChange={(v) => setAssigneeFilter(v || "all")}
+              options={assigneeOptions}
+              placeholder="Anyone"
+              className="w-56"
+              ariaLabel="Assignee"
+            />
           </FilterField>
         </div>
         <Button size="sm" onClick={onAddTodo}>

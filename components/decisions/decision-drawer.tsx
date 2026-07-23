@@ -39,10 +39,14 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog"
 import { Field, Input, Textarea, Select, Label } from "@/components/ui/input"
+import {
+  SearchableSelect,
+  type SearchableOption,
+} from "@/components/ui/searchable-select"
 import { Button } from "@/components/ui/button"
 import { Avatar } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
-import { cn, formatDate, addDays } from "@/lib/utils"
+import { cn, formatDate, addDays, roleLabel } from "@/lib/utils"
 import {
   saveDecision,
   deleteDecision,
@@ -130,6 +134,41 @@ type Choice = {
   // Per-choice cost breakdown (allowance flow only). Subtotal × the
   // decision-level markup_percent rolls up into the choice's effective cost.
   cost_items: CostItem[]
+}
+
+// Flat option lists for the SearchableSelect pickers. Values keep the raw ids
+// the save paths expect.
+function costCodeOptions(
+  costCodes: DecisionsData["cost_codes"]
+): SearchableOption[] {
+  return costCodes.map((c) => ({ value: c.id, label: c.name }))
+}
+
+function workItemOptions(
+  workItems: DecisionsData["work_items"]
+): SearchableOption[] {
+  return workItems.map((w) => ({ value: w.id, label: w.title }))
+}
+
+// People + companies for the assignee pickers, keeping the `p:{id}` / `c:{id}`
+// encodings the save paths expect. Callers pass pre-filtered/sorted lists
+// (mirrors roles-client's assigneeOptions).
+function assigneeOptions(
+  profiles: DecisionsData["profiles"],
+  companies: DecisionsData["companies"]
+): SearchableOption[] {
+  return [
+    ...profiles.map((p) => ({
+      value: `p:${p.id}`,
+      label: p.full_name || p.email || "",
+      hint: roleLabel(p.role),
+    })),
+    ...companies.map((c) => ({
+      value: `c:${c.id}`,
+      label: c.name,
+      hint: c.trade_category ?? "company",
+    })),
+  ]
 }
 
 export function DecisionDrawer({
@@ -991,18 +1030,12 @@ export function DecisionDrawer({
                 {dueLinked ? (
                   <>
                     <Field label="Schedule item" className="min-w-[150px]">
-                      <Select
+                      <SearchableSelect
                         value={dueAnchorItemId ?? ""}
-                        onChange={(e) =>
-                          setDueAnchorItemId(e.target.value || null)
-                        }
-                      >
-                        {data.work_items.map((w) => (
-                          <option key={w.id} value={w.id}>
-                            {w.title}
-                          </option>
-                        ))}
-                      </Select>
+                        onChange={(v) => setDueAnchorItemId(v || null)}
+                        options={workItemOptions(data.work_items)}
+                        clearable={false}
+                      />
                     </Field>
                     <Field label="Anchor">
                       <Select
@@ -1928,19 +1961,11 @@ function ChoiceCostBreakdownEditor({
                   <Fragment key={i}>
                   <tr className="align-top">
                     <td className="pr-1 pb-1">
-                      <Select
+                      <SearchableSelect
                         value={ci.cost_code_id ?? ""}
-                        onChange={(e) =>
-                          update(i, { cost_code_id: e.target.value || null })
-                        }
-                      >
-                        <option value="">— Select —</option>
-                        {costCodes.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </Select>
+                        onChange={(v) => update(i, { cost_code_id: v || null })}
+                        options={costCodeOptions(costCodes)}
+                      />
                     </td>
                     <td className="pr-1 pb-1">
                       <Input
@@ -2137,18 +2162,13 @@ function AllowanceEditor({
           placeholder="2,000.00"
           className="tabular-nums"
         />
-        <Select
+        <SearchableSelect
           value={costCodeId}
-          onChange={(e) => onCostCodeChange(e.target.value)}
+          onChange={onCostCodeChange}
+          options={costCodeOptions(costCodes)}
+          placeholder="— Cost code (optional) —"
           disabled={!hasAmount}
-        >
-          <option value="">— Cost code (optional) —</option>
-          {costCodes.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </Select>
+        />
       </div>
     </div>
   )
@@ -2512,7 +2532,7 @@ function FollowupsEditor({
                     <option value="todo">To-do</option>
                     <option value="work">Work item</option>
                   </Select>
-                  <Select
+                  <SearchableSelect
                     value={
                       f.assignee_profile_id
                         ? `p:${f.assignee_profile_id}`
@@ -2520,8 +2540,7 @@ function FollowupsEditor({
                         ? `c:${f.assignee_company_id}`
                         : ""
                     }
-                    onChange={(e) => {
-                      const v = e.target.value
+                    onChange={(v) => {
                       if (v.startsWith("p:")) {
                         update(i, {
                           assignee_profile_id: v.slice(2),
@@ -2539,27 +2558,12 @@ function FollowupsEditor({
                         })
                       }
                     }}
-                  >
-                    <option value="">— Assign to —</option>
-                    <optgroup label="Team">
-                      {profiles
-                        .filter((p) => p.role === "staff")
-                        .map((p) => (
-                          <option key={p.id} value={`p:${p.id}`}>
-                            {p.full_name || p.email}
-                          </option>
-                        ))}
-                    </optgroup>
-                    <optgroup label="Subs / vendors">
-                      {companies
-                        .filter((c) => c.type !== "client")
-                        .map((c) => (
-                          <option key={c.id} value={`c:${c.id}`}>
-                            {c.name}
-                          </option>
-                        ))}
-                    </optgroup>
-                  </Select>
+                    options={assigneeOptions(
+                      profiles.filter((p) => p.role === "staff"),
+                      companies.filter((c) => c.type !== "client")
+                    )}
+                    placeholder="— Assign to —"
+                  />
                   <button
                     type="button"
                     onClick={() => onChange(value.filter((_, idx) => idx !== i))}
@@ -2607,23 +2611,15 @@ function FollowupsEditor({
                   {anchored ? (
                     <>
                       <Field label="Schedule item" className="min-w-[150px]">
-                        <Select
+                        <SearchableSelect
                           value={f.anchor_schedule_item_id ?? ""}
-                          onChange={(e) =>
-                            update(i, {
-                              anchor_schedule_item_id: e.target.value || null,
-                            })
+                          onChange={(v) =>
+                            update(i, { anchor_schedule_item_id: v || null })
                           }
-                        >
-                          {workItems.length === 0 && (
-                            <option value="">— none —</option>
-                          )}
-                          {workItems.map((w) => (
-                            <option key={w.id} value={w.id}>
-                              {w.title}
-                            </option>
-                          ))}
-                        </Select>
+                          options={workItemOptions(workItems)}
+                          placeholder="— none —"
+                          clearable={false}
+                        />
                       </Field>
                       <Field label="Anchor">
                         <Select
@@ -2905,19 +2901,11 @@ function CostBreakdownEditor({
                   <Fragment key={i}>
                   <tr className="align-top">
                     <td className="pr-1.5 pb-1.5">
-                      <Select
+                      <SearchableSelect
                         value={ci.cost_code_id ?? ""}
-                        onChange={(e) =>
-                          update(i, { cost_code_id: e.target.value || null })
-                        }
-                      >
-                        <option value="">— Select —</option>
-                        {costCodes.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </Select>
+                        onChange={(v) => update(i, { cost_code_id: v || null })}
+                        options={costCodeOptions(costCodes)}
+                      />
                     </td>
                     <td className="pr-1.5 pb-1.5">
                       <Input
@@ -3184,14 +3172,16 @@ function CopyDecisionFooter({
     <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:items-center">
       <div className="flex-1 min-w-0">
         <Label className="mb-1">Copy this item to…</Label>
-        <Select value={target} onChange={(e) => setTarget(e.target.value)}>
-          {sorted.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.project_number} — {p.name}
-              {p.id === currentProjectId ? " (this project)" : ""}
-            </option>
-          ))}
-        </Select>
+        <SearchableSelect
+          value={target}
+          onChange={setTarget}
+          options={sorted.map((p) => ({
+            value: p.id,
+            label: `${p.project_number} — ${p.name}`,
+            hint: p.id === currentProjectId ? "this project" : undefined,
+          }))}
+          clearable={false}
+        />
       </div>
       <div className="flex items-center gap-2 sm:self-end">
         <Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>
@@ -3240,14 +3230,12 @@ function CreatePoFooter({
     <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:items-center">
       <div className="flex-1 min-w-0">
         <Label className="mb-1">Create a draft PO for…</Label>
-        <Select value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
-          <option value="">— Pick a sub/vendor —</option>
-          {vendorCompanies.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </Select>
+        <SearchableSelect
+          value={companyId}
+          onChange={setCompanyId}
+          options={vendorCompanies.map((c) => ({ value: c.id, label: c.name }))}
+          placeholder="— Pick a sub/vendor —"
+        />
         <p className="mt-1 text-[11px] text-muted">
           Line items copy from the approved cost breakdown at raw cost — markup
           never reaches the sub.
@@ -3369,36 +3357,23 @@ function AssignmentsEditor({
             </button>
           </span>
         ))}
-        {/* Always-empty controlled value = the select resets after each add. */}
-        <Select
+        {/* Always-empty controlled value = the picker resets after each add
+            (addFromValue ignores the "" a clear would send). */}
+        <SearchableSelect
           value=""
-          onChange={(e) => addFromValue(e.target.value)}
-          className="h-7 w-auto text-xs"
-          aria-label="Add assignee"
-        >
-          <option value="">Add…</option>
-          <optgroup label="People">
-            {staffProfiles.map((p) => (
-              <option key={p.id} value={`p:${p.id}`}>
-                {p.full_name || p.email}
-              </option>
-            ))}
-          </optgroup>
-          <optgroup label="Companies">
-            {sortedCompanies.map((c) => (
-              <option key={c.id} value={`c:${c.id}`}>
-                {c.name}
-              </option>
-            ))}
-          </optgroup>
-          <optgroup label="Roles">
-            {sortedRoles.map((r) => (
-              <option key={r.id} value={`r:${r.id}`}>
-                {r.name}
-              </option>
-            ))}
-          </optgroup>
-        </Select>
+          onChange={addFromValue}
+          options={[
+            ...assigneeOptions(staffProfiles, sortedCompanies),
+            ...sortedRoles.map((r) => ({
+              value: `r:${r.id}`,
+              label: r.name,
+              hint: "role",
+            })),
+          ]}
+          placeholder="Add…"
+          ariaLabel="Add assignee"
+          className="min-w-32"
+        />
       </div>
       <p className="text-xs text-muted mt-1.5">
         Assigned subs can see this selection in their portal once it leaves

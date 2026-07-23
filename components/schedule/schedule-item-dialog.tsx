@@ -24,6 +24,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog"
 import { Field, Input, Textarea, Select, Label } from "@/components/ui/input"
+import { SearchableSelect } from "@/components/ui/searchable-select"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -666,23 +667,21 @@ export function ScheduleItemDialog({
                   </Select>
                 </Field>
                 <Field label="Parent work item">
-                  <Select
+                  <SearchableSelect
                     value={parentId}
-                    onChange={(e) => {
-                      const next = e.target.value
+                    onChange={(next) => {
                       setParentId(next)
                       // Drop the anchor if the parent goes away — the
                       // server-side check constraint requires both.
                       if (!next) setAnchorEnabled(false)
                     }}
-                  >
-                    <option value="">— (unlinked)</option>
-                    {workItemOptions.map((w) => (
-                      <option key={w.id} value={w.id}>
-                        {w.title}
-                      </option>
-                    ))}
-                  </Select>
+                    options={workItemOptions.map((w) => ({
+                      value: w.id,
+                      label: w.title,
+                    }))}
+                    placeholder="— (unlinked)"
+                    ariaLabel="Parent work item"
+                  />
                 </Field>
                 <Field
                   label={
@@ -1136,50 +1135,45 @@ function AssignmentsEditor({
         })}
       </div>
       <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2">
-        <Select
+        {/* value="" keeps each picker on its placeholder — the add functions
+            stage the pick immediately (and ignore the "" a clear would send). */}
+        <SearchableSelect
           value=""
-          onChange={(e) => addRole(e.target.value)}
-          aria-label="Add a role"
-        >
-          <option value="">Add role…</option>
-          {availableRoles.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.name}
-            </option>
-          ))}
-        </Select>
-        <Select
+          onChange={addRole}
+          options={availableRoles.map((r) => ({
+            value: r.id,
+            label: r.name,
+          }))}
+          placeholder="Add role…"
+          ariaLabel="Add a role"
+        />
+        <SearchableSelect
           value=""
-          onChange={(e) => addProfile(e.target.value)}
-          aria-label="Add team member or user"
-        >
-          <option value="">Add team / user…</option>
-          {availableProfiles.map((p) => (
-            <option key={p.id} value={p.id}>
-              {(p.full_name || p.email) +
-                ` · ${
-                  p.role === "staff"
-                    ? "Team"
-                    : p.role === "trade"
-                      ? "Sub"
-                      : "Client"
-                }`}
-            </option>
-          ))}
-        </Select>
-        <Select
+          onChange={addProfile}
+          options={availableProfiles.map((p) => ({
+            value: p.id,
+            label: p.full_name || p.email || "",
+            hint:
+              p.role === "staff"
+                ? "Team"
+                : p.role === "trade"
+                  ? "Sub"
+                  : "Client",
+          }))}
+          placeholder="Add team / user…"
+          ariaLabel="Add team member or user"
+        />
+        <SearchableSelect
           value=""
-          onChange={(e) => addCompany(e.target.value)}
-          aria-label="Add subcontractor or vendor"
-        >
-          <option value="">Add subcontractor / vendor…</option>
-          {availableCompanies.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-              {c.trade_category ? ` (${c.trade_category})` : ""}
-            </option>
-          ))}
-        </Select>
+          onChange={addCompany}
+          options={availableCompanies.map((c) => ({
+            value: c.id,
+            label: c.name,
+            hint: c.trade_category ?? undefined,
+          }))}
+          placeholder="Add subcontractor / vendor…"
+          ariaLabel="Add subcontractor or vendor"
+        />
       </div>
       <p className="text-xs text-muted mt-1.5">
         Assign to a <span className="text-amber-900">role</span> (resolved per
@@ -1289,27 +1283,23 @@ function PredecessorsEditor({
       )}
       <div className="mt-2">
         <Field label="Add predecessor">
-          <Select
+          {/* Controlled with value="" so it always shows the placeholder
+              after a pick — no manual reset. `add` ignores "". */}
+          <SearchableSelect
             value=""
-            onChange={(e) => {
-              const v = e.target.value
-              if (v) add(v)
-              // The <select> is controlled with value="" so it always
-              // shows the placeholder after a pick — no manual reset.
-            }}
-            disabled={available.length === 0}
-          >
-            <option value="">
-              {available.length === 0
+            onChange={add}
+            options={available.map((i) => ({
+              value: i.id,
+              label: i.title,
+            }))}
+            placeholder={
+              available.length === 0
                 ? "No other work items"
-                : "Choose work item…"}
-            </option>
-            {available.map((i) => (
-              <option key={i.id} value={i.id}>
-                {i.title}
-              </option>
-            ))}
-          </Select>
+                : "Choose work item…"
+            }
+            disabled={available.length === 0}
+            ariaLabel="Add predecessor"
+          />
         </Field>
       </div>
     </div>

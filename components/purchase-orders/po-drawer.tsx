@@ -33,7 +33,8 @@ import {
   DialogBody,
   DialogFooter,
 } from "@/components/ui/dialog"
-import { Field, Input, Textarea, Select, Label } from "@/components/ui/input"
+import { Field, Input, Textarea, Label } from "@/components/ui/input"
+import { SearchableSelect } from "@/components/ui/searchable-select"
 import { ScopeEditor } from "@/components/purchasing/scope-editor"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -643,18 +644,17 @@ export function PoDrawer({
           </Field>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="Sub / vendor">
-              <Select
+              <SearchableSelect
                 value={companyId}
-                onChange={(e) => setCompanyId(e.target.value)}
+                onChange={setCompanyId}
                 disabled={!isDraft}
-              >
-                <option value="">— Select —</option>
-                {data.companies.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </Select>
+                options={data.companies.map((c) => ({
+                  value: c.id,
+                  label: c.name,
+                }))}
+                placeholder="— Select —"
+                ariaLabel="Sub / vendor"
+              />
             </Field>
             <Field
               label="Custom PO #"
@@ -1076,14 +1076,18 @@ function CopyPoFooter({
     <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:items-center">
       <div className="flex-1 min-w-0">
         <Label className="mb-1">Copy this PO to…</Label>
-        <Select value={target} onChange={(e) => setTarget(e.target.value)}>
-          {sorted.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.project_number} — {p.name}
-              {p.id === currentProjectId ? " (this project)" : ""}
-            </option>
-          ))}
-        </Select>
+        <SearchableSelect
+          value={target}
+          onChange={setTarget}
+          clearable={false}
+          options={sorted.map((p) => ({
+            value: p.id,
+            label: `${p.project_number} — ${p.name}${
+              p.id === currentProjectId ? " (this project)" : ""
+            }`,
+          }))}
+          ariaLabel="Copy this PO to"
+        />
       </div>
       <div className="flex items-center gap-2 sm:self-end">
         <Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>
@@ -1159,29 +1163,28 @@ function PoLineItemsEditor({
                 return (
                   <tr key={li.id ?? `new-${i}`} className="align-top">
                     <td className="pr-1.5 pb-1.5">
-                      <Select
+                      <SearchableSelect
                         value={li.cost_code_id ?? ""}
                         disabled={frozen}
-                        onChange={(e) =>
-                          update(i, { cost_code_id: e.target.value || null })
+                        onChange={(v) =>
+                          update(i, { cost_code_id: v || null })
                         }
-                      >
-                        <option value="">— Select —</option>
-                        {/* The page only fetches active codes — keep a stale
-                            selection representable so the controlled Select
-                            doesn't silently drop it on save. */}
-                        {li.cost_code_id &&
-                          !costCodes.some((c) => c.id === li.cost_code_id) && (
-                            <option value={li.cost_code_id}>
-                              (inactive code)
-                            </option>
-                          )}
-                        {costCodes.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </Select>
+                        // The page only fetches active codes — keep a stale
+                        // selection representable so the controlled picker
+                        // doesn't silently drop it on save.
+                        options={[
+                          ...(li.cost_code_id &&
+                          !costCodes.some((c) => c.id === li.cost_code_id)
+                            ? [{ value: li.cost_code_id, label: "(inactive code)" }]
+                            : []),
+                          ...costCodes.map((c) => ({
+                            value: c.id,
+                            label: c.name,
+                          })),
+                        ]}
+                        placeholder="— Select —"
+                        ariaLabel="Cost code"
+                      />
                     </td>
                     <td className="pr-1.5 pb-1.5">
                       <Input

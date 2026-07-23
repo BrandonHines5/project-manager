@@ -22,7 +22,8 @@ import {
   DialogBody,
   DialogFooter,
 } from "@/components/ui/dialog"
-import { Field, Input, Textarea, Select, Label } from "@/components/ui/input"
+import { Field, Input, Textarea, Label } from "@/components/ui/input"
+import { SearchableSelect } from "@/components/ui/searchable-select"
 import { Button } from "@/components/ui/button"
 import { cn, todayISO } from "@/lib/utils"
 import {
@@ -395,21 +396,19 @@ export function DailyLogDrawer({
               </ul>
             )}
             <div className="mt-2">
-              <Select
+              <SearchableSelect
                 value=""
-                onChange={(e) => addSub(e.target.value)}
-                aria-label="Add sub or vendor on site"
-              >
-                <option value="">Add sub / vendor…</option>
-                {data.companies
+                onChange={addSub}
+                options={data.companies
                   .filter((c) => !subs.some((s) => s.company_id === c.id))
-                  .map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                      {c.trade_category ? ` (${c.trade_category})` : ""}
-                    </option>
-                  ))}
-              </Select>
+                  .map((c) => ({
+                    value: c.id,
+                    label: c.name,
+                    hint: c.trade_category ?? undefined,
+                  }))}
+                placeholder="Add sub / vendor…"
+                ariaLabel="Add sub or vendor on site"
+              />
             </div>
           </div>
 
@@ -573,30 +572,26 @@ function TodosEditor({
                 onChange={(e) => update(i, { due_date: e.target.value })}
                 aria-label="Due date"
               />
-              <Select
+              <SearchableSelect
                 value={t.assignee}
-                onChange={(e) => update(i, { assignee: e.target.value })}
-                aria-label="Assignee"
-                className="text-xs"
-              >
-                <option value="">Unassigned</option>
-                <optgroup label="Team / users">
-                  {profiles.map((p) => (
-                    <option key={p.id} value={`p:${p.id}`}>
-                      {p.full_name || p.email}
-                    </option>
-                  ))}
-                </optgroup>
-                <optgroup label="Subs / vendors">
-                  {companies
+                onChange={(v) => update(i, { assignee: v })}
+                options={[
+                  ...profiles.map((p) => ({
+                    value: `p:${p.id}`,
+                    label: p.full_name || p.email || "",
+                    hint: "Team",
+                  })),
+                  ...companies
                     .filter((c) => c.type !== "client")
-                    .map((c) => (
-                      <option key={c.id} value={`c:${c.id}`}>
-                        {c.name}
-                      </option>
-                    ))}
-                </optgroup>
-              </Select>
+                    .map((c) => ({
+                      value: `c:${c.id}`,
+                      label: c.name,
+                      hint: c.trade_category ?? "Sub / vendor",
+                    })),
+                ]}
+                placeholder="Unassigned"
+                ariaLabel="Assignee"
+              />
               <button
                 type="button"
                 onClick={() => onChange(todos.filter((_, idx) => idx !== i))}

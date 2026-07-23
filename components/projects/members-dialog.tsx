@@ -15,7 +15,8 @@ import {
   DialogBody,
   DialogFooter,
 } from "@/components/ui/dialog"
-import { Field, Input, Select, Label } from "@/components/ui/input"
+import { Field, Input, Label } from "@/components/ui/input"
+import { SearchableSelect } from "@/components/ui/searchable-select"
 import { Avatar } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { roleLabel } from "@/lib/utils"
@@ -233,17 +234,17 @@ function MembersDialog({
           <div>
             <Label>Add member</Label>
             <div className="mt-1 grid grid-cols-1 sm:grid-cols-[1fr_180px_auto] gap-2">
-              <Select
+              <SearchableSelect
                 value={selectedProfile}
-                onChange={(e) => setSelectedProfile(e.target.value)}
-              >
-                <option value="">Choose user…</option>
-                {candidateProfiles.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {(p.full_name || p.email) + ` · ${roleLabel(p.role)}`}
-                  </option>
-                ))}
-              </Select>
+                onChange={setSelectedProfile}
+                options={candidateProfiles.map((p) => ({
+                  value: p.id,
+                  label: p.full_name || p.email,
+                  hint: roleLabel(p.role),
+                }))}
+                placeholder="Choose user…"
+                ariaLabel="Choose user to add"
+              />
               <Field>
                 <Input
                   placeholder="Role on project (optional)"
