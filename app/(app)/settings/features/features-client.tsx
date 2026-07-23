@@ -54,7 +54,10 @@ export function FeatureAccessClient({
           </p>
         </div>
       </div>
-      <LevelsMatrix plans={plans} orgs={orgs} />
+      {/* key: a saved/added/deleted level changes the serialized plans prop,
+          remounting the matrix so its edit buffer re-seeds from fresh server
+          data (uncommitted edits only survive while props are unchanged). */}
+      <LevelsMatrix key={JSON.stringify(plans)} plans={plans} orgs={orgs} />
       <OrgAssignments plans={plans} orgs={orgs} />
     </div>
   )
@@ -69,8 +72,8 @@ function LevelsMatrix({ plans, orgs }: { plans: PlanRow[]; orgs: OrgRow[] }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [newName, setNewName] = useState("")
-  // Local edit buffer keyed by plan; router.refresh() re-seeds via the
-  // key={} remount below when a save lands.
+  // Local edit buffer keyed by plan; the parent's key={} on this component
+  // remounts it (re-seeding the buffer) whenever fresh server props arrive.
   const [edits, setEdits] = useState<
     Record<string, { name: string; features: FeatureKey[] }>
   >(() =>
@@ -94,8 +97,11 @@ function LevelsMatrix({ plans, orgs }: { plans: PlanRow[]; orgs: OrgRow[] }) {
     const base = plans.find((p) => p.key === key)
     const edit = edits[key]
     if (!base || !edit) return false
+    // A blanked name saves as "keep the old name" (the action treats empty
+    // as omitted), so it must not read as dirty either.
+    const effectiveName = edit.name.trim() || base.name
     return (
-      base.name !== edit.name.trim() ||
+      base.name !== effectiveName ||
       base.features.length !== edit.features.length ||
       base.features.some((f) => !edit.features.includes(f))
     )

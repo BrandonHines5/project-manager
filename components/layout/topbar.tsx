@@ -144,7 +144,7 @@ export function Topbar({
     // extends up under the iPhone status bar in home-screen mode without
     // the notch overlapping the controls.
     <header className="min-h-14 pt-[env(safe-area-inset-top)] shrink-0 bg-sidebar text-sidebar-foreground flex items-center gap-2 px-3 md:px-4">
-      <MobileNav role={role} brand={brand} projects={projects} />
+      <MobileNav role={role} brand={brand} projects={projects} features={features} />
       <Link
         href="/projects"
         className="flex items-center gap-2 shrink-0 md:mr-3"
