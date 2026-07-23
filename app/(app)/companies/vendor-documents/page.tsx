@@ -1,5 +1,7 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
+import { hasOrgFeature } from "@/lib/feature-gate"
+import { EmptyState } from "@/components/ui/empty"
 import { VendorDocumentsClient } from "./vendor-documents-client"
 import type { Tables } from "@/lib/db/types"
 
@@ -13,7 +15,17 @@ export const metadata = { title: "Vendor Documents — BuildFox" }
  * redirects).
  */
 export default async function VendorDocumentsPage() {
-  await requireStaff()
+  const profile = await requireStaff()
+  if (!(await hasOrgFeature("vendor_documents", profile.id))) {
+    return (
+      <div className="max-w-3xl mx-auto px-4 md:px-6 py-10">
+        <EmptyState
+          title="Vendor documents aren't included in your plan"
+          description="Contact support to add insurance and vendor-document tracking to your subscription."
+        />
+      </div>
+    )
+  }
   const supabase = await createSupabaseServerClient()
 
   // The dashboard only consumes two document sets, so query them directly

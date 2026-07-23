@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
+import { hasOrgFeature } from "@/lib/feature-gate"
 import { EmptyState } from "@/components/ui/empty"
 import { buildBudgetRows } from "@/lib/budget/rollup"
 import type { DecisionForBudget, PoForBudget } from "@/lib/budget/rollup"
@@ -19,6 +20,16 @@ export default async function BudgetPage({
   // Within staff, the whole page is money-out data — financial_access gates it
   // app-layer, same as the Pricing tab's committed costs.
   const profile = await requireStaff()
+  if (!(await hasOrgFeature("budget", profile.id))) {
+    return (
+      <div className="max-w-3xl mx-auto px-4 md:px-6 py-10">
+        <EmptyState
+          title="Budget isn't included in your plan"
+          description="Contact support to add budgeting to your subscription."
+        />
+      </div>
+    )
+  }
   if (!profile.financial_access) {
     return (
       <div className="max-w-3xl mx-auto px-4 md:px-6 py-10">

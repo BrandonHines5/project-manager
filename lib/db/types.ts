@@ -1910,8 +1910,10 @@ export type Database = {
       organizations: {
         Row: {
           created_at: string
+          feature_overrides: Json | null
           id: string
           name: string
+          plan: string
           sandbox_expires_at: string | null
           settings: Json
           slug: string
@@ -1922,8 +1924,10 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          feature_overrides?: Json | null
           id?: string
           name: string
+          plan?: string
           sandbox_expires_at?: string | null
           settings?: Json
           slug: string
@@ -1934,8 +1938,10 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          feature_overrides?: Json | null
           id?: string
           name?: string
+          plan?: string
           sandbox_expires_at?: string | null
           settings?: Json
           slug?: string
@@ -1944,7 +1950,15 @@ export type Database = {
           stripe_subscription_id?: string | null
           stripe_subscription_status?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "organizations_plan_fkey"
+            columns: ["plan"]
+            isOneToOne: false
+            referencedRelation: "platform_plans"
+            referencedColumns: ["key"]
+          },
+        ]
       }
       outlook_sync_state: {
         Row: {
@@ -2011,6 +2025,33 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      platform_plans: {
+        Row: {
+          created_at: string
+          features: Json
+          key: string
+          name: string
+          position: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          features?: Json
+          key: string
+          name: string
+          position?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          features?: Json
+          key?: string
+          name?: string
+          position?: number
+          updated_at?: string
+        }
+        Relationships: []
       }
       po_attachments: {
         Row: {

@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation"
 import { MapPin } from "lucide-react"
 import { requireStaff } from "@/lib/auth"
+import { hasOrgFeature } from "@/lib/feature-gate"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { getOnsitePrompts } from "@/lib/onsite/prompts"
 import { Walkthrough } from "@/components/onsite/walkthrough"
@@ -11,7 +12,8 @@ export default async function OnsitePage({
 }: {
   params: Promise<{ id: string }>
 }) {
-  await requireStaff()
+  const profile = await requireStaff()
+  const aiEnabled = await hasOrgFeature("ai_assistant", profile.id)
   const { id } = await params
   const supabase = await createSupabaseServerClient()
   const { data: project, error } = await supabase
@@ -30,7 +32,9 @@ export default async function OnsitePage({
         <MapPin className="h-5 w-5 text-brand-600" />
         <h2 className="text-lg font-semibold">OnsiteIQ</h2>
       </div>
-      <Walkthrough projectId={project.id} projectName={project.name} />
+      {aiEnabled && (
+        <Walkthrough projectId={project.id} projectName={project.name} />
+      )}
       <h3 className="text-sm font-semibold mb-1">Quick updates</h3>
       <p className="text-sm text-muted mb-4">
         Schedule items for {project.name}

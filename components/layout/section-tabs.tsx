@@ -6,6 +6,7 @@ import { usePathname, useSearchParams } from "next/navigation"
 import { LayoutGrid } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { UserRole } from "@/lib/auth"
+import { ALL_FEATURE_KEYS, type FeatureKey } from "@/lib/features"
 import { AGGREGATE_ROUTE_BY_SLUG } from "@/lib/project-status"
 
 type Section = {
@@ -16,6 +17,10 @@ type Section = {
   // Only staff with profiles.financial_access see this tab (e.g. Budget).
   // Nav-level only — the page still enforces the same gate server-side.
   requiresFinancialAccess?: boolean
+  // Feature gating (0122): the tab shows only when the active org's plan
+  // includes AT LEAST ONE of these keys. Nav-level only — pages + actions
+  // re-enforce server-side.
+  requiresFeature?: FeatureKey[]
   // Where this section lives in all-jobs scope. Sections without one are
   // per-job only and disappear when no job is selected.
   aggregateHref?: string
@@ -50,18 +55,30 @@ const SECTIONS: Section[] = [
     aggregateRoles: ["staff"],
   },
   // One tab for both — the page hosts a Bid requests | Purchase orders
-  // toggle. Old /bids and /purchase-orders links redirect to it.
-  { label: "Bids & POs", slug: "purchasing", hideForRoles: ["client", "trade"] },
+  // toggle. Old /bids and /purchase-orders links redirect to it. Shows when
+  // EITHER purchasing feature is in the org's plan.
+  {
+    label: "Bids & POs",
+    slug: "purchasing",
+    hideForRoles: ["client", "trade"],
+    requiresFeature: ["bid_requests", "purchase_orders"],
+  },
   {
     label: "Budget",
     slug: "budget",
     hideForRoles: ["client", "trade"],
     requiresFinancialAccess: true,
+    requiresFeature: ["budget"],
   },
   { label: "Pricing", slug: "pricing" },
   // Client invoices (QBO hybrid) — staff manage the QuickBooks link, clients
   // view & pay. Trades have no business seeing client billing.
-  { label: "Invoices", slug: "invoices", hideForRoles: ["trade"] },
+  {
+    label: "Invoices",
+    slug: "invoices",
+    hideForRoles: ["trade"],
+    requiresFeature: ["client_invoices"],
+  },
   { label: "Files", slug: "files" },
   { label: "Roles", slug: "roles", hideForRoles: ["client", "trade"] },
   { label: "History", slug: "history", hideForRoles: ["client", "trade"] },
@@ -80,9 +97,13 @@ const SECTIONS: Section[] = [
 export function SectionTabs({
   role,
   financialAccess = false,
+  features = [...ALL_FEATURE_KEYS],
 }: {
   role: UserRole
   financialAccess?: boolean
+  /** The active org's feature set (0122). Defaults to everything so a
+   * missing prop can never hide tabs. */
+  features?: FeatureKey[]
 }) {
   const path = usePathname()
   // Carry the jobs-list selection between aggregate tabs so switching from
@@ -130,7 +151,8 @@ export function SectionTabs({
   const visible = SECTIONS.filter(
     (s) =>
       !s.hideForRoles?.includes(role) &&
-      (!s.requiresFinancialAccess || financialAccess)
+      (!s.requiresFinancialAccess || financialAccess) &&
+      (!s.requiresFeature || s.requiresFeature.some((f) => features.includes(f)))
   )
   const aggregateTabs = visible.filter(
     (s) =>

@@ -6,6 +6,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
 import { getActiveOrgId } from "@/lib/org"
 import { assertActiveOrgWritable } from "@/lib/sandbox"
+import { requireOrgFeature } from "@/lib/feature-gate"
 import { parseSpreadsheet } from "@/lib/import/spreadsheet"
 
 // Budget data is money-out (what we expect to pay), same sensitivity as
@@ -85,6 +86,8 @@ export async function canEditBudget(profileId: string): Promise<boolean> {
 
 async function requireBudgetEditor() {
   const profile = await requireFinancialStaff()
+  // Feature gating (0122): one line here covers every budget mutation.
+  await requireOrgFeature("budget", profile.id)
   const supabase = await createSupabaseServerClient()
   const ids = await loadBudgetEditorIds(supabase)
   if (ids !== null && !ids.includes(profile.id)) {

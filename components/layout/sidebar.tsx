@@ -22,6 +22,7 @@ import {
 import { cn } from "@/lib/utils"
 import { BrandTile } from "@/components/layout/brand-tile"
 import type { UserRole } from "@/lib/auth"
+import { ALL_FEATURE_KEYS, type FeatureKey } from "@/lib/features"
 import { HINES_HOMES, type Brand } from "@/lib/brand"
 
 // The desktop left nav is gone — its destinations live in the dark top bar's
@@ -33,6 +34,9 @@ type Item = {
   label: string
   icon: React.ComponentType<{ className?: string }>
   roles?: UserRole[]
+  // Feature gating (0122): shown only when the active org's plan includes
+  // at least one of these keys (the SectionTabs convention).
+  requiresFeature?: FeatureKey[]
 }
 
 const ITEMS: Item[] = [
@@ -53,6 +57,7 @@ const ITEMS: Item[] = [
     label: "Vendor Documents",
     icon: FileBadge,
     roles: ["staff"],
+    requiresFeature: ["vendor_documents"],
   },
   { href: "/clients", label: "Clients", icon: Contact, roles: ["staff"] },
   { href: "/team", label: "Team", icon: Users, roles: ["staff"] },
@@ -73,9 +78,16 @@ const ITEMS: Item[] = [
   { href: "/feedback", label: "Feedback", icon: MessageSquarePlus },
 ]
 
-// Visible nav items for a role.
-export function navItemsFor(role: UserRole): Item[] {
-  return ITEMS.filter((i) => !i.roles || i.roles.includes(role))
+// Visible nav items for a role + the active org's feature set.
+export function navItemsFor(
+  role: UserRole,
+  features: FeatureKey[] = [...ALL_FEATURE_KEYS]
+): Item[] {
+  return ITEMS.filter(
+    (i) =>
+      (!i.roles || i.roles.includes(role)) &&
+      (!i.requiresFeature || i.requiresFeature.some((f) => features.includes(f)))
+  )
 }
 
 // Header chunk (HH logo + product name) for the mobile drawer. `onNavigate`
@@ -108,15 +120,18 @@ export function SidebarBrand({
 // user taps an item.
 export function SidebarNavList({
   role,
+  features,
   onNavigate,
   className,
 }: {
   role: UserRole
+  /** The active org's feature set (0122); defaults to everything. */
+  features?: FeatureKey[]
   onNavigate?: () => void
   className?: string
 }) {
   const path = usePathname()
-  const items = navItemsFor(role)
+  const items = navItemsFor(role, features)
   // Longest-prefix match wins so nested entries (/companies/vendor-documents)
   // don't light up their parent (/companies) at the same time.
   const matches = (href: string) => path === href || path.startsWith(`${href}/`)

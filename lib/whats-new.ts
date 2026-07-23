@@ -24,6 +24,12 @@ export const WHATS_NEW: WhatsNewEntry[] = [
   {
     date: "2026-07-23",
     title:
+      "Platform: feature access levels — define what each subscription level includes and assign organizations to levels (avatar menu → Feature access, platform owner only).",
+    kind: "feature",
+  },
+  {
+    date: "2026-07-23",
+    title:
       "Synced Outlook emails now file to a job only when AI confidently matches the email's content to that job — everything else stays in the global Communications hub.",
     kind: "improvement",
   },
