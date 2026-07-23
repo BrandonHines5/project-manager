@@ -207,6 +207,9 @@ export async function updateFeedbackNotes(input: z.infer<typeof NotesInput>) {
   }
 
   revalidatePath("/feedback")
+  // The dashboard's feedback panels render off this data too — same pairing
+  // submitFeedback uses.
+  revalidatePath("/projects")
 }
 
 // Respect the requestor's master notifications switch like every other email
