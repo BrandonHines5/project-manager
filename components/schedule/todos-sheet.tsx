@@ -10,6 +10,7 @@ import { EmptyState } from "@/components/ui/empty"
 import { CalendarDays } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { assigneeNamesFor } from "./helpers"
+import { isLateScheduleItem } from "@/lib/schedule/late"
 import type { ScheduleData } from "@/app/(app)/projects/[id]/schedule/schedule-client"
 import type { Tables, Enums } from "@/lib/db/types"
 import { updateScheduleItemFields } from "@/app/actions/schedule"
@@ -137,6 +138,14 @@ function SheetRow({
     item.priority ?? ""
   )
   const assignees = assigneeNamesFor(item.id, data)
+  // Computed from the edited cell state (not the server row) so clearing
+  // the date or completing the to-do drops the red immediately.
+  const isLate = isLateScheduleItem({
+    kind: "todo",
+    status,
+    end_date: null,
+    due_date: dueDate === "" ? null : dueDate,
+  })
 
   function save(fields: Parameters<typeof updateScheduleItemFields>[0]) {
     startTransition(async () => {
@@ -165,6 +174,7 @@ function SheetRow({
           }}
           className={cn(
             "border-transparent hover:border-border-strong focus:border-brand-500",
+            isLate && "text-danger",
             status === "complete" && "line-through text-muted"
           )}
           aria-label="To-do title"
@@ -183,7 +193,10 @@ function SheetRow({
               due_date: v === "" ? null : v,
             })
           }}
-          className="border-transparent hover:border-border-strong focus:border-brand-500"
+          className={cn(
+            "border-transparent hover:border-border-strong focus:border-brand-500",
+            isLate && "text-danger"
+          )}
           aria-label="Due date"
         />
       </td>

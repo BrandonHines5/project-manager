@@ -4,7 +4,8 @@ import { useMemo, useState } from "react"
 import Link from "next/link"
 import { Search } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { formatDate } from "@/lib/utils"
+import { cn, formatDate, todayISO } from "@/lib/utils"
+import { isLateScheduleItem } from "@/lib/schedule/late"
 import type { Enums } from "@/lib/db/types"
 
 const STATUS_TONE: Record<
@@ -48,6 +49,8 @@ export function AllScheduleTable({
   itemCap: number
 }) {
   const [query, setQuery] = useState("")
+  // One "today" per render so every row's late check agrees.
+  const today = todayISO()
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -125,6 +128,7 @@ export function AllScheduleTable({
                     : r.due_date
                       ? `Due ${formatDate(r.due_date)}`
                       : "—"
+                const isLate = isLateScheduleItem(r, today)
                 return (
                   <tr key={r.id} className="hover:bg-background/60">
                     <td className="px-3 py-2 align-top">
@@ -144,7 +148,14 @@ export function AllScheduleTable({
                         <span className="text-muted">—</span>
                       )}
                     </td>
-                    <td className="px-3 py-2 align-top">{r.title}</td>
+                    <td
+                      className={cn(
+                        "px-3 py-2 align-top",
+                        isLate && "text-danger"
+                      )}
+                    >
+                      {r.title}
+                    </td>
                     <td className="px-3 py-2 align-top hidden md:table-cell">
                       <span className="text-xs text-muted capitalize">
                         {r.kind === "work" ? "Work" : "To-do"}
@@ -155,7 +166,12 @@ export function AllScheduleTable({
                         {STATUS_LABEL[r.status]}
                       </Badge>
                     </td>
-                    <td className="px-3 py-2 align-top hidden md:table-cell text-xs text-muted">
+                    <td
+                      className={cn(
+                        "px-3 py-2 align-top hidden md:table-cell text-xs",
+                        isLate ? "text-danger" : "text-muted"
+                      )}
+                    >
                       {dateLabel}
                     </td>
                   </tr>

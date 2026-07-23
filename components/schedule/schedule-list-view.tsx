@@ -35,6 +35,7 @@ import {
 } from "./helpers"
 import { setItemStatus } from "@/app/actions/schedule"
 import { computeCriticalPath } from "@/lib/schedule/scheduling"
+import { isLateScheduleItem } from "@/lib/schedule/late"
 import { TemplateTagBadges } from "@/components/template-tag-badges"
 import type { ScheduleData } from "@/app/(app)/projects/[id]/schedule/schedule-client"
 import type { Tables } from "@/lib/db/types"
@@ -193,10 +194,20 @@ export function ScheduleListView({
                   onClick={() => onEdit(it.id)}
                   className="text-left min-w-0 cursor-pointer hover:underline"
                 >
-                  <span className="font-medium text-foreground">
+                  <span
+                    className={cn(
+                      "font-medium",
+                      isLateScheduleItem(it) ? "text-danger" : "text-foreground"
+                    )}
+                  >
                     {it.title}
                   </span>
-                  <span className="ml-2 text-xs text-muted">
+                  <span
+                    className={cn(
+                      "ml-2 text-xs",
+                      isLateScheduleItem(it) ? "text-danger" : "text-muted"
+                    )}
+                  >
                     {formatDateRange(it.start_date, it.end_date)}
                   </span>
                 </button>
@@ -524,6 +535,7 @@ function WorkItemRow({
   const assignees = assigneeNamesFor(item.id, data)
   const delays = delaysFor(item.id, data.delays)
   const isSelected = selectedIds.has(item.id)
+  const isLate = isLateScheduleItem(item)
 
   return (
     <li>
@@ -568,6 +580,7 @@ function WorkItemRow({
               <h3
                 className={cn(
                   "text-sm font-semibold text-foreground",
+                  isLate && "text-danger",
                   item.status === "complete" && "line-through text-muted"
                 )}
               >
@@ -594,7 +607,12 @@ function WorkItemRow({
               )}
             </div>
             <div className="flex items-center gap-3 mt-1 text-xs text-muted">
-              <span className="inline-flex items-center gap-1">
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1",
+                  isLate && "text-danger"
+                )}
+              >
                 <CalendarDays className="h-3 w-3" />
                 {formatDateRange(item.start_date, item.end_date)}
                 {item.duration_days && ` · ${item.duration_days}d`}
@@ -663,6 +681,7 @@ function TodoRow({
   const attachmentCount = data.attachments.filter(
     (a) => a.schedule_item_id === item.id
   ).length
+  const isLate = isLateScheduleItem(item)
 
   return (
     <li
@@ -688,6 +707,7 @@ function TodoRow({
           <span
             className={cn(
               "text-sm",
+              isLate && "text-danger",
               item.status === "complete" && "line-through text-muted"
             )}
           >
@@ -706,7 +726,12 @@ function TodoRow({
         </div>
         <div className="flex items-center gap-3 mt-0.5 text-xs text-muted">
           {item.due_date && (
-            <span className="inline-flex items-center gap-1">
+            <span
+              className={cn(
+                "inline-flex items-center gap-1",
+                isLate && "text-danger"
+              )}
+            >
               <CalendarDays className="h-3 w-3" /> Due {formatDate(item.due_date)}
             </span>
           )}
