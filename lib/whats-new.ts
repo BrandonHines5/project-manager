@@ -1,0 +1,133 @@
+// The What's New feed (staff-only page at /whats-new). NEWEST FIRST.
+//
+// Convention: every user-visible feature, improvement, or fix that ships
+// should add one SHORT entry here in the same PR — a single plain-English
+// sentence; users can always ask for more detail. Internal refactors with no
+// visible behavior change don't need an entry.
+
+export type WhatsNewKind = "feature" | "improvement" | "fix"
+
+export type WhatsNewEntry = {
+  // Calendar date the change shipped (YYYY-MM-DD).
+  date: string
+  title: string
+  kind: WhatsNewKind
+}
+
+export const WHATS_NEW: WhatsNewEntry[] = [
+  {
+    date: "2026-07-23",
+    title: "What's New — this page. Every update lands here, newest first.",
+    kind: "feature",
+  },
+  {
+    date: "2026-07-23",
+    title:
+      "Dropdowns for people, companies, jobs and cost codes are searchable — start typing to filter.",
+    kind: "feature",
+  },
+  {
+    date: "2026-07-23",
+    title:
+      "Bid Request and Purchase Order Scope fields have a formatting toolbar (bullets, numbering, bold) — formatting shows on the sub's page.",
+    kind: "feature",
+  },
+  {
+    date: "2026-07-23",
+    title:
+      "Selections: the approved choice now moves to the top of the list with a green highlight.",
+    kind: "improvement",
+  },
+  {
+    date: "2026-07-23",
+    title: "Selections: click any photo to view it full-screen.",
+    kind: "feature",
+  },
+  {
+    date: "2026-07-23",
+    title:
+      "Late work items and to-dos now show in red across the schedule, To-Dos, Gantt, and My Assignments.",
+    kind: "feature",
+  },
+  {
+    date: "2026-07-23",
+    title:
+      "Filtering to-dos by a person now includes items assigned to a role they fill on the job.",
+    kind: "improvement",
+  },
+  {
+    date: "2026-07-20",
+    title: "New trial accounts start with a sample demo project.",
+    kind: "feature",
+  },
+  {
+    date: "2026-07-20",
+    title:
+      "Fixed: trial builders (non-Hines staff) were bounced back to the login page.",
+    kind: "fix",
+  },
+  {
+    date: "2026-07-20",
+    title: "Fixed: trial-signup CAPTCHA rejected every legitimate signup.",
+    kind: "fix",
+  },
+  {
+    date: "2026-07-20",
+    title:
+      "Builder emails send from one shared address with replies routed back to the right company.",
+    kind: "improvement",
+  },
+  {
+    date: "2026-07-19",
+    title:
+      "Built-in texting for builder accounts — a dedicated number, no API key needed.",
+    kind: "feature",
+  },
+  {
+    date: "2026-07-19",
+    title: "Built-in email sending for builder accounts (no setup).",
+    kind: "feature",
+  },
+  {
+    date: "2026-07-19",
+    title:
+      "Stripe billing: expired trials see a paywall and can subscribe to keep going; billing is managed in the Stripe portal.",
+    kind: "feature",
+  },
+  {
+    date: "2026-07-19",
+    title:
+      "Self-serve trials: sales-site signups create a 7-day sandbox; expired sandboxes are cleaned up after a 30-day grace.",
+    kind: "feature",
+  },
+  {
+    date: "2026-07-19",
+    title:
+      "New \"Provision organization\" screen for standing up a builder account.",
+    kind: "feature",
+  },
+  {
+    date: "2026-07-19",
+    title:
+      "Each organization connects its own QuickBooks, phone, and email — nothing is shared with Hines Homes.",
+    kind: "improvement",
+  },
+  {
+    date: "2026-07-18",
+    title:
+      "Multi-tenant foundation: organizations, members, per-org data and branding.",
+    kind: "feature",
+  },
+  {
+    date: "2026-07-18",
+    title:
+      "Product renamed BuildFox; the Onsite tab is now OnsiteIQ.",
+    kind: "improvement",
+  },
+  {
+    date: "2026-07-18",
+    title:
+      "Duplicating a project now copies its purchase orders and bid requests as fresh drafts.",
+    kind: "feature",
+  },
+]
