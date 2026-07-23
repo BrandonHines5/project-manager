@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { verifyQuoSignature } from "@/lib/comms/quo-verify"
-import { matchCounterparty } from "@/lib/comms/match"
+import { matchCounterparty, scopeMatchToOrg, type MatchResult } from "@/lib/comms/match"
 import { notifyStaffOfInbound } from "@/lib/comms/notify"
+import { listOrgIntegrationSecrets } from "@/lib/integrations/org"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -22,23 +23,58 @@ export const maxDuration = 60
  *
  * Always 200 after signature verification (OpenPhone retries on non-2xx and
  * a poison event must not retry forever) — insurance-webhook convention.
+ *
+ * Multi-workspace: one endpoint serves EVERY OpenPhone workspace. The legacy
+ * env `QUO_WEBHOOK_SECRET` (Hines' workspace) is tried first — zero change
+ * for the common case — then each org's stored signing secret (builder orgs
+ * that connected their own OpenPhone account). Whichever org's secret
+ * verifies the event tells us, cryptographically, which tenant it belongs
+ * to: that org is stamped directly and the counterparty match is scoped to
+ * it, so a bring-your-own workspace can never file traffic onto another
+ * tenant. Env-verified events keep the legacy best-effort org resolution.
  */
 export async function POST(req: NextRequest) {
-  const secret = process.env.QUO_WEBHOOK_SECRET
-  if (!secret) {
-    console.error("[quo webhook] QUO_WEBHOOK_SECRET not configured")
-    return NextResponse.json({ error: "Not configured" }, { status: 500 })
-  }
-
   const rawBody = await req.text()
-  if (!verifyQuoSignature(rawBody, req.headers.get("openphone-signature"), secret)) {
-    return NextResponse.json({ error: "Invalid signature" }, { status: 401 })
-  }
+  const sigHeader = req.headers.get("openphone-signature")
 
   const admin = createSupabaseAdminClient()
   if (!admin) {
     console.error("[quo webhook] admin client unavailable")
     return NextResponse.json({ error: "Not configured" }, { status: 500 })
+  }
+
+  const envSecret = process.env.QUO_WEBHOOK_SECRET
+  // Which org's stored secret verified the event; null = the legacy env
+  // workspace (or an org that pasted the same secret — impossible to mint
+  // by accident, and env-first only ever widens to legacy behavior).
+  let verifiedOrgId: string | null = null
+  let verified = envSecret
+    ? verifyQuoSignature(rawBody, sigHeader, envSecret)
+    : false
+  if (!verified) {
+    try {
+      for (const row of await listOrgIntegrationSecrets(admin, "quo")) {
+        const secret = row.secrets.webhookSecret
+        if (typeof secret !== "string" || !secret) continue
+        if (verifyQuoSignature(rawBody, sigHeader, secret)) {
+          verified = true
+          verifiedOrgId = row.org_id
+          break
+        }
+      }
+    } catch (e) {
+      // Can't read the candidate secrets — 500 so OpenPhone retries rather
+      // than dropping a legitimate event on a transient DB error.
+      console.error(
+        "[quo webhook] org secret lookup failed:",
+        e instanceof Error ? e.message : e
+      )
+      return NextResponse.json({ error: "Verification unavailable" }, { status: 500 })
+    }
+  }
+  if (!verified) {
+    if (!envSecret) console.error("[quo webhook] QUO_WEBHOOK_SECRET not configured")
+    return NextResponse.json({ error: "Invalid signature" }, { status: 401 })
   }
 
   let event: QuoEvent
@@ -57,7 +93,6 @@ export async function POST(req: NextRequest) {
       case "message.delivered": {
         const inbound = obj.direction === "incoming"
         const counterpartyNumber = inbound ? obj.from : firstTo(obj.to)
-        const match = await matchCounterparty(admin, { phone: counterpartyNumber })
         // Which staffer owns the Quo number this text went through — powers
         // per-user attribution for texts typed directly in the Quo app (app-sent
         // texts already carry sent_by and win the ON CONFLICT below).
@@ -66,7 +101,12 @@ export async function POST(req: NextRequest) {
           obj.phoneNumberId,
           inbound ? firstTo(obj.to) : (obj.from ?? null)
         )
-        const orgId = await resolveInboundOrg(admin, staffProfileId, match)
+        const { match, orgId } = await attributeForOrg(
+          admin,
+          verifiedOrgId,
+          staffProfileId,
+          await matchCounterparty(admin, { phone: counterpartyNumber })
+        )
         const { error } = await admin.from("communications").upsert(
           {
             channel: "sms",
@@ -116,6 +156,9 @@ export async function POST(req: NextRequest) {
             preview: obj.body ?? obj.text ?? "",
             projectId: match.project_id,
             projectName: await projectName(admin, match.project_id),
+            // Org-verified events ring only that org's staff; null keeps the
+            // legacy env workspace's all-staff fan-out.
+            orgId: verifiedOrgId,
           })
         }
         return NextResponse.json({ ok: true })
@@ -124,13 +167,17 @@ export async function POST(req: NextRequest) {
       case "call.completed": {
         const inbound = obj.direction === "incoming"
         const counterpartyNumber = inbound ? obj.from : firstTo(obj.to)
-        const match = await matchCounterparty(admin, { phone: counterpartyNumber })
         const staffProfileId = await staffProfileForQuoNumber(
           admin,
           obj.phoneNumberId,
           inbound ? firstTo(obj.to) : (obj.from ?? null)
         )
-        const orgId = await resolveInboundOrg(admin, staffProfileId, match)
+        const { match, orgId } = await attributeForOrg(
+          admin,
+          verifiedOrgId,
+          staffProfileId,
+          await matchCounterparty(admin, { phone: counterpartyNumber })
+        )
         const durationSeconds =
           obj.answeredAt && obj.completedAt
             ? Math.max(
@@ -196,6 +243,9 @@ export async function POST(req: NextRequest) {
                   : "Call",
             projectId: match.project_id,
             projectName: await projectName(admin, match.project_id),
+            // Org-verified events ring only that org's staff; null keeps the
+            // legacy env workspace's all-staff fan-out.
+            orgId: verifiedOrgId,
           })
         }
         return NextResponse.json({ ok: true })
@@ -293,6 +343,27 @@ async function staffProfileForQuoNumber(
     if (data?.id) return data.id
   }
   return null
+}
+
+/**
+ * Tenant attribution for one event. When an ORG'S OWN signing secret verified
+ * it, that org is authoritative — stamp it and drop any attribution the
+ * global matcher resolved into another tenant (a scope-lookup failure keeps
+ * the event but drops links; this route's always-200 contract can't retry
+ * without losing it). Env-verified (legacy workspace) events keep the
+ * best-effort resolveInboundOrg heuristics, unchanged.
+ */
+async function attributeForOrg(
+  admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
+  verifiedOrgId: string | null,
+  staffProfileId: string | null,
+  match: MatchResult
+): Promise<{ match: MatchResult; orgId: string | null }> {
+  if (verifiedOrgId) {
+    const scoped = await scopeMatchToOrg(admin, match, verifiedOrgId)
+    return { match: scoped.match, orgId: verifiedOrgId }
+  }
+  return { match, orgId: await resolveInboundOrg(admin, staffProfileId, match) }
 }
 
 /**

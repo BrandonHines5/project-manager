@@ -5,7 +5,7 @@ import { z } from "zod"
 import { requireSession } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
-import { upsertOrgIntegration } from "@/lib/integrations/org"
+import { getOrgIntegration, upsertOrgIntegration } from "@/lib/integrations/org"
 import type { Json } from "@/lib/db/types"
 
 /**
@@ -280,6 +280,11 @@ const QuoIntegrationSchema = z.object({
   apiKey: z.string().trim().max(300).optional(),
   // Empty string clears the shared number; config replaces wholesale.
   sharedFromNumber: z.string().trim().max(40).optional(),
+  // The OpenPhone webhook's signing secret (bring-your-own workspaces) —
+  // lets /api/inbound/quo verify that workspace's events so replies and
+  // Quo-app texts/calls mirror into the feed. Same write-only semantics as
+  // apiKey: blank/omitted keeps the stored one.
+  webhookSecret: z.string().trim().max(300).optional(),
   // Turns the integration off and clears the stored key.
   disconnect: z.boolean().optional(),
 })
@@ -309,7 +314,7 @@ export async function saveQuoIntegration(
   const profile = await requireSession()
   const parsed = QuoIntegrationSchema.safeParse(input)
   if (!parsed.success) return { ok: false, error: "Invalid integration input." }
-  const { orgId, apiKey, sharedFromNumber, disconnect } = parsed.data
+  const { orgId, apiKey, sharedFromNumber, webhookSecret, disconnect } = parsed.data
 
   const supabase = await createSupabaseServerClient()
   if (!(await requireOrgAdmin(supabase, orgId, profile.id))) {
@@ -330,11 +335,28 @@ export async function saveQuoIntegration(
         config: {},
       })
     } else {
+      // Two write-only secrets share one sealed envelope, and an envelope
+      // replaces wholesale — so supplying one field must not drop the other.
+      // Merge the typed values over the stored secrets; an unreadable stored
+      // envelope falls back to just the typed fields (typing a new value is
+      // the documented reset path for a corrupt envelope). undefined = no
+      // secret typed = leave the envelope untouched.
+      let secrets: Record<string, unknown> | undefined
+      if (apiKey || webhookSecret) {
+        let existing: Record<string, unknown> = {}
+        try {
+          existing = (await getOrgIntegration(admin, orgId, "quo"))?.secrets ?? {}
+        } catch {
+          existing = {}
+        }
+        secrets = { ...existing }
+        if (apiKey) secrets.apiKey = apiKey
+        if (webhookSecret) secrets.webhookSecret = webhookSecret
+      }
       await upsertOrgIntegration(admin, orgId, "quo", {
         enabled: true,
         config: { sharedFromNumber: sharedFromNumber || null },
-        // undefined = keep the stored key; a typed value seals + replaces.
-        secrets: apiKey ? { apiKey } : undefined,
+        secrets,
       })
     }
   } catch (e) {

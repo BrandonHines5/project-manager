@@ -62,6 +62,43 @@ export async function getOrgIntegration(
 }
 
 /**
+ * Every enabled org's decrypted secrets for one provider — the inbound Quo
+ * webhook's multi-workspace verification source (it must try each tenant's
+ * stored signing secret against an event before knowing whose it is). Unlike
+ * getOrgIntegration, a row whose envelope won't decrypt is SKIPPED with a
+ * warning instead of throwing: one tenant's corrupt envelope must not take
+ * down every other tenant's webhook, and a skipped secret can only make
+ * verification fail (the event is dropped), never misroute it to another org.
+ */
+export async function listOrgIntegrationSecrets(
+  admin: SupabaseClient<Database>,
+  provider: string
+): Promise<{ org_id: string; secrets: Record<string, unknown> }[]> {
+  const { data, error } = await admin
+    .from("org_integrations")
+    .select("org_id, secrets")
+    .eq("provider", provider)
+    .eq("enabled", true)
+    .not("secrets", "is", null)
+  if (error) throw new Error(error.message)
+  const out: { org_id: string; secrets: Record<string, unknown> }[] = []
+  for (const row of data ?? []) {
+    try {
+      out.push({
+        org_id: row.org_id,
+        secrets: decryptSecrets(row.secrets, envelopeAad(row.org_id, provider)),
+      })
+    } catch (e) {
+      console.warn(
+        `[integrations] skipping undecryptable ${provider} secrets for org ${row.org_id}:`,
+        e instanceof Error ? e.message : e
+      )
+    }
+  }
+  return out
+}
+
+/**
  * Create/update an org's integration row. `secrets` semantics: undefined =
  * leave stored secrets untouched, null = clear them, object = seal and
  * replace. Omitted `enabled`/`config` keep their stored values. The write
