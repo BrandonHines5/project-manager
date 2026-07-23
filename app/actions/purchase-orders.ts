@@ -5,6 +5,7 @@ import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
 import { assertActiveOrgWritable } from "@/lib/sandbox"
+import { requireOrgFeature } from "@/lib/feature-gate"
 import { sendEmail, appUrl } from "@/lib/email"
 import { sendQuoSms, normalizeE164 } from "@/lib/quo"
 import { isChannelEnabled } from "@/lib/notifications/preferences"
@@ -84,6 +85,7 @@ function nz(v: string | null | undefined) {
  */
 export async function savePurchaseOrder(input: PurchaseOrderInputT) {
   const profile = await requireStaff()
+  await requireOrgFeature("purchase_orders")
   await assertActiveOrgWritable()
   const result = PurchaseOrderInput.safeParse(input)
   if (!result.success) {
@@ -280,6 +282,7 @@ export async function copyPurchaseOrder(
 ) {
   const { id, target_project_id } = CopyPurchaseOrderInput.parse(input)
   const profile = await requireStaff()
+  await requireOrgFeature("purchase_orders")
   const supabase = await createSupabaseServerClient()
 
   const { data: src, error: srcErr } = await supabase
@@ -448,6 +451,7 @@ export async function createPoFromDecision(
 ) {
   const { decision_id, company_id } = CreatePoFromDecisionInput.parse(input)
   const profile = await requireStaff()
+  await requireOrgFeature("purchase_orders")
   const supabase = await createSupabaseServerClient()
 
   const { data: decision, error: dErr } = await supabase
@@ -579,6 +583,7 @@ export async function createPoForBidRecipient(
 ) {
   const { recipient_id } = CreatePoForBidRecipientInput.parse(input)
   const profile = await requireStaff()
+  await requireOrgFeature("purchase_orders")
   const supabase = await createSupabaseServerClient()
 
   const { data: recipient, error: rErr } = await supabase
@@ -699,6 +704,7 @@ export async function releasePurchaseOrder({
   project_id: string
 }) {
   const profile = await requireStaff()
+  await requireOrgFeature("purchase_orders")
   const supabase = await createSupabaseServerClient()
 
   const { data: po, error: poErr } = await supabase

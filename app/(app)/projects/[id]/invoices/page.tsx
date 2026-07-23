@@ -1,6 +1,8 @@
 import { notFound } from "next/navigation"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireSession } from "@/lib/auth"
+import { hasOrgFeature } from "@/lib/feature-gate"
+import { EmptyState } from "@/components/ui/empty"
 import { InvoicesClient } from "./invoices-client"
 
 export const metadata = { title: "Invoices — BuildFox" }
@@ -15,6 +17,19 @@ export default async function ProjectInvoicesPage({
   // Trades never see client invoices — the tab is hidden for them and RLS
   // returns no rows; a 404 keeps a hand-typed URL honest too.
   if (profile.role === "trade") notFound()
+  if (
+    profile.role === "staff" &&
+    !(await hasOrgFeature("client_invoices", profile.id))
+  ) {
+    return (
+      <div className="max-w-3xl mx-auto px-4 md:px-6 py-10">
+        <EmptyState
+          title="Client invoices aren't included in your plan"
+          description="Contact support to add invoice mirroring to your subscription."
+        />
+      </div>
+    )
+  }
 
   const supabase = await createSupabaseServerClient()
   const { data: project } = await supabase

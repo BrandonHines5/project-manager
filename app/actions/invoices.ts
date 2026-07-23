@@ -3,6 +3,7 @@
 import { z } from "zod"
 import { revalidatePath } from "next/cache"
 import { requireStaff } from "@/lib/auth"
+import { hasOrgFeature } from "@/lib/feature-gate"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { getActiveOrgId } from "@/lib/org"
@@ -29,6 +30,9 @@ export async function searchQboCustomers(
   query: string
 ): Promise<{ ok: true; customers: QboCustomerHit[] } | { ok: false; error: string }> {
   const profile = await requireStaff()
+  if (!(await hasOrgFeature("client_invoices", profile.id))) {
+    return { ok: false, error: "Client invoices aren't included in your plan." }
+  }
   const parsed = searchSchema.safeParse(query)
   if (!parsed.success) return { ok: false, error: "Type at least 2 characters." }
   const supabase = await createSupabaseServerClient()
@@ -82,6 +86,9 @@ export async function linkProjectQboCustomer(input: {
   customer_name: string
 }): Promise<InvoiceSyncResult> {
   await requireStaff()
+  if (!(await hasOrgFeature("client_invoices"))) {
+    return { ok: false, error: "Client invoices aren't included in your plan." }
+  }
   const parsed = linkSchema.safeParse(input)
   if (!parsed.success) return { ok: false, error: "Invalid customer selection." }
   const { project_id, customer_id, customer_name } = parsed.data
@@ -228,6 +235,9 @@ export async function syncProjectInvoices(input: {
   project_id: string
 }): Promise<InvoiceSyncResult> {
   await requireStaff()
+  if (!(await hasOrgFeature("client_invoices"))) {
+    return { ok: false, error: "Client invoices aren't included in your plan." }
+  }
   const parsed = projectIdSchema.safeParse(input)
   if (!parsed.success) return { ok: false, error: "Invalid project." }
   const { project_id } = parsed.data

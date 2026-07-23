@@ -26,11 +26,15 @@ export function PurchasingClient({
   pos,
   templates,
   initialTab,
+  enabledTabs = ["bids", "pos"],
 }: {
   bids: BidsData
   pos: PurchaseOrdersData
   templates: PurchasingTemplateRow[]
   initialTab: PurchasingTab
+  /** Feature gating (0122): which sides the org's plan includes. The page
+   * clamps initialTab to an enabled side; actions re-enforce server-side. */
+  enabledTabs?: PurchasingTab[]
 }) {
   const [tab, setTab] = useState<PurchasingTab>(initialTab)
   const [newOpen, setNewOpen] = useState(false)
@@ -45,6 +49,7 @@ export function PurchasingClient({
   }
 
   function switchTab(next: PurchasingTab) {
+    if (!enabledTabs.includes(next)) return
     setTab(next)
     // Keep the URL shareable without a server round-trip.
     window.history.replaceState(
@@ -62,6 +67,7 @@ export function PurchasingClient({
           role="tablist"
           aria-label="Bids or purchase orders"
         >
+          {enabledTabs.includes("bids") && (
           <button
             type="button"
             role="tab"
@@ -77,6 +83,8 @@ export function PurchasingClient({
             <Gavel className="h-3.5 w-3.5" /> Bid requests
             <span className="text-xs opacity-80">({bids.packages.length})</span>
           </button>
+          )}
+          {enabledTabs.includes("pos") && (
           <button
             type="button"
             role="tab"
@@ -92,6 +100,7 @@ export function PurchasingClient({
             <FileText className="h-3.5 w-3.5" /> Purchase orders
             <span className="text-xs opacity-80">({pos.pos.length})</span>
           </button>
+          )}
         </div>
         <Button size="sm" onClick={() => setNewOpen(true)}>
           <Plus className="h-3.5 w-3.5" /> New…
@@ -116,6 +125,7 @@ export function PurchasingClient({
           companies={pos.companies}
           costCodes={pos.cost_codes}
           templates={templates}
+          allowedKinds={enabledTabs.map((t) => (t === "bids" ? "bid" : "po"))}
         />
       )}
     </div>

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
+import { requireOrgFeature } from "@/lib/feature-gate"
 import { sendEmail, appUrl } from "@/lib/email"
 import {
   buildInsuranceRequestEmail,
@@ -44,6 +45,7 @@ export async function processStoredInsuranceDocument(input: {
   docKind?: "coi" | "w9" | "sma"
 }) {
   await requireStaff()
+  await requireOrgFeature("vendor_documents")
   const parsed = z
     .object({
       storagePath: z
@@ -86,6 +88,7 @@ export async function assignInsuranceDocument(
   docKind?: "coi" | "w9" | "sma" | "other"
 ) {
   await requireStaff()
+  await requireOrgFeature("vendor_documents")
   Uuid.parse(documentId)
   Uuid.parse(companyId)
   const kindOverride = z.enum(["coi", "w9", "sma", "other"]).optional().parse(docKind)
@@ -310,6 +313,7 @@ export async function sendInsuranceRequest(companyId: string): Promise<{
   reason?: string
 }> {
   const profile = await requireStaff()
+  await requireOrgFeature("vendor_documents")
   Uuid.parse(companyId)
   const supabase = await createSupabaseServerClient()
 

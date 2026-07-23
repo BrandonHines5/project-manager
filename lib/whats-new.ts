@@ -18,6 +18,12 @@ export const WHATS_NEW: WhatsNewEntry[] = [
   {
     date: "2026-07-23",
     title:
+      "Platform: feature access levels — define what each subscription level includes and assign organizations to levels (avatar menu → Feature access, platform owner only).",
+    kind: "feature",
+  },
+  {
+    date: "2026-07-23",
+    title:
       "You can now add a job log straight from the all-jobs Job Logs view — a picker asks which job it belongs to, then the usual editor opens.",
     kind: "feature",
   },

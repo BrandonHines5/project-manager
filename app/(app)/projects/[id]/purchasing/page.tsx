@@ -1,6 +1,8 @@
 import { notFound } from "next/navigation"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireStaff } from "@/lib/auth"
+import { hasOrgFeature } from "@/lib/feature-gate"
+import { EmptyState } from "@/components/ui/empty"
 import { getSignedUrlsForBids } from "@/app/actions/bids"
 import { getSignedUrlsForPOs } from "@/app/actions/purchase-orders"
 import { listPurchasingTemplates } from "@/app/actions/purchasing-templates"
@@ -25,9 +27,28 @@ export default async function PurchasingPage({
   params: Promise<{ id: string }>
   searchParams: Promise<{ tab?: string; open?: string; recipient?: string }>
 }) {
-  await requireStaff()
+  const profile = await requireStaff()
   const { id: projectId } = await params
   const { tab, open, recipient } = await searchParams
+
+  // Feature gating (0122): the tab hides in nav when neither side is in the
+  // org's plan, but a pasted URL still lands here — render the notice. With
+  // one side gated, the toggle collapses to the enabled side and the deep-
+  // link tab resolution below is clamped to it.
+  const [bidsEnabled, posEnabled] = await Promise.all([
+    hasOrgFeature("bid_requests", profile.id),
+    hasOrgFeature("purchase_orders", profile.id),
+  ])
+  if (!bidsEnabled && !posEnabled) {
+    return (
+      <div className="max-w-3xl mx-auto px-4 md:px-6 py-10">
+        <EmptyState
+          title="Bids & POs aren't included in your plan"
+          description="Contact support to add bid requests and purchase orders to your subscription."
+        />
+      </div>
+    )
+  }
   const supabase = await createSupabaseServerClient()
 
   // A DB failure must error the page — never masquerade as a 404.
@@ -260,8 +281,17 @@ export default async function PurchasingPage({
   const openBidId =
     open && cleanedPackages.some((p) => p.id === open) ? open : null
   const openPoId = open && cleanedPos.some((p) => p.id === open) ? open : null
-  const initialTab: PurchasingTab =
+  const wantedTab: PurchasingTab =
     tab === "pos" || (tab !== "bids" && openPoId) ? "pos" : "bids"
+  // Clamp to a side the org's plan includes.
+  const initialTab: PurchasingTab =
+    wantedTab === "pos"
+      ? posEnabled
+        ? "pos"
+        : "bids"
+      : bidsEnabled
+        ? "bids"
+        : "pos"
 
   const bidsData: BidsData = {
     project_id: projectId,
@@ -313,6 +343,10 @@ export default async function PurchasingPage({
       pos={posData}
       templates={templates}
       initialTab={initialTab}
+      enabledTabs={[
+        ...(bidsEnabled ? (["bids"] as const) : []),
+        ...(posEnabled ? (["pos"] as const) : []),
+      ]}
     />
   )
 }
