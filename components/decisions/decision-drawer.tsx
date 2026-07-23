@@ -1466,8 +1466,13 @@ export function DecisionDrawer({
                   type="button"
                   variant="ghost"
                   onClick={handleDelete}
-                  disabled={pending}
+                  disabled={pending || status === "approved"}
                   className="text-danger hover:bg-red-50"
+                  title={
+                    status === "approved"
+                      ? "Approved — use Reset to undo the approval first, then delete"
+                      : undefined
+                  }
                 >
                   <Trash2 className="h-4 w-4" /> Delete
                 </Button>
@@ -1823,8 +1828,16 @@ function ChoicesEditor({
                 <button
                   type="button"
                   onClick={() => onRemoveChoice(c.client_key)}
-                  className="text-muted hover:text-danger p-1 mt-1.5 cursor-pointer"
+                  // The approved choice can't be removed while the approval
+                  // stands (the server enforces this too) — reset first.
+                  disabled={pinChosen && isSelected}
+                  className="text-muted hover:text-danger p-1 mt-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-default disabled:hover:text-muted"
                   aria-label="Remove choice"
+                  title={
+                    pinChosen && isSelected
+                      ? "This is the approved choice — reset the selection first, then remove it"
+                      : undefined
+                  }
                 >
                   <X className="h-4 w-4" />
                 </button>

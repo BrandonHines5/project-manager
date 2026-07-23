@@ -9,7 +9,10 @@ import { getActiveOrgId } from "@/lib/org"
 import { assertActiveOrgWritable } from "@/lib/sandbox"
 import { addDays, formatCurrency, formatDate, todayISO } from "@/lib/utils"
 import { sendEmail, appUrl } from "@/lib/email"
-import { isChannelEnabled } from "@/lib/notifications/preferences"
+import {
+  isChannelEnabled,
+  mutedProfileIdsForProject,
+} from "@/lib/notifications/preferences"
 import { sendDashboardWebhook } from "@/lib/dashboard"
 import { notifyCommentPosted } from "@/lib/comms/notify"
 import type { TablesInsert, TablesUpdate } from "@/lib/db/types"
@@ -240,13 +243,15 @@ export async function saveDecision(input: DecisionInputT) {
   // earlier code path). Used to decide whether this save crosses an
   // approval / pending_client boundary.
   let prevStatus: string | null = null
+  let prevSelectedChoiceId: string | null = null
   if (id) {
     const { data: cur } = await supabase
       .from("decisions")
-      .select("status")
+      .select("status, selected_choice_id")
       .eq("id", id)
       .maybeSingle()
     prevStatus = cur?.status ?? null
+    prevSelectedChoiceId = cur?.selected_choice_id ?? null
   }
   const wasApproved = prevStatus === "approved"
   const newlyApproved = parsed.status === "approved" && !wasApproved
@@ -539,6 +544,18 @@ export async function saveDecision(input: DecisionInputT) {
     const choiceIdsToDelete = (existingChoices ?? [])
       .map((c) => c.id)
       .filter((cid) => !keepChoiceIds.has(cid))
+    // The approved choice can't be deleted out from under an approval — the
+    // decision's cost and the client's sign-off point at it. Reset first
+    // (which clears the approval + selected_choice_id), then remove it.
+    if (
+      wasApproved &&
+      prevSelectedChoiceId &&
+      choiceIdsToDelete.includes(prevSelectedChoiceId)
+    ) {
+      throw new Error(
+        "That choice is the approved one — reset the selection first, then remove it."
+      )
+    }
     if (choiceIdsToDelete.length) {
       const { error: dchDelErr } = await supabase
         .from("decision_choices")
@@ -736,6 +753,7 @@ export async function saveDecision(input: DecisionInputT) {
             title: `Assigned: ${parsed.title}`,
             body: `You were assigned to a ${parsed.kind === "selection" ? "selection" : "change order"}`,
             link_url: `/projects/${parsed.project_id}/decisions?open=${id}`,
+            project_id: parsed.project_id,
           }))
         )
         if (notifErr) {
@@ -894,7 +912,20 @@ async function notifyClientOfDecision(
   // Communications row carries the client's profile_id — that's what lets
   // the client see their own row under RLS.
   const recipients: { profile_id: string; email: string; name: string | null }[] = []
+  // Per-job mutes (0121) apply to clients too — this is a direct email with
+  // no notifications row for the trigger to drop. The lookup MUST run on the
+  // admin client: the mutes table is owner-only RLS, so a staff session
+  // reading the clients' mutes would always see an empty set.
+  const adminForMutes = createSupabaseAdminClient()
+  const mutedClients = adminForMutes
+    ? await mutedProfileIdsForProject(
+        adminForMutes,
+        (clients ?? []).map((m) => m.profile_id),
+        projectId
+      )
+    : new Set<string>()
   for (const m of clients ?? []) {
+    if (mutedClients.has(m.profile_id)) continue
     const prof = (
       m as unknown as {
         profiles: {
@@ -981,7 +1012,7 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
        delay_days, delay_cost_per_day,
        status, due_date, approved_at, selected_choice_id,
        project_id, created_by, approved_by_client_id,
-       projects:project_id (id, name, project_number, address),
+       projects:project_id (id, name, project_number, address, org_id),
        creator:created_by (full_name, email),
        client_approver:approved_by_client_id (full_name, email),
        decision_choices!decision_choices_decision_id_fkey (id, title, description, price_delta, position),
@@ -990,7 +1021,7 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
        decision_followup_templates!decision_followup_templates_decision_id_fkey (title, due_offset_days, notes, position,
          assignee:assignee_profile_id (full_name),
          company:assignee_company_id (name)),
-       decision_attachments (file_name, caption)`
+       decision_attachments (file_name, caption, choice_id)`
     )
     .eq("id", decisionId)
     .maybeSingle()
@@ -1003,14 +1034,36 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
   }
   if (!decision) return
 
+  // Recipients are ONLY staff who belong to the project's organization. The
+  // admin client bypasses the org-scoped profiles RLS, and an unscoped
+  // role='staff' query here once emailed every tenant's staff (including the
+  // multi-tenant "isolation test" user) about a Hines approval.
+  const orgId = (
+    decision as { projects?: { org_id?: string | null } | null }
+  ).projects?.org_id
+  if (!orgId) {
+    console.warn(
+      `[approved-decision email] skipped — could not resolve the project's org for decision ${decisionId}`
+    )
+    return
+  }
   const { data: staff } = await admin
     .from("profiles")
-    .select("id, email")
+    .select("id, email, organization_members!inner(org_id)")
     .eq("role", "staff")
     .eq("notifications_enabled", true)
-  const staffWithEmail = (staff ?? []).filter(
-    (p): p is { id: string; email: string } => !!p.email
+    .eq("organization_members.org_id", orgId)
+  const staffWithEmailAll = (staff ?? []).flatMap((p) =>
+    p.email ? [{ id: p.id, email: p.email }] : []
   )
+  // Per-job mutes (0121): this email sends without a notifications row, so
+  // the central trigger can't drop it — filter here.
+  const mutedIds = await mutedProfileIdsForProject(
+    admin,
+    staffWithEmailAll.map((p) => p.id),
+    (decision as { project_id?: string }).project_id ?? null
+  )
+  const staffWithEmail = staffWithEmailAll.filter((p) => !mutedIds.has(p.id))
   // Honor each staffer's client_decisions/email preference.
   const gated = await Promise.all(
     staffWithEmail.map(async (p) =>
@@ -1059,7 +1112,11 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
     assignee: { full_name: string | null } | null
     company: { name: string } | null
   }
-  type Attachment = { file_name: string; caption: string | null }
+  type Attachment = {
+    file_name: string
+    caption: string | null
+    choice_id: string | null
+  }
   type Person = { full_name: string | null; email: string | null } | null
 
   // Build + send inside a try so a formatting edge case in the rich HTML can
@@ -1101,6 +1158,19 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
     d.creator?.full_name || d.creator?.email || "(unknown)"
 
   const choices = [...d.decision_choices].sort((a, b) => a.position - b.position)
+  // Only the approved choice goes in the email — staff don't need the losing
+  // options. Legacy approved selections with no recorded pick fall back to
+  // the full list (with the old SELECTED tag) so information isn't lost.
+  const selectedChoice =
+    choices.find((c) => c.id === d.selected_choice_id) ?? null
+  // Same trim for attachments: keep decision-level files plus the approved
+  // choice's photos; the non-approved choices' photos are noise once a pick
+  // is made.
+  const attachments = selectedChoice
+    ? d.decision_attachments.filter(
+        (a) => a.choice_id == null || a.choice_id === d.selected_choice_id
+      )
+    : d.decision_attachments
   const costItems = [...d.decision_cost_items].sort(
     (a, b) => a.position - b.position
   )
@@ -1141,7 +1211,17 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
     textLines.push("Description:")
     textLines.push(d.description)
   }
-  if (d.kind === "selection" && choices.length) {
+  if (d.kind === "selection" && selectedChoice) {
+    const price =
+      selectedChoice.price_delta != null
+        ? ` (${formatCurrency(selectedChoice.price_delta)})`
+        : ""
+    textLines.push("")
+    textLines.push(`Approved choice: ${selectedChoice.title}${price}`)
+    if (selectedChoice.description) {
+      textLines.push(`  ${selectedChoice.description}`)
+    }
+  } else if (d.kind === "selection" && choices.length) {
     textLines.push("")
     textLines.push("Choices:")
     for (const c of choices) {
@@ -1178,10 +1258,10 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
       if (f.notes) textLines.push(`      ${f.notes}`)
     }
   }
-  if (d.decision_attachments.length) {
+  if (attachments.length) {
     textLines.push("")
     textLines.push("Attachments:")
-    for (const a of d.decision_attachments) {
+    for (const a of attachments) {
       const cap = a.caption ? ` — ${a.caption}` : ""
       textLines.push(`  - ${a.file_name}${cap}`)
     }
@@ -1219,7 +1299,23 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
           d.description
         )}</div>`
       : "",
-    d.kind === "selection" && choices.length
+    d.kind === "selection" && selectedChoice
+      ? `<h3 style="margin:16px 0 4px;font-size:14px">Approved choice</h3><div style="margin:4px 0"><strong style="color:#0a7d32">${escapeHtml(
+          selectedChoice.title
+        )}</strong>${
+          selectedChoice.price_delta != null
+            ? ` <span style="color:#555">(${escapeHtml(
+                formatCurrency(selectedChoice.price_delta)
+              )})</span>`
+            : ""
+        }${
+          selectedChoice.description
+            ? `<div style="color:#555;font-size:13px">${escapeHtml(
+                selectedChoice.description
+              )}</div>`
+            : ""
+        }</div>`
+      : d.kind === "selection" && choices.length
       ? `<h3 style="margin:16px 0 4px;font-size:14px">Choices</h3><ul style="margin:0;padding-left:20px">${choices
           .map((c) => {
             const isSel = c.id === d.selected_choice_id
@@ -1280,8 +1376,8 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
           })
           .join("")}</ul>`
       : "",
-    d.decision_attachments.length
-      ? `<h3 style="margin:16px 0 4px;font-size:14px">Attachments</h3><ul style="margin:0;padding-left:20px">${d.decision_attachments
+    attachments.length
+      ? `<h3 style="margin:16px 0 4px;font-size:14px">Attachments</h3><ul style="margin:0;padding-left:20px">${attachments
           .map((a) => {
             const cap = a.caption
               ? ` <span style="color:#555">— ${escapeHtml(a.caption)}</span>`
@@ -1556,6 +1652,7 @@ async function materializeFollowups(
       title: `Follow-up: ${t.title}`,
       body: "Auto-created from an approved decision",
       link_url: `/projects/${projectId}/schedule`,
+      project_id: projectId,
     }))
   if (profileAssignees.length) {
     const { error: nErr } = await supabase
@@ -1576,6 +1673,20 @@ export async function deleteDecision({
 }) {
   await requireStaff()
   const supabase = await createSupabaseServerClient()
+  // An approved decision is a financial record — its cost flows to billing
+  // and its follow-ups may have materialized. Deleting one outright is
+  // almost always a mistake, so require an explicit Reset (which undoes the
+  // approval and removes the auto-created follow-ups) first.
+  const { data: cur } = await supabase
+    .from("decisions")
+    .select("status, kind")
+    .eq("id", id)
+    .maybeSingle()
+  if (cur?.status === "approved") {
+    throw new Error(
+      `This ${cur.kind === "selection" ? "selection" : "change order"} is approved — use Reset to undo the approval first, then delete.`
+    )
+  }
   // Attachment Storage objects are NOT removed here: the delete is captured
   // into deleted_items (0088) so it can be restored from the History tab, and
   // the trash purge removes the objects when the entry expires unrestored.
@@ -1950,6 +2061,7 @@ export async function postComment({
       staffLink: link,
       counterpartyProfileIds: counterpartyIds,
       counterpartyLink: link,
+      projectId: project_id,
     })
   } catch (e) {
     console.warn("decision comment notification failed:", e)
@@ -2119,11 +2231,33 @@ export async function requestDueDateReset(input: {
       decision.kind === "selection" ? "Selection" : "Change order"
     const title = `${kindLabel} #${decision.number}: due-date reset requested`
     const link = `/projects/${project_id}/decisions?open=${decision_id}`
-    const { data: staff } = await admin
-      .from("profiles")
-      .select("id, email, notifications_enabled")
-      .eq("role", "staff")
-    const recipients = (staff ?? []).filter((s) => s.notifications_enabled)
+    // Same org scoping as the approval email: only this project's org's
+    // staff — the admin client bypasses org RLS, and an unresolvable org
+    // fails CLOSED to nobody.
+    const { data: proj } = await admin
+      .from("projects")
+      .select("org_id")
+      .eq("id", project_id)
+      .maybeSingle()
+    const { data: staff } = proj?.org_id
+      ? await admin
+          .from("profiles")
+          .select(
+            "id, email, notifications_enabled, organization_members!inner(org_id)"
+          )
+          .eq("role", "staff")
+          .eq("organization_members.org_id", proj.org_id)
+      : { data: [] }
+    // Per-job mutes (0121): the in-app rows are dropped by the trigger, but
+    // the email below has no notifications row — filter both here.
+    const mutedForJob = await mutedProfileIdsForProject(
+      admin,
+      (staff ?? []).map((s) => s.id),
+      project_id
+    )
+    const recipients = (staff ?? []).filter(
+      (s) => s.notifications_enabled && !mutedForJob.has(s.id)
+    )
     if (recipients.length) {
       const { error: nErr } = await admin.from("notifications").insert(
         recipients.map((s) => ({
@@ -2132,6 +2266,7 @@ export async function requestDueDateReset(input: {
           title,
           body: `${profile.full_name ?? "A client"} asked to extend the due date on "${decision.title}".`,
           link_url: link,
+          project_id,
         }))
       )
       if (nErr) {

@@ -24,6 +24,15 @@ export async function notifyCommentPosted(opts: {
   /** Link + recipients used when a staff member authored the comment. */
   counterpartyProfileIds?: string[]
   counterpartyLink?: string | null
+  /**
+   * The project the commented entity belongs to. REQUIRED so a future caller
+   * can't reintroduce an unscoped all-staff fan-out by omission — the staff
+   * fan-out is limited to members of the project's organization (the admin
+   * client bypasses org RLS). Resolution failure fails CLOSED to nobody.
+   * Pass `null` explicitly only for entities with genuinely no project
+   * (those notify all staff, the legacy single-tenant behavior).
+   */
+  projectId: string | null
 }): Promise<void> {
   try {
     const admin = createSupabaseAdminClient()
@@ -34,6 +43,30 @@ export async function notifyCommentPosted(opts: {
     if (opts.authorIsStaff) {
       recipientIds = opts.counterpartyProfileIds ?? []
       linkUrl = opts.counterpartyLink ?? opts.staffLink
+    } else if (opts.projectId) {
+      const { data: proj } = await admin
+        .from("projects")
+        .select("org_id")
+        .eq("id", opts.projectId)
+        .maybeSingle()
+      const orgId = proj?.org_id
+      if (!orgId) {
+        console.warn(
+          "[comms] could not resolve the project's org — skipping staff fan-out"
+        )
+        return
+      }
+      const { data: staff, error } = await admin
+        .from("profiles")
+        .select("id, organization_members!inner(org_id)")
+        .eq("role", "staff")
+        .eq("organization_members.org_id", orgId)
+      if (error) {
+        console.warn("[comms] staff lookup failed:", error.message)
+        return
+      }
+      recipientIds = (staff ?? []).map((p) => p.id)
+      linkUrl = opts.staffLink
     } else {
       const { data: staff, error } = await admin
         .from("profiles")
@@ -65,6 +98,8 @@ export async function notifyCommentPosted(opts: {
         title,
         body: `${opts.authorName}: ${preview}`,
         link_url: linkUrl,
+        // Lets the notifications trigger honor per-job mutes (0121).
+        project_id: opts.projectId,
       }))
     )
     if (nErr) console.warn("[comms] notification insert failed:", nErr.message)
@@ -138,6 +173,8 @@ export async function notifyStaffOfInbound(opts: {
         link_url: opts.projectId
           ? `/projects/${opts.projectId}/communications`
           : "/communications",
+        // Lets the notifications trigger honor per-job mutes (0121).
+        project_id: opts.projectId ?? null,
       }))
     )
     if (error) console.warn("[comms] inbound notification failed:", error.message)

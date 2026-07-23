@@ -1054,6 +1054,7 @@ export async function postPoCommentStaff({
         staffLink: `/projects/${project_id}/purchase-orders?open=${purchase_order_id}`,
         counterpartyProfileIds: (tradeProfiles ?? []).map((p) => p.id),
         counterpartyLink: "/my-pos",
+        projectId: project_id,
       })
     } catch (e) {
       console.warn("[postPoCommentStaff] notification failed:", e)

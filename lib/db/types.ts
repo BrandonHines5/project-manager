@@ -1753,6 +1753,39 @@ export type Database = {
           },
         ]
       }
+      notification_project_mutes: {
+        Row: {
+          created_at: string
+          profile_id: string
+          project_id: string
+        }
+        Insert: {
+          created_at?: string
+          profile_id: string
+          project_id: string
+        }
+        Update: {
+          created_at?: string
+          profile_id?: string
+          project_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notification_project_mutes_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notification_project_mutes_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       notifications: {
         Row: {
           body: string | null
@@ -1760,6 +1793,7 @@ export type Database = {
           email_sent_at: string | null
           id: string
           link_url: string | null
+          project_id: string | null
           read_at: string | null
           recipient_id: string
           title: string
@@ -1771,6 +1805,7 @@ export type Database = {
           email_sent_at?: string | null
           id?: string
           link_url?: string | null
+          project_id?: string | null
           read_at?: string | null
           recipient_id: string
           title: string
@@ -1782,6 +1817,7 @@ export type Database = {
           email_sent_at?: string | null
           id?: string
           link_url?: string | null
+          project_id?: string | null
           read_at?: string | null
           recipient_id?: string
           title?: string

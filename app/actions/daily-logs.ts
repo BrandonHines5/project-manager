@@ -477,6 +477,7 @@ export async function postDailyLogComment(input: {
       staffLink: link,
       counterpartyProfileIds: counterpartyIds,
       counterpartyLink: link,
+      projectId: parsed.project_id,
     })
   } catch (e) {
     console.warn("daily log comment notification failed:", e)

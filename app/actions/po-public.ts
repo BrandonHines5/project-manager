@@ -11,6 +11,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { ACCESS_TOKEN_RE } from "@/lib/tokens"
 import { sendEmail, appUrl } from "@/lib/email"
 import { notifyCommentPosted } from "@/lib/comms/notify"
+import { mutedProfileIdsForProject } from "@/lib/notifications/preferences"
 
 const UNAVAILABLE =
   "This link is unavailable right now — please try again later."
@@ -26,7 +27,7 @@ type PoCtx = {
   status: "draft" | "released" | "approved" | "declined" | "void"
   project_id: string
   companies: { name: string } | null
-  projects: { name: string } | null
+  projects: { name: string; org_id: string | null } | null
 }
 
 function parseOrThrow<T>(schema: z.ZodType<T>, input: unknown): T {
@@ -52,7 +53,7 @@ async function poForToken(token: string) {
     .select(
       `id, number, custom_number, title, status, project_id,
        companies:company_id(name),
-       projects:project_id(name)`
+       projects:project_id(name, org_id)`
     )
     .eq("token", token)
     .maybeSingle()
@@ -65,9 +66,13 @@ async function poForToken(token: string) {
   return { admin, po }
 }
 
-/** Same staff fan-out pattern as bid-public.ts: in-app rows + one email. */
+/** Same staff fan-out pattern as bid-public.ts: in-app rows + one email.
+ * Recipients are limited to staff who belong to the PO's org — the admin
+ * client bypasses org RLS, so an unscoped all-staff query would notify every
+ * tenant. A missing org fails CLOSED to nobody. */
 async function notifyStaff(
   admin: AdminClient,
+  orgId: string | null,
   opts: {
     type: string
     title: string
@@ -75,28 +80,45 @@ async function notifyStaff(
     linkUrl: string
     emailSubject: string
     emailText: string
+    projectId: string
   }
 ) {
+  if (!orgId) {
+    console.warn("[po-public] no org for PO — skipping staff fan-out")
+    return
+  }
   const { data: staff, error } = await admin
     .from("profiles")
-    .select("id, email, notifications_enabled")
+    .select("id, email, notifications_enabled, organization_members!inner(org_id)")
     .eq("role", "staff")
+    .eq("organization_members.org_id", orgId)
   if (error) {
     console.warn("[po-public] staff lookup failed:", error.message)
     return
   }
-  const rows = (staff ?? []).map((p) => ({
+  // Per-job mutes: the trigger already drops in-app rows, but the email
+  // below sends without a notifications row, so filter here too.
+  const muted = await mutedProfileIdsForProject(
+    admin,
+    (staff ?? []).map((p) => p.id),
+    opts.projectId
+  )
+  const active = (staff ?? []).filter((p) => !muted.has(p.id))
+  const rows = active.map((p) => ({
     recipient_id: p.id,
     type: opts.type,
     title: opts.title,
     body: opts.body,
     link_url: opts.linkUrl,
+    // Lets the notifications trigger honor per-job mutes (0121); the email
+    // list below applies the same mute via mutedProfileIdsForProject.
+    project_id: opts.projectId,
   }))
   if (rows.length) {
     const { error: nErr } = await admin.from("notifications").insert(rows)
     if (nErr) console.warn("[po-public] notifications insert failed:", nErr.message)
   }
-  const emails = (staff ?? [])
+  const emails = active
     .filter((p) => p.notifications_enabled && p.email)
     .map((p) => p.email as string)
   if (emails.length) {
@@ -156,13 +178,14 @@ export async function approvePoByToken(input: {
   try {
     const companyName = po.companies?.name ?? "The subcontractor"
     const projectName = po.projects?.name ?? "a project"
-    await notifyStaff(admin, {
+    await notifyStaff(admin, po.projects?.org_id ?? null, {
       type: "po_approved",
       title: `PO approved: PO-${po.number} ${po.title}`,
       body: `${companyName} approved with signature`,
       linkUrl: `/projects/${po.project_id}/purchase-orders`,
       emailSubject: `PO approved: PO-${po.number} ${po.title} — ${projectName}`,
       emailText: `${companyName} approved purchase order PO-${po.number} "${po.title}" on ${projectName}.\n\nSigned: ${parsed.signature_name}\n\nView it here: ${appUrl(`/projects/${po.project_id}/purchase-orders`)}`,
+      projectId: po.project_id,
     })
   } catch (e) {
     console.warn("[approvePoByToken] staff notify failed (non-fatal):", e)
@@ -211,13 +234,14 @@ export async function declinePoByToken(input: { token: string; reason: string })
   try {
     const companyName = po.companies?.name ?? "The subcontractor"
     const projectName = po.projects?.name ?? "a project"
-    await notifyStaff(admin, {
+    await notifyStaff(admin, po.projects?.org_id ?? null, {
       type: "po_declined",
       title: `PO declined: PO-${po.number} ${po.title}`,
       body: `${companyName} declined the purchase order`,
       linkUrl: `/projects/${po.project_id}/purchase-orders`,
       emailSubject: `PO declined: PO-${po.number} ${po.title} — ${projectName}`,
       emailText: `${companyName} declined purchase order PO-${po.number} "${po.title}" on ${projectName}.\n\nReason: ${parsed.reason}\n\nView it here: ${appUrl(`/projects/${po.project_id}/purchase-orders`)}`,
+      projectId: po.project_id,
     })
   } catch (e) {
     console.warn("[declinePoByToken] staff notify failed (non-fatal):", e)
@@ -250,11 +274,20 @@ export async function postPoCommentPublic(input: { token: string; body: string }
 
   const staffLink = `/projects/${po.project_id}/purchase-orders?open=${po.id}`
   try {
-    const { data: staff } = await admin
-      .from("profiles")
-      .select("email, notifications_enabled")
-      .eq("role", "staff")
-      .eq("notifications_enabled", true)
+    // Org-scoped like every other staff fan-out in this file — the admin
+    // client bypasses org RLS, so an unscoped query would email every
+    // tenant's staff. Missing org fails closed to nobody.
+    const orgId = po.projects?.org_id ?? null
+    const { data: staff } = orgId
+      ? await admin
+          .from("profiles")
+          .select(
+            "email, notifications_enabled, organization_members!inner(org_id)"
+          )
+          .eq("role", "staff")
+          .eq("notifications_enabled", true)
+          .eq("organization_members.org_id", orgId)
+      : { data: [] }
     const emails = (staff ?? [])
       .map((p) => p.email)
       .filter((e): e is string => !!e)
@@ -275,6 +308,7 @@ export async function postPoCommentPublic(input: { token: string; body: string }
     authorIsStaff: false,
     body: parsed.body.trim(),
     staffLink,
+    projectId: po.project_id,
   })
 
   return { ok: true as const }

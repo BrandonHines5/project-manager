@@ -1081,6 +1081,7 @@ export async function postBidCommentStaff({
         staffLink: `/projects/${project_id}/bids?open=${info.bid_package_id}&recipient=${bid_recipient_id}`,
         counterpartyProfileIds: (tradeProfiles ?? []).map((p) => p.id),
         counterpartyLink: "/my-bids",
+        projectId: project_id,
       })
     } catch (e) {
       console.warn("[postBidCommentStaff] notification failed:", e)

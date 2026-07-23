@@ -18,6 +18,24 @@ export const WHATS_NEW: WhatsNewEntry[] = [
   {
     date: "2026-07-23",
     title:
+      "Approved selections and change orders can no longer be deleted (or their approved choice removed) without resetting the approval first.",
+    kind: "improvement",
+  },
+  {
+    date: "2026-07-23",
+    title:
+      "Mute notifications per job — the bell on a job's header or Settings → Notifications turns off that job's alerts just for you.",
+    kind: "feature",
+  },
+  {
+    date: "2026-07-23",
+    title:
+      "Selection-approval emails now show only the approved choice (and its photos), and notifications about a job only go to that organization's own team.",
+    kind: "fix",
+  },
+  {
+    date: "2026-07-23",
+    title:
       "Initiate Utilities: each request now shows the date it was submitted, and a search box filters requests by job, address, or status.",
     kind: "improvement",
   },

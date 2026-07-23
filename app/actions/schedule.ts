@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { requireStaff, requireSession } from "@/lib/auth"
 import { assertActiveOrgWritable } from "@/lib/sandbox"
 import {
@@ -16,7 +17,10 @@ import type { TablesUpdate } from "@/lib/db/types"
 import { sendEmail, appUrl } from "@/lib/email"
 import { sendQuoSms, normalizeE164 } from "@/lib/quo"
 import { notifyCommentPosted } from "@/lib/comms/notify"
-import { isChannelEnabled } from "@/lib/notifications/preferences"
+import {
+  isChannelEnabled,
+  mutedProfileIdsForProject,
+} from "@/lib/notifications/preferences"
 import { normalizeTag } from "@/lib/template-tags"
 
 // Permissive schema: accept anything reasonable and normalize inside the
@@ -712,6 +716,8 @@ async function notifyScheduleAssignees(
           title: `Assigned: ${title}`,
           body: "You were assigned to a schedule item",
           link_url: `/projects/${projectId}/schedule`,
+          // Lets the notifications trigger honor per-job mutes (0121).
+          project_id: projectId,
         }))
       )
       .select("id")
@@ -739,9 +745,22 @@ async function notifyScheduleAssignees(
         .from("profiles")
         .select("id, email, email_digest_pref, notifications_enabled")
         .in("id", profileIds)
+      // Per-job mutes (0121): the in-app rows above are trigger-covered;
+      // this immediate email is not. Owner-only RLS on the mutes table means
+      // the ADMIN client is required to see the assignees' mutes — the
+      // session client would always read an empty set.
+      const adminForMutes = createSupabaseAdminClient()
+      const mutedForJob = adminForMutes
+        ? await mutedProfileIdsForProject(
+            adminForMutes,
+            (profs ?? []).map((p) => p.id),
+            projectId
+          )
+        : new Set<string>()
       for (const p of profs ?? []) {
         if (
           p.email &&
+          !mutedForJob.has(p.id) &&
           p.email_digest_pref === "immediate" &&
           p.notifications_enabled &&
           (await isChannelEnabled(
@@ -1615,6 +1634,7 @@ export async function postScheduleItemComment(input: {
       // Trades can open the project schedule page (only clients can't) —
       // same deep link works for both sides.
       counterpartyLink: `/projects/${parsed.project_id}/schedule?open=${parsed.schedule_item_id}`,
+      projectId: parsed.project_id,
     })
   } catch (e) {
     console.warn("schedule comment notification failed:", e)

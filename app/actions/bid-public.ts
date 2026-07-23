@@ -16,6 +16,7 @@ import { ACCESS_TOKEN_RE } from "@/lib/tokens"
 import { sendEmail, appUrl } from "@/lib/email"
 import { formatCurrency } from "@/lib/utils"
 import { notifyCommentPosted } from "@/lib/comms/notify"
+import { mutedProfileIdsForProject } from "@/lib/notifications/preferences"
 
 const UNAVAILABLE =
   "This link is unavailable right now — please try again later."
@@ -34,7 +35,7 @@ type RecipientCtx = {
     title: string
     status: "draft" | "sent" | "awarded" | "closed"
     flat_fee: boolean
-    projects: { name: string } | null
+    projects: { name: string; org_id: string | null } | null
   } | null
   companies: { name: string } | null
 }
@@ -62,7 +63,7 @@ async function recipientForToken(token: string) {
     .select(
       `id, status, notes, flat_total,
        bid_packages:bid_package_id(id, project_id, title, status, flat_fee,
-         projects:project_id(name)),
+         projects:project_id(name, org_id)),
        companies:company_id(name)`
     )
     .eq("token", token)
@@ -84,6 +85,7 @@ async function recipientForToken(token: string) {
  */
 async function notifyStaff(
   admin: AdminClient,
+  orgId: string | null,
   opts: {
     type: string
     title: string
@@ -91,28 +93,48 @@ async function notifyStaff(
     linkUrl: string
     emailSubject: string
     emailText: string
+    projectId: string
   }
 ) {
+  // Only staff in the package's org — the admin client bypasses org RLS, so
+  // an unscoped all-staff query would notify every tenant. A missing org
+  // fails CLOSED to nobody.
+  if (!orgId) {
+    console.warn("[bid-public] no org for package — skipping staff fan-out")
+    return
+  }
   const { data: staff, error } = await admin
     .from("profiles")
-    .select("id, email, notifications_enabled")
+    .select("id, email, notifications_enabled, organization_members!inner(org_id)")
     .eq("role", "staff")
+    .eq("organization_members.org_id", orgId)
   if (error) {
     console.warn("[bid-public] staff lookup failed:", error.message)
     return
   }
-  const rows = (staff ?? []).map((p) => ({
+  // Per-job mutes: the trigger already drops in-app rows, but the email
+  // below sends without a notifications row, so filter here too.
+  const muted = await mutedProfileIdsForProject(
+    admin,
+    (staff ?? []).map((p) => p.id),
+    opts.projectId
+  )
+  const active = (staff ?? []).filter((p) => !muted.has(p.id))
+  const rows = active.map((p) => ({
     recipient_id: p.id,
     type: opts.type,
     title: opts.title,
     body: opts.body,
     link_url: opts.linkUrl,
+    // Lets the notifications trigger honor per-job mutes (0121); the email
+    // list below applies the same mute via mutedProfileIdsForProject.
+    project_id: opts.projectId,
   }))
   if (rows.length) {
     const { error: nErr } = await admin.from("notifications").insert(rows)
     if (nErr) console.warn("[bid-public] notifications insert failed:", nErr.message)
   }
-  const emails = (staff ?? [])
+  const emails = active
     .filter((p) => p.notifications_enabled && p.email)
     .map((p) => p.email as string)
   if (emails.length) {
@@ -277,13 +299,14 @@ export async function submitBidResponse(input: {
   try {
     const companyName = rec.companies?.name ?? "A subcontractor"
     const projectName = pkg.projects?.name ?? "a project"
-    await notifyStaff(admin, {
+    await notifyStaff(admin, pkg.projects?.org_id ?? null, {
       type: "bid_submitted",
       title: `Bid received: ${pkg.title}`,
       body: `${companyName} submitted a bid`,
       linkUrl: `/projects/${pkg.project_id}/bids`,
       emailSubject: `Bid received: ${pkg.title} — ${projectName}`,
       emailText: `${companyName} submitted a bid of ${formatCurrency(total)} for "${pkg.title}" on ${projectName}.\n\nReview it here: ${appUrl(`/projects/${pkg.project_id}/bids`)}`,
+      projectId: pkg.project_id,
     })
   } catch (e) {
     console.warn("[submitBidResponse] staff notify failed (non-fatal):", e)
@@ -329,13 +352,14 @@ export async function declineBid(input: { token: string; reason?: string | null 
   try {
     const companyName = rec.companies?.name ?? "A subcontractor"
     const projectName = pkg.projects?.name ?? "a project"
-    await notifyStaff(admin, {
+    await notifyStaff(admin, pkg.projects?.org_id ?? null, {
       type: "bid_declined",
       title: `Bid declined: ${pkg.title}`,
       body: `${companyName} declined to bid`,
       linkUrl: `/projects/${pkg.project_id}/bids`,
       emailSubject: `Bid declined: ${pkg.title} — ${projectName}`,
       emailText: `${companyName} declined to bid on "${pkg.title}" at ${projectName}.${reason ? `\n\nReason: ${reason}` : ""}\n\nView the package: ${appUrl(`/projects/${pkg.project_id}/bids`)}`,
+      projectId: pkg.project_id,
     })
   } catch (e) {
     console.warn("[declineBid] staff notify failed (non-fatal):", e)
@@ -369,11 +393,20 @@ export async function postBidCommentPublic(input: { token: string; body: string 
 
   const staffLink = `/projects/${pkg.project_id}/bids?open=${pkg.id}&recipient=${rec.id}`
   try {
-    const { data: staff } = await admin
-      .from("profiles")
-      .select("email, notifications_enabled")
-      .eq("role", "staff")
-      .eq("notifications_enabled", true)
+    // Org-scoped like every other staff fan-out in this file — the admin
+    // client bypasses org RLS, so an unscoped query would email every
+    // tenant's staff. Missing org fails closed to nobody.
+    const orgId = pkg.projects?.org_id ?? null
+    const { data: staff } = orgId
+      ? await admin
+          .from("profiles")
+          .select(
+            "email, notifications_enabled, organization_members!inner(org_id)"
+          )
+          .eq("role", "staff")
+          .eq("notifications_enabled", true)
+          .eq("organization_members.org_id", orgId)
+      : { data: [] }
     const emails = (staff ?? [])
       .map((p) => p.email)
       .filter((e): e is string => !!e)
@@ -396,6 +429,7 @@ export async function postBidCommentPublic(input: { token: string; body: string 
     authorIsStaff: false,
     body: parsed.body.trim(),
     staffLink,
+    projectId: pkg.project_id,
   })
 
   return { ok: true as const }

@@ -233,6 +233,8 @@ async function notifyStaffOfPayment(opts: {
         title,
         body,
         link_url: `/projects/${opts.projectId}/invoices`,
+        // Lets the notifications trigger honor per-job mutes (0121).
+        project_id: opts.projectId,
       }))
     )
     if (error) console.warn("[qbo webhook] notification insert failed:", error.message)

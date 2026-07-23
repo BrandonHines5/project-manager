@@ -72,6 +72,38 @@ type AnySupabase = SupabaseClient<Database>
  * (e.g. the table not existing yet on a preview deploy) so a preference lookup
  * can never silently swallow a real notification.
  */
+/**
+ * Which of these profiles muted this project (Settings → Notifications, or
+ * the bell on the job header). The central notifications-table trigger
+ * already drops in-app rows for muted (recipient, project) pairs; this is
+ * the app-layer twin for the DIRECT email senders, which send without
+ * writing a notifications row. Fails open (empty set) like isChannelEnabled
+ * — a lookup error must never swallow real notifications. No project = no
+ * mutes apply.
+ *
+ * IMPORTANT: the mutes table is owner-only RLS, so checking OTHER users'
+ * mutes requires the ADMIN client — an RLS-scoped session client silently
+ * returns an empty set for anyone but the caller.
+ */
+export async function mutedProfileIdsForProject(
+  supabase: AnySupabase,
+  profileIds: string[],
+  projectId: string | null | undefined
+): Promise<Set<string>> {
+  if (!projectId || profileIds.length === 0) return new Set()
+  try {
+    const { data, error } = await supabase
+      .from("notification_project_mutes")
+      .select("profile_id")
+      .eq("project_id", projectId)
+      .in("profile_id", profileIds)
+    if (error) return new Set()
+    return new Set((data ?? []).map((m) => m.profile_id))
+  } catch {
+    return new Set()
+  }
+}
+
 export async function isChannelEnabled(
   supabase: AnySupabase,
   owner: { profileId?: string | null; companyId?: string | null },

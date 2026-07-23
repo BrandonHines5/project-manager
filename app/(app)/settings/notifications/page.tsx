@@ -1,6 +1,7 @@
 import { requireSession } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { NotificationsSettingsClient } from "./notifications-settings-client"
+import { MutedJobsSection } from "@/components/settings/muted-jobs-section"
 
 export const metadata = { title: "Notification settings — BuildFox" }
 export const dynamic = "force-dynamic"
@@ -53,16 +54,52 @@ export default async function NotificationSettingsPage() {
     prefs[`${ownerKey}|${r.category}|${r.channel}`] = r.enabled
   }
 
+  // Per-job mutes (mine only — muting is personal) + the jobs I can see, for
+  // the "Mute a job…" picker. RLS scopes the project list to the caller.
+  const [{ data: muteRows }, { data: myProjects }] = await Promise.all([
+    supabase
+      .from("notification_project_mutes")
+      .select("project_id, projects:project_id(name, project_number)")
+      .eq("profile_id", me.id),
+    supabase
+      .from("projects")
+      .select("id, name, project_number")
+      .eq("is_template", false)
+      .order("project_number", { ascending: false }),
+  ])
+  const mutedJobs = (muteRows ?? []).map((m) => {
+    const p = m.projects as unknown as {
+      name: string
+      project_number: string
+    } | null
+    return {
+      project_id: m.project_id,
+      label: p ? `${p.project_number} — ${p.name}` : "(unknown job)",
+    }
+  })
+  const mutedIds = new Set(mutedJobs.map((m) => m.project_id))
+  const muteOptions = (myProjects ?? [])
+    .filter((p) => !mutedIds.has(p.id))
+    .map((p) => ({
+      value: p.id,
+      label: `${p.project_number} — ${p.name}`,
+    }))
+
   return (
-    <NotificationsSettingsClient
-      me={{
-        id: me.id,
-        name: me.full_name || me.email || "You",
-        role: me.role,
-      }}
-      profiles={profiles}
-      companies={companies}
-      initialPrefs={prefs}
-    />
+    <>
+      <NotificationsSettingsClient
+        me={{
+          id: me.id,
+          name: me.full_name || me.email || "You",
+          role: me.role,
+        }}
+        profiles={profiles}
+        companies={companies}
+        initialPrefs={prefs}
+      />
+      <div className="max-w-3xl mx-auto px-4 md:px-6 pb-6">
+        <MutedJobsSection muted={mutedJobs} options={muteOptions} />
+      </div>
+    </>
   )
 }
