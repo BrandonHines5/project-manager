@@ -6,6 +6,8 @@ import { requireSession } from "@/lib/auth"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { getOrgIntegration, upsertOrgIntegration } from "@/lib/integrations/org"
+import { LEGACY_ORG_ID, getActiveOrgId } from "@/lib/org"
+import { assertActiveOrgWritable, TrialExpiredError } from "@/lib/sandbox"
 import type { Json } from "@/lib/db/types"
 
 /**
@@ -138,7 +140,7 @@ function nextBrand(
 export async function saveOrgSettings(
   input: SaveOrgSettingsInput
 ): Promise<{ ok: boolean; error?: string }> {
-  await requireSession()
+  const profile = await requireSession()
   const parsed = SaveOrgSettingsSchema.safeParse(input)
   if (!parsed.success) {
     return {
@@ -147,7 +149,36 @@ export async function saveOrgSettings(
         parsed.error.issues[0]?.message ?? "Invalid organization settings.",
     }
   }
-  const { orgId, name, defaultBrand, commercialBrand } = parsed.data
+
+  const supabase = await createSupabaseServerClient()
+
+  // Scope the write to the caller's OWN active org — never the submitted id —
+  // and refuse it when their trial has lapsed (a frozen sandbox). RLS's
+  // orgs_admin_update stays the authorization gate; this adds the active-org
+  // match + sandbox-writability guards every mutation action is expected to run.
+  let activeOrgId: string
+  try {
+    activeOrgId = await getActiveOrgId(supabase, profile.id)
+  } catch {
+    return { ok: false, error: "Couldn't resolve your organization." }
+  }
+  if (parsed.data.orgId !== activeOrgId) {
+    return { ok: false, error: "You can only edit your active organization." }
+  }
+  try {
+    await assertActiveOrgWritable(supabase, profile.id)
+  } catch (e) {
+    if (e instanceof TrialExpiredError) return { ok: false, error: e.message }
+    return { ok: false, error: "Couldn't verify your organization's status." }
+  }
+
+  const orgId = activeOrgId
+  const { name, defaultBrand } = parsed.data
+  // Only our own company (the legacy org) runs a commercial sub-brand; drop it
+  // for any other tenant even if a forged call supplies one (the editor is
+  // hidden for them). Saving thus also clears any stray stored commercial block.
+  const commercialBrand =
+    orgId === LEGACY_ORG_ID ? parsed.data.commercialBrand : null
   for (const brand of [defaultBrand, commercialBrand]) {
     for (const path of [brand?.logoPath, brand?.iconPath]) {
       if (path && !validAssetPath(path, orgId)) {
@@ -156,7 +187,6 @@ export async function saveOrgSettings(
     }
   }
 
-  const supabase = await createSupabaseServerClient()
   const { data: org, error: orgErr } = await supabase
     .from("organizations")
     .select("settings")

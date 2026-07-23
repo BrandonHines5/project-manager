@@ -9,11 +9,13 @@ import { Input } from "@/components/ui/input"
 import { createSupabaseBrowserClient } from "@/lib/supabase/client"
 import { uploadToStorage } from "@/lib/storage/upload"
 import { saveOrgSettings, type BrandInput } from "@/app/actions/org"
+import { BUILDFOX } from "@/lib/brand"
 
-// Neutral app fallbacks parseBrandConfig fills when a slot is unset — shown
-// as the preview after "Remove" so the editor matches what will render.
-const FALLBACK_LOGO = "/brand/buildfox-mark.svg"
-const FALLBACK_ICON = "/icon-512.png"
+// Neutral app fallbacks parseBrandConfig fills when a slot is unset — shown as
+// the preview after "Remove" so the editor matches what will render. Sourced
+// from the shared BUILDFOX placeholder brand so they can't drift.
+const FALLBACK_LOGO = BUILDFOX.logo
+const FALLBACK_ICON = BUILDFOX.icon
 
 // No SVG on purpose: the bucket is public and a raw SVG opened as a top-level
 // document executes embedded script (self-XSS). Raster covers logo needs.
@@ -64,11 +66,18 @@ export function OrganizationSettingsClient({
   initialName,
   initialDefault,
   initialCommercial,
+  showCommercial = false,
 }: {
   orgId: string
   initialName: string
   initialDefault: BrandInitial
   initialCommercial: BrandInitial | null
+  /**
+   * Whether to expose the commercial sub-brand editor. Only our own company
+   * (the legacy org) runs two client-facing brands; other tenants present a
+   * single brand, so the section is hidden for them.
+   */
+  showCommercial?: boolean
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
@@ -103,7 +112,7 @@ export function OrganizationSettingsClient({
       toast.error("The default brand needs a name.")
       return
     }
-    if (commercialEnabled && !commercial.name.trim()) {
+    if (showCommercial && commercialEnabled && !commercial.name.trim()) {
       toast.error("The commercial sub-brand needs a name (or turn it off).")
       return
     }
@@ -112,7 +121,8 @@ export function OrganizationSettingsClient({
         orgId,
         name: name.trim(),
         defaultBrand: brandInput(def),
-        commercialBrand: commercialEnabled ? brandInput(commercial) : null,
+        commercialBrand:
+          showCommercial && commercialEnabled ? brandInput(commercial) : null,
       })
       if (result.ok) {
         toast.success("Organization settings saved")
@@ -155,36 +165,38 @@ export function OrganizationSettingsClient({
         onUploadingChange={trackUploading}
       />
 
-      <section className="rounded-lg border border-border bg-surface p-5 space-y-3">
-        <label className="flex items-start gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={commercialEnabled}
-            onChange={(e) => setCommercialEnabled(e.target.checked)}
-            className="mt-0.5 h-4 w-4 rounded border-border-strong accent-brand-500"
-          />
-          <span>
-            <span className="block text-sm font-medium">
-              Commercial sub-brand
+      {showCommercial && (
+        <section className="rounded-lg border border-border bg-surface p-5 space-y-3">
+          <label className="flex items-start gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={commercialEnabled}
+              onChange={(e) => setCommercialEnabled(e.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-border-strong accent-brand-500"
+            />
+            <span>
+              <span className="block text-sm font-medium">
+                Commercial sub-brand
+              </span>
+              <span className="block text-xs text-muted">
+                Commercial projects present under this brand instead of the
+                default one. Turning it off makes every project use the default
+                brand.
+              </span>
             </span>
-            <span className="block text-xs text-muted">
-              Commercial projects present under this brand instead of the
-              default one. Turning it off makes every project use the default
-              brand.
-            </span>
-          </span>
-        </label>
-        {commercialEnabled && (
-          <BrandFields
-            orgId={orgId}
-            slotPrefix="commercial"
-            draft={commercial}
-            onChange={setCommercial}
-            disabled={pending}
-            onUploadingChange={trackUploading}
-          />
-        )}
-      </section>
+          </label>
+          {commercialEnabled && (
+            <BrandFields
+              orgId={orgId}
+              slotPrefix="commercial"
+              draft={commercial}
+              onChange={setCommercial}
+              disabled={pending}
+              onUploadingChange={trackUploading}
+            />
+          )}
+        </section>
+      )}
 
       <div>
         <Button onClick={handleSave} disabled={busy}>
