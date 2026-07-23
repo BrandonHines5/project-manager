@@ -9,7 +9,10 @@ import { getActiveOrgId } from "@/lib/org"
 import { assertActiveOrgWritable } from "@/lib/sandbox"
 import { addDays, formatCurrency, formatDate, todayISO } from "@/lib/utils"
 import { sendEmail, appUrl } from "@/lib/email"
-import { isChannelEnabled } from "@/lib/notifications/preferences"
+import {
+  isChannelEnabled,
+  mutedProfileIdsForProject,
+} from "@/lib/notifications/preferences"
 import { sendDashboardWebhook } from "@/lib/dashboard"
 import { notifyCommentPosted } from "@/lib/comms/notify"
 import type { TablesInsert, TablesUpdate } from "@/lib/db/types"
@@ -736,6 +739,7 @@ export async function saveDecision(input: DecisionInputT) {
             title: `Assigned: ${parsed.title}`,
             body: `You were assigned to a ${parsed.kind === "selection" ? "selection" : "change order"}`,
             link_url: `/projects/${parsed.project_id}/decisions?open=${id}`,
+            project_id: parsed.project_id,
           }))
         )
         if (notifErr) {
@@ -894,7 +898,15 @@ async function notifyClientOfDecision(
   // Communications row carries the client's profile_id — that's what lets
   // the client see their own row under RLS.
   const recipients: { profile_id: string; email: string; name: string | null }[] = []
+  // Per-job mutes (0121) apply to clients too — this is a direct email with
+  // no notifications row for the trigger to drop.
+  const mutedClients = await mutedProfileIdsForProject(
+    supabase,
+    (clients ?? []).map((m) => m.profile_id),
+    projectId
+  )
   for (const m of clients ?? []) {
+    if (mutedClients.has(m.profile_id)) continue
     const prof = (
       m as unknown as {
         profiles: {
@@ -1022,9 +1034,17 @@ async function notifyStaffOfApprovedDecision(decisionId: string) {
     .eq("role", "staff")
     .eq("notifications_enabled", true)
     .eq("organization_members.org_id", orgId)
-  const staffWithEmail = (staff ?? []).flatMap((p) =>
+  const staffWithEmailAll = (staff ?? []).flatMap((p) =>
     p.email ? [{ id: p.id, email: p.email }] : []
   )
+  // Per-job mutes (0121): this email sends without a notifications row, so
+  // the central trigger can't drop it — filter here.
+  const mutedIds = await mutedProfileIdsForProject(
+    admin,
+    staffWithEmailAll.map((p) => p.id),
+    (decision as { project_id?: string }).project_id ?? null
+  )
+  const staffWithEmail = staffWithEmailAll.filter((p) => !mutedIds.has(p.id))
   // Honor each staffer's client_decisions/email preference.
   const gated = await Promise.all(
     staffWithEmail.map(async (p) =>
@@ -1613,6 +1633,7 @@ async function materializeFollowups(
       title: `Follow-up: ${t.title}`,
       body: "Auto-created from an approved decision",
       link_url: `/projects/${projectId}/schedule`,
+      project_id: projectId,
     }))
   if (profileAssignees.length) {
     const { error: nErr } = await supabase
@@ -2194,7 +2215,16 @@ export async function requestDueDateReset(input: {
           .eq("role", "staff")
           .eq("organization_members.org_id", proj.org_id)
       : { data: [] }
-    const recipients = (staff ?? []).filter((s) => s.notifications_enabled)
+    // Per-job mutes (0121): the in-app rows are dropped by the trigger, but
+    // the email below has no notifications row — filter both here.
+    const mutedForJob = await mutedProfileIdsForProject(
+      admin,
+      (staff ?? []).map((s) => s.id),
+      project_id
+    )
+    const recipients = (staff ?? []).filter(
+      (s) => s.notifications_enabled && !mutedForJob.has(s.id)
+    )
     if (recipients.length) {
       const { error: nErr } = await admin.from("notifications").insert(
         recipients.map((s) => ({
@@ -2203,6 +2233,7 @@ export async function requestDueDateReset(input: {
           title,
           body: `${profile.full_name ?? "A client"} asked to extend the due date on "${decision.title}".`,
           link_url: link,
+          project_id,
         }))
       )
       if (nErr) {

@@ -16,6 +16,7 @@ import { ACCESS_TOKEN_RE } from "@/lib/tokens"
 import { sendEmail, appUrl } from "@/lib/email"
 import { formatCurrency } from "@/lib/utils"
 import { notifyCommentPosted } from "@/lib/comms/notify"
+import { mutedProfileIdsForProject } from "@/lib/notifications/preferences"
 
 const UNAVAILABLE =
   "This link is unavailable right now — please try again later."
@@ -92,6 +93,7 @@ async function notifyStaff(
     linkUrl: string
     emailSubject: string
     emailText: string
+    projectId: string
   }
 ) {
   // Only staff in the package's org — the admin client bypasses org RLS, so
@@ -110,18 +112,29 @@ async function notifyStaff(
     console.warn("[bid-public] staff lookup failed:", error.message)
     return
   }
-  const rows = (staff ?? []).map((p) => ({
+  // Per-job mutes: the trigger already drops in-app rows, but the email
+  // below sends without a notifications row, so filter here too.
+  const muted = await mutedProfileIdsForProject(
+    admin,
+    (staff ?? []).map((p) => p.id),
+    opts.projectId
+  )
+  const active = (staff ?? []).filter((p) => !muted.has(p.id))
+  const rows = active.map((p) => ({
     recipient_id: p.id,
     type: opts.type,
     title: opts.title,
     body: opts.body,
     link_url: opts.linkUrl,
+    // Lets the notifications trigger honor per-job mutes (0121); the email
+    // list below applies the same mute via mutedProfileIdsForProject.
+    project_id: opts.projectId,
   }))
   if (rows.length) {
     const { error: nErr } = await admin.from("notifications").insert(rows)
     if (nErr) console.warn("[bid-public] notifications insert failed:", nErr.message)
   }
-  const emails = (staff ?? [])
+  const emails = active
     .filter((p) => p.notifications_enabled && p.email)
     .map((p) => p.email as string)
   if (emails.length) {
@@ -293,6 +306,7 @@ export async function submitBidResponse(input: {
       linkUrl: `/projects/${pkg.project_id}/bids`,
       emailSubject: `Bid received: ${pkg.title} — ${projectName}`,
       emailText: `${companyName} submitted a bid of ${formatCurrency(total)} for "${pkg.title}" on ${projectName}.\n\nReview it here: ${appUrl(`/projects/${pkg.project_id}/bids`)}`,
+      projectId: pkg.project_id,
     })
   } catch (e) {
     console.warn("[submitBidResponse] staff notify failed (non-fatal):", e)
@@ -345,6 +359,7 @@ export async function declineBid(input: { token: string; reason?: string | null 
       linkUrl: `/projects/${pkg.project_id}/bids`,
       emailSubject: `Bid declined: ${pkg.title} — ${projectName}`,
       emailText: `${companyName} declined to bid on "${pkg.title}" at ${projectName}.${reason ? `\n\nReason: ${reason}` : ""}\n\nView the package: ${appUrl(`/projects/${pkg.project_id}/bids`)}`,
+      projectId: pkg.project_id,
     })
   } catch (e) {
     console.warn("[declineBid] staff notify failed (non-fatal):", e)

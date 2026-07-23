@@ -7,6 +7,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { getActiveOrgId } from "@/lib/org"
 import { appUrl, sendEmail } from "@/lib/email"
+import { mutedProfileIdsForProject } from "@/lib/notifications/preferences"
 import { sendQuoSms, normalizeE164 } from "@/lib/quo"
 
 const AssignInput = z.object({
@@ -400,7 +401,16 @@ export async function clientComposeMessage(input: {
         .eq("role", "staff")
         .in("id", memberIds)
     : { data: [] as { id: string; email: string | null; notifications_enabled: boolean }[] }
-  const recipients = (staff ?? []).filter((s) => s.notifications_enabled)
+  // Per-job mutes (0121): the in-app rows are trigger-covered, the email
+  // fan-out below is not — filter both here.
+  const mutedForJob = await mutedProfileIdsForProject(
+    admin,
+    (staff ?? []).map((s) => s.id),
+    project.id
+  )
+  const recipients = (staff ?? []).filter(
+    (s) => s.notifications_enabled && !mutedForJob.has(s.id)
+  )
   if (recipients.length) {
     const { error: nErr } = await admin.from("notifications").insert(
       recipients.map((s) => ({
@@ -409,6 +419,7 @@ export async function clientComposeMessage(input: {
         title,
         body: body.length > 200 ? `${body.slice(0, 200)}…` : body,
         link_url: link,
+        project_id: project.id,
       }))
     )
     if (nErr) {

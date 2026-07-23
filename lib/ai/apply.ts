@@ -27,6 +27,8 @@ async function notifyProfileAssignee(
       title: `Assigned: ${itemTitle}`,
       body: "You were assigned to a schedule item",
       link_url: `/projects/${projectId}/schedule`,
+      // Lets the notifications trigger honor per-job mutes (0121).
+      project_id: projectId,
     })
     if (error) {
       console.warn(

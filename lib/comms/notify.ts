@@ -98,6 +98,8 @@ export async function notifyCommentPosted(opts: {
         title,
         body: `${opts.authorName}: ${preview}`,
         link_url: linkUrl,
+        // Lets the notifications trigger honor per-job mutes (0121).
+        project_id: opts.projectId,
       }))
     )
     if (nErr) console.warn("[comms] notification insert failed:", nErr.message)
@@ -171,6 +173,8 @@ export async function notifyStaffOfInbound(opts: {
         link_url: opts.projectId
           ? `/projects/${opts.projectId}/communications`
           : "/communications",
+        // Lets the notifications trigger honor per-job mutes (0121).
+        project_id: opts.projectId ?? null,
       }))
     )
     if (error) console.warn("[comms] inbound notification failed:", error.message)

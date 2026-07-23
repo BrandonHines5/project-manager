@@ -5,6 +5,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireSession } from "@/lib/auth"
 import { Badge } from "@/components/ui/badge"
 import { MembersButton } from "@/components/projects/members-dialog"
+import { ProjectNotificationsToggle } from "@/components/projects/notifications-toggle"
 import { DuplicateProjectButton } from "@/components/projects/duplicate-button"
 import { EditProjectButton } from "@/components/projects/edit-project-dialog"
 import { SyncDashboardButton } from "@/components/projects/sync-dashboard-button"
@@ -62,6 +63,15 @@ export default async function ProjectDetailLayout({
 
   // The job's org drives its client-facing branding (B3).
   const brandConfig = await getBrandConfig(supabase, project.org_id)
+
+  // The caller's own per-job mute (personal — RLS returns only their row)
+  // for the header bell toggle.
+  const { data: muteRow } = await supabase
+    .from("notification_project_mutes")
+    .select("project_id")
+    .eq("project_id", project.id)
+    .eq("profile_id", profile.id)
+    .maybeSingle()
 
   const isStaff = profile.role === "staff"
   let members: { profile_id: string; role_on_project: string | null }[] = []
@@ -195,6 +205,10 @@ export default async function ProjectDetailLayout({
               )}
             </div>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+              <ProjectNotificationsToggle
+                projectId={project.id}
+                initialMuted={!!muteRow}
+              />
               {isStaff && (
                 <EditProjectButton
                   project={{

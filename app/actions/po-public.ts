@@ -11,6 +11,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin"
 import { ACCESS_TOKEN_RE } from "@/lib/tokens"
 import { sendEmail, appUrl } from "@/lib/email"
 import { notifyCommentPosted } from "@/lib/comms/notify"
+import { mutedProfileIdsForProject } from "@/lib/notifications/preferences"
 
 const UNAVAILABLE =
   "This link is unavailable right now — please try again later."
@@ -79,6 +80,7 @@ async function notifyStaff(
     linkUrl: string
     emailSubject: string
     emailText: string
+    projectId: string
   }
 ) {
   if (!orgId) {
@@ -94,18 +96,29 @@ async function notifyStaff(
     console.warn("[po-public] staff lookup failed:", error.message)
     return
   }
-  const rows = (staff ?? []).map((p) => ({
+  // Per-job mutes: the trigger already drops in-app rows, but the email
+  // below sends without a notifications row, so filter here too.
+  const muted = await mutedProfileIdsForProject(
+    admin,
+    (staff ?? []).map((p) => p.id),
+    opts.projectId
+  )
+  const active = (staff ?? []).filter((p) => !muted.has(p.id))
+  const rows = active.map((p) => ({
     recipient_id: p.id,
     type: opts.type,
     title: opts.title,
     body: opts.body,
     link_url: opts.linkUrl,
+    // Lets the notifications trigger honor per-job mutes (0121); the email
+    // list below applies the same mute via mutedProfileIdsForProject.
+    project_id: opts.projectId,
   }))
   if (rows.length) {
     const { error: nErr } = await admin.from("notifications").insert(rows)
     if (nErr) console.warn("[po-public] notifications insert failed:", nErr.message)
   }
-  const emails = (staff ?? [])
+  const emails = active
     .filter((p) => p.notifications_enabled && p.email)
     .map((p) => p.email as string)
   if (emails.length) {
@@ -172,6 +185,7 @@ export async function approvePoByToken(input: {
       linkUrl: `/projects/${po.project_id}/purchase-orders`,
       emailSubject: `PO approved: PO-${po.number} ${po.title} — ${projectName}`,
       emailText: `${companyName} approved purchase order PO-${po.number} "${po.title}" on ${projectName}.\n\nSigned: ${parsed.signature_name}\n\nView it here: ${appUrl(`/projects/${po.project_id}/purchase-orders`)}`,
+      projectId: po.project_id,
     })
   } catch (e) {
     console.warn("[approvePoByToken] staff notify failed (non-fatal):", e)
@@ -227,6 +241,7 @@ export async function declinePoByToken(input: { token: string; reason: string })
       linkUrl: `/projects/${po.project_id}/purchase-orders`,
       emailSubject: `PO declined: PO-${po.number} ${po.title} — ${projectName}`,
       emailText: `${companyName} declined purchase order PO-${po.number} "${po.title}" on ${projectName}.\n\nReason: ${parsed.reason}\n\nView it here: ${appUrl(`/projects/${po.project_id}/purchase-orders`)}`,
+      projectId: po.project_id,
     })
   } catch (e) {
     console.warn("[declinePoByToken] staff notify failed (non-fatal):", e)
