@@ -54,11 +54,15 @@ const MAX_PAGES = 10
 const FOLDERS = ["inbox", "sentitems"] as const
 
 // Classification sweep sizing. Batches are small enough that one model call
-// stays fast; the wall-clock budget leaves headroom inside maxDuration for
-// the delta sync that ran first. Whatever doesn't fit waits 15 minutes.
+// stays fast. The admission deadline is checked BEFORE each batch, so the
+// worst case is deadline + one full in-flight call (the client caps an
+// attempt at 90s with no SDK retries): 180s + 90s = 270s, inside
+// maxDuration=300 — and the clock starts at request start, so the delta
+// sync's time counts against the same budget. Whatever doesn't fit waits
+// 15 minutes.
 const SWEEP_BATCH = 20
 const SWEEP_MAX_ROWS = 200
-const SWEEP_DEADLINE_MS = 240_000
+const SWEEP_DEADLINE_MS = 180_000
 
 export async function GET(req: Request) {
   const startedAt = Date.now()
@@ -169,6 +173,13 @@ export async function GET(req: Request) {
  * AND the pre-AI backlog), classifies them in batches against the legacy
  * org's job list, and writes the verdicts. Rows the model skipped or that
  * error out keep meta.job_match unset, so the next run retries them.
+ *
+ * Known bounded exception: an outlook row a human filed via File-to-job
+ * BEFORE the 'manual' meta stamp existed is indistinguishable from a
+ * heuristic stamp, so the backlog pass second-guesses it too. That
+ * population is at most the few hours between the sync's first successful
+ * run and this deploy; re-filing from the hub is permanent ('manual' wins
+ * forever after).
  */
 async function classifyUnfiledEmails(
   admin: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
@@ -259,8 +270,11 @@ async function classifyUnfiledEmails(
         .eq("id", r.id)
         // Re-check the claim under concurrency: if staff manually filed the
         // row while this batch was at the model, job_match is 'manual' now
-        // and the verdict must not clobber it.
+        // and the verdict must not clobber it. Same for a mid-sweep
+        // dismissal — without re-checking status, writing 'logged' here
+        // would resurrect a row staff just ignored.
         .is("meta->>job_match", null)
+        .neq("status", "ignored")
       if (upErr) {
         console.warn("[outlook-sync] sweep update failed:", upErr.message)
         continue
