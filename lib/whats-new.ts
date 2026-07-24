@@ -18,6 +18,12 @@ export const WHATS_NEW: WhatsNewEntry[] = [
   {
     date: "2026-07-23",
     title:
+      "“Request an update” now routes builder-account requests straight to the app team — the operator is emailed on submit, and replies land back in the requestor's Feedback & Requests view with an email copy.",
+    kind: "feature",
+  },
+  {
+    date: "2026-07-23",
+    title:
       "Owners and admins can now upgrade straight from the account menu — trial orgs get an \"Upgrade Account\" shortcut to subscribe, and existing subscribers get a shortcut to manage their billing.",
     kind: "feature",
   },

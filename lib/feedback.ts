@@ -7,6 +7,13 @@ import type { BadgeProps } from "@/components/ui/badge"
 
 export type FeedbackRow = Tables<"feedback_requests">
 
+// Row plus the org-name embed the feedback page selects. The embed resolves
+// for everyone (members read their own org; the platform operator reads all —
+// 0124), but the Organization column only renders on the operator's queue.
+export type FeedbackListRow = FeedbackRow & {
+  organizations?: { name: string | null } | null
+}
+
 export const FEEDBACK_TYPES = [
   "Feature Request",
   "Bug Report",

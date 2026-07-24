@@ -9,6 +9,7 @@ import {
 } from "lucide-react"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { requireSession } from "@/lib/auth"
+import { isLegacyOrgMember } from "@/lib/org"
 import { Button } from "@/components/ui/button"
 import { EmptyState } from "@/components/ui/empty"
 import { Card, CardBody } from "@/components/ui/card"
@@ -24,6 +25,12 @@ export const metadata = { title: "Projects — BuildFox" }
 export default async function ProjectsPage() {
   const profile = await requireSession()
   const supabase = await createSupabaseServerClient()
+  // The "new requests waiting for review" banner belongs to whoever triages
+  // feedback — legacy (Hines) staff, per the 0124 routing. Builder-org staff
+  // are submitters, so they get the same "updates on your requests" panel as
+  // clients/trades.
+  const triagesFeedback =
+    profile.role === "staff" && (await isLegacyOrgMember(supabase, profile.id))
   const { data: projects } = await supabase
     .from("projects")
     .select(
@@ -122,7 +129,7 @@ export default async function ProjectsPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-6 py-6">
-      {profile.role === "staff" ? (
+      {triagesFeedback ? (
         <FeedbackNotification />
       ) : (
         <MyFeedbackNotification userId={profile.id} />

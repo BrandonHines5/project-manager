@@ -81,7 +81,8 @@ function FeedbackDialog({ onClose }: { onClose: () => void }) {
           <div>
             <DialogTitle>Request an update</DialogTitle>
             <DialogDescription>
-              Send a feature idea, bug report, or change request to the team.
+              Send a feature idea, bug report, or change request to the app
+              team — you can track replies under Feedback &amp; Requests.
             </DialogDescription>
           </div>
         </DialogHeader>
